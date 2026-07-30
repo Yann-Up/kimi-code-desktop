@@ -1,0 +1,134 @@
+name: Watch Kimi Code CLI releases
+
+# 定时轮询 npm registry 上 @moonshot-ai/kimi-code 的最新版本,
+# 发现新版本时自动开 issue 提醒做兼容性验证。
+# 基线版本记录在 .github/kimi-cli-version.txt,由本 workflow 自动维护。
+
+on:
+  schedule:
+    - cron: "23 2 * * *" # 每天 02:23 UTC(北京时间 10:23)
+  workflow_dispatch:
+
+permissions:
+  contents: write # 回写基线版本文件
+  issues: write # 创建提醒 issue
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch latest version from npm
+        id: npm
+        run: |
+          LATEST=$(curl -fsSL https://registry.npmjs.org/@moonshot-ai/kimi-code/latest | jq -r .version)
+          [ -n "$LATEST" ] && [ "$LATEST" != "null" ] || { echo "无法获取 npm 最新版本"; exit 1; }
+          echo "latest=$LATEST" >> "$GITHUB_OUTPUT"
+          echo "npm 最新版本: $LATEST"
+
+      - name: Compare with baseline
+        id: cmp
+        run: |
+          CURRENT=$(cat .github/kimi-cli-version.txt 2>/dev/null || echo "")
+          echo "current=$CURRENT" >> "$GITHUB_OUTPUT"
+          echo "基线版本: ${CURRENT:-<无>}"
+          [ "$CURRENT" = "${{ steps.npm.outputs.latest }}" ] && echo "changed=false" >> "$GITHUB_OUTPUT" || echo "changed=true" >> "$GITHUB_OUTPUT"
+
+      - name: Skip if issue already exists
+        id: dup
+        if: steps.cmp.outputs.changed == 'true' && steps.cmp.outputs.current != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          LATEST: ${{ steps.npm.outputs.latest }}
+        run: |
+          COUNT=$(gh issue list --search "in:title \"Kimi Code CLI v$LATEST\"" --state all --json number --jq 'length')
+          echo "已存在 $COUNT 个相关 issue"
+          [ "$COUNT" -gt 0 ] && echo "exists=true" >> "$GITHUB_OUTPUT" || echo "exists=false" >> "$GITHUB_OUTPUT"
+
+      - name: Fetch release notes between baseline and latest
+        if: steps.cmp.outputs.changed == 'true' && steps.cmp.outputs.current != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          LATEST: ${{ steps.npm.outputs.latest }}
+          CURRENT: ${{ steps.cmp.outputs.current }}
+        run: |
+          NOTES=/tmp/notes.md
+          : > "$NOTES"
+          FOUND=0
+          gh api "repos/MoonshotAI/kimi-code/releases?per_page=30" > /tmp/releases.json 2>/dev/null || echo "[]" > /tmp/releases.json
+          while IFS= read -r rel; do
+            tag=$(jq -r .tag_name <<<"$rel")
+            ver=${tag##*@} # tag 形如 @moonshot-ai/kimi-code@0.30.0
+            # 只保留 (CURRENT, LATEST] 区间内的版本
+            [ "$(printf '%s\n%s\n' "$CURRENT" "$ver" | sort -V | head -1)" = "$CURRENT" ] || continue
+            [ "$ver" != "$CURRENT" ] || continue
+            [ "$(printf '%s\n%s\n' "$ver" "$LATEST" | sort -V | tail -1)" = "$LATEST" ] || continue
+            url=$(jq -r .html_url <<<"$rel")
+            FOUND=1
+            {
+              echo "### [$tag]($url)"
+              echo
+              jq -r .body <<<"$rel" | head -c 3000
+              echo
+              echo
+            } >> "$NOTES"
+          done < <(jq -c '.[]' /tmp/releases.json)
+          if [ "$FOUND" = "0" ]; then
+            echo "未获取到 release notes,请手动查看: https://github.com/MoonshotAI/kimi-code/releases" > "$NOTES"
+          fi
+
+      - name: Create compatibility-check issue
+        if: steps.cmp.outputs.changed == 'true' && steps.cmp.outputs.current != '' && steps.dup.outputs.exists == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          LATEST: ${{ steps.npm.outputs.latest }}
+          CURRENT: ${{ steps.cmp.outputs.current }}
+        run: |
+          # 头部用占位符 + sed 注入版本号,避免 heredoc 里反引号被 shell 展开
+          cat > /tmp/body.md <<'EOF'
+          上游 `@moonshot-ai/kimi-code` 发布了新版本:**v@LATEST@**(当前基线 v@CURRENT@)。
+
+          - npm: https://www.npmjs.com/package/@moonshot-ai/kimi-code
+          - Releases: https://github.com/moonshotai/kimi-code/releases
+
+          ## 上游变更内容(release notes)
+
+          EOF
+          sed -i "s/@LATEST@/$LATEST/g; s/@CURRENT@/$CURRENT/g" /tmp/body.md
+          cat /tmp/notes.md >> /tmp/body.md
+          cat >> /tmp/body.md <<'EOF'
+          ## 兼容性验证清单(现有功能不能 break)
+
+          - [ ] `npm run typecheck` 通过
+          - [ ] 聊天流式输出 + 工具卡片 / approval / 子代理卡片渲染正常
+          - [ ] 权限模式 / plan 模式 / goal 模式行为一致
+          - [ ] WS 断线重连(seq/epoch 游标)正常
+          - [ ] git 面板与 diff 视图正常
+          - [ ] `~/.kimi-code` 直读数据(插件 / 技能 / cron / mcp.json / usage 聚合)字段无变化
+          - [ ] 设置页升级按钮对三种目标(本机 / WSL / SSH)工作正常
+
+          ## 前端功能跟进(重写的 kimi web)
+
+          - [ ] 通读上方 release notes,列出新增 / 变更的用户可见功能
+          - [ ] 新增 / 变更的 WS 消息类型已在渲染层支持(工具卡片 / 审批 / 子代理等)
+          - [ ] 值得跟进的功能已在前端实现对应 UI 与交互(或记录为不跟进及原因)
+          - [ ] 上游新增的设置项 / 配置格式已在设置页体现(如适用)
+
+          验证完成后关闭本 issue。
+          EOF
+          gh label create upstream-sync --description "上游 kimi-code CLI 发版同步" --color 0E8A16 2>/dev/null || true
+          gh issue create \
+            --title "Kimi Code CLI v$LATEST 发布,需验证兼容性" \
+            --label "upstream-sync" \
+            --body-file /tmp/body.md
+
+      - name: Update baseline version file
+        if: steps.cmp.outputs.changed == 'true'
+        run: |
+          echo "${{ steps.npm.outputs.latest }}" > .github/kimi-cli-version.txt
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add .github/kimi-cli-version.txt
+          git commit -m "chore: bump kimi-cli baseline to ${{ steps.npm.outputs.latest }}"
+          git push
