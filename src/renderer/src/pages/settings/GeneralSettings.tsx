@@ -668,9 +668,9 @@ export function GeneralSettings() {
             value={permission}
             onChange={(e) => void savePermission(e.target.value)}
           >
-            <option value="manual">手动审批</option>
-            <option value="auto">自动通过</option>
-            <option value="yolo">Yolo(全部放行)</option>
+            <option value="manual">逐条确认</option>
+            <option value="yolo">自动通过</option>
+            <option value="auto">完全自主</option>
           </select>
         </div>
         {/* 额度条刷新间隔:存 localStorage,QuotaStrip 响应式生效 */}

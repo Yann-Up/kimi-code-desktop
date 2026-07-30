@@ -1,6 +1,6 @@
 /**
  * Composer:聊天输入区,对齐 Kimi Web 体验。
- * 结构:StatusBar(状态条)→ 附件预览 → 输入行(附件按钮/textarea/权限/模式/模型/发送)→ 目标输入 → 思考强度。
+ * 结构:StatusBar(状态条)→ 附件预览 → 输入行(附件按钮/textarea)→ 工具行(权限/模式/模型/思考强度 + 上下文环/发送)→ 目标输入。
  * 附件支持任意文件:图片走 base64,其它文件先上传再附 file_id;支持粘贴图片与拖拽文件。
  */
 import { useEffect, useMemo, useRef, useState } from 'react'
@@ -104,7 +104,7 @@ function ContextRing(props: { used: number; max: number; pct: number }) {
         ? `${Math.round(n / 1000)}k`
         : String(Math.round(n))
   return (
-    <div className="group relative mb-0.5 shrink-0">
+    <div className="group relative shrink-0">
       <svg width="22" height="22" viewBox="0 0 22 22" className="-rotate-90">
         <circle cx="11" cy="11" r={r} fill="none" strokeWidth="2.5" className="stroke-surface-tertiary" />
         <circle
@@ -126,9 +126,9 @@ function ContextRing(props: { used: number; max: number; pct: number }) {
 }
 
 const PERMISSIONS: { value: string; label: string; desc: string }[] = [
-  { value: 'auto', label: '自动通过', desc: 'Agent 自动决定低风险操作' },
-  { value: 'manual', label: '手动审批', desc: '每次工具调用都需确认' },
-  { value: 'yolo', label: 'Yolo', desc: '全部放行不问' }
+  { value: 'manual', label: '逐条确认', desc: '每个工具操作都需要你手动确认' },
+  { value: 'yolo', label: '自动通过', desc: '自动批准工具操作,但遇到关键问题仍会询问' },
+  { value: 'auto', label: '完全自主', desc: '完全自主运行,智能体自己做决定,不再询问' }
 ]
 
 const MODES: { value: Mode; label: string; desc: string; icon: typeof MessageSquare }[] = [
@@ -180,7 +180,7 @@ export function Composer({ sessionId }: { sessionId: string }) {
   const [model, setModel] = useState('')
   const [userPicked, setUserPicked] = useState(false)
   const [globalDefault, setGlobalDefault] = useState('')
-  const [permission, setPermission] = useState('auto')
+  const [permission, setPermission] = useState('yolo')
   const [mode, setMode] = useState<Mode>('default')
   const [goal, setGoal] = useState('')
   const [openPop, setOpenPop] = useState<PopName | null>(null)
@@ -461,7 +461,7 @@ export function Composer({ sessionId }: { sessionId: string }) {
   }
 
   const toolBtn = (active: boolean) =>
-    `mb-0.5 flex shrink-0 items-center gap-1 rounded-lg px-2 py-1.5 text-[12px] transition-colors ${
+    `flex shrink-0 items-center gap-1 rounded-lg px-2 py-1.5 text-[12px] transition-colors ${
       active
         ? 'bg-primary-soft text-primary'
         : 'text-text-secondary hover:bg-surface-tertiary hover:text-text'
@@ -570,8 +570,8 @@ export function Composer({ sessionId }: { sessionId: string }) {
             </div>
           )}
 
-          {/* 输入行 */}
-          <div className="flex items-end gap-1.5 px-3 py-2">
+          {/* 输入行:附件按钮 + textarea(选项已下移到工具行) */}
+          <div className="flex items-end gap-1.5 px-3 pb-1 pt-2">
             <button
               className="mb-0.5 shrink-0 rounded-lg p-1.5 text-text-tertiary hover:bg-surface-tertiary hover:text-text"
               title="添加附件(图片 / 文件,最多 4 个,单个 ≤10MB)"
@@ -612,7 +612,10 @@ export function Composer({ sessionId }: { sessionId: string }) {
                 }
               }}
             />
+          </div>
 
+          {/* 工具行:左侧 权限/模式/模型/思考强度,右侧 上下文环 + 发送/停止 */}
+          <div className="flex flex-wrap items-center gap-1.5 px-3 pb-2">
             {/* 权限模式 */}
             <div className="relative">
               <button className={toolBtn(openPop === 'permission')} title="权限模式" onClick={togglePop('permission')}>
@@ -622,7 +625,7 @@ export function Composer({ sessionId }: { sessionId: string }) {
               </button>
               {openPop === 'permission' && (
                 <div
-                  className="absolute bottom-full right-0 z-30 mb-2 w-60 rounded-xl border border-border bg-surface p-1.5 shadow-lg"
+                  className="absolute bottom-full left-0 z-30 mb-2 w-60 rounded-xl border border-border bg-surface p-1.5 shadow-lg"
                   onClick={(e) => e.stopPropagation()}
                 >
                   {PERMISSIONS.map((p) => (
@@ -662,7 +665,7 @@ export function Composer({ sessionId }: { sessionId: string }) {
               </button>
               {openPop === 'mode' && (
                 <div
-                  className="absolute bottom-full right-0 z-30 mb-2 w-64 rounded-xl border border-border bg-surface p-1.5 shadow-lg"
+                  className="absolute bottom-full left-0 z-30 mb-2 w-64 rounded-xl border border-border bg-surface p-1.5 shadow-lg"
                   onClick={(e) => e.stopPropagation()}
                 >
                   {MODES.map((m) => (
@@ -711,7 +714,7 @@ export function Composer({ sessionId }: { sessionId: string }) {
                 </button>
                 {openPop === 'model' && (
                   <div
-                    className="absolute bottom-full right-0 z-30 mb-2 max-h-[320px] w-72 overflow-y-auto rounded-xl border border-border bg-surface p-1.5 shadow-lg"
+                    className="absolute bottom-full left-0 z-30 mb-2 max-h-[320px] w-72 overflow-y-auto rounded-xl border border-border bg-surface p-1.5 shadow-lg"
                     onClick={(e) => e.stopPropagation()}
                   >
                     {groupedModels.map(([provider, list]) => (
@@ -747,36 +750,60 @@ export function Composer({ sessionId }: { sessionId: string }) {
               </div>
             )}
 
-            {/* 上下文用量环:hover 显示已用/总量/百分比 */}
-            {typeof status.contextUsage === 'number' &&
-              typeof status.contextTokens === 'number' &&
-              typeof status.maxContextTokens === 'number' &&
-              status.maxContextTokens > 0 && (
-                <ContextRing
-                  used={status.contextTokens}
-                  max={status.maxContextTokens}
-                  pct={Math.min(1, Math.max(0, status.contextUsage))}
-                />
-              )}
-
-            {busy ? (
-              <button
-                className="mb-0.5 shrink-0 rounded-full bg-danger p-2 text-white hover:opacity-90"
-                title="停止"
-                onClick={() => void abort()}
-              >
-                <Square size={15} />
-              </button>
-            ) : (
-              <button
-                className="mb-0.5 shrink-0 rounded-full bg-primary p-2 text-white hover:bg-primary-hover disabled:opacity-40"
-                disabled={!canSend}
-                title={uploading ? '附件上传中…' : '发送'}
-                onClick={doSend}
-              >
-                <ArrowUp size={16} />
-              </button>
+            {/* 思考强度:模型有 thinking 能力时显示,回显当前生效档位 */}
+            {pills.length > 0 && (
+              <div className="flex items-center gap-1">
+                <SlidersHorizontal size={13} className="mr-0.5 shrink-0 text-text-tertiary" />
+                {pills.map((v) => (
+                  <button
+                    key={v}
+                    className={`rounded-full border px-2.5 py-0.5 text-[11.5px] transition-colors ${
+                      thinking === v
+                        ? 'border-primary-border bg-primary-soft text-primary'
+                        : 'border-transparent text-text-tertiary hover:bg-surface-tertiary'
+                    }`}
+                    onClick={() => setUserThinking(v)}
+                    title={v === 'off' ? '关闭思考' : v === 'on' ? '开启思考' : `思考强度:${v}`}
+                  >
+                    {v === 'off' ? '关' : v === 'on' ? '开' : v}
+                  </button>
+                ))}
+              </div>
             )}
+
+            {/* 右侧:上下文用量环 + 发送/停止 */}
+            <div className="ml-auto flex items-center gap-1.5">
+              {/* 上下文用量环:hover 显示已用/总量/百分比 */}
+              {typeof status.contextUsage === 'number' &&
+                typeof status.contextTokens === 'number' &&
+                typeof status.maxContextTokens === 'number' &&
+                status.maxContextTokens > 0 && (
+                  <ContextRing
+                    used={status.contextTokens}
+                    max={status.maxContextTokens}
+                    pct={Math.min(1, Math.max(0, status.contextUsage))}
+                  />
+                )}
+
+              {busy ? (
+                <button
+                  className="shrink-0 rounded-full bg-danger p-2 text-white hover:opacity-90"
+                  title="停止"
+                  onClick={() => void abort()}
+                >
+                  <Square size={15} />
+                </button>
+              ) : (
+                <button
+                  className="shrink-0 rounded-full bg-primary p-2 text-white hover:bg-primary-hover disabled:opacity-40"
+                  disabled={!canSend}
+                  title={uploading ? '附件上传中…' : '发送'}
+                  onClick={doSend}
+                >
+                  <ArrowUp size={16} />
+                </button>
+              )}
+            </div>
           </div>
 
           {/* 目标模式:目标输入框 */}
@@ -788,27 +815,6 @@ export function Composer({ sessionId }: { sessionId: string }) {
                 value={goal}
                 onChange={(e) => setGoal(e.target.value)}
               />
-            </div>
-          )}
-
-          {/* 思考强度:模型有 thinking 能力时显示,回显当前生效档位 */}
-          {pills.length > 0 && (
-            <div className="flex items-center gap-1 px-3 pb-2">
-              <SlidersHorizontal size={13} className="mr-1 shrink-0 text-text-tertiary" />
-              {pills.map((v) => (
-                <button
-                  key={v}
-                  className={`rounded-full border px-2.5 py-0.5 text-[11.5px] transition-colors ${
-                    thinking === v
-                      ? 'border-primary-border bg-primary-soft text-primary'
-                      : 'border-transparent text-text-tertiary hover:bg-surface-tertiary'
-                  }`}
-                  onClick={() => setUserThinking(v)}
-                  title={v === 'off' ? '关闭思考' : v === 'on' ? '开启思考' : `思考强度:${v}`}
-                >
-                  {v === 'off' ? '关' : v === 'on' ? '开' : v}
-                </button>
-              ))}
             </div>
           )}
         </div>
