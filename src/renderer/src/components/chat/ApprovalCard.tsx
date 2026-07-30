@@ -9,15 +9,19 @@ export function ApprovalCard({ approval }: { approval: PendingApproval }) {
   const [done, setDone] = useState(false)
   const [failed, setFailed] = useState(false)
 
-  const answer = (decision: string, scope?: string) => {
+  const answer = (decision: string, scope?: string, selectedLabel?: string) => {
     setFailed(false)
     // 成功才隐藏卡片;失败保留卡片并提示重试(否则 refreshPending 拉回后 done 仍为 true 会永久消失)
-    void answerApproval(approval.id, decision, scope, rejecting ? feedback : undefined).then(
-      (ok) => {
-        if (ok) setDone(true)
-        else setFailed(true)
-      }
-    )
+    void answerApproval(
+      approval.id,
+      decision,
+      scope,
+      rejecting ? feedback : undefined,
+      selectedLabel
+    ).then((ok) => {
+      if (ok) setDone(true)
+      else setFailed(true)
+    })
   }
 
   if (done) return null
@@ -35,16 +39,19 @@ export function ApprovalCard({ approval }: { approval: PendingApproval }) {
       )}
       {approval.options && approval.options.length > 0 ? (
         <div className="flex flex-wrap gap-2">
-          {approval.options.map((op) => (
+          {approval.options.map((op, i) => (
             <button
               key={op.id}
+              title={op.description}
               className={`rounded-lg px-3.5 py-1.5 text-[13px] font-medium ${
-                /approve|allow|yes|批准|允许/i.test(op.id + op.label)
+                i === 0
                   ? 'bg-primary text-white hover:bg-primary-hover'
                   : 'border border-border bg-white text-text-secondary hover:bg-surface-tertiary'
               }`}
               onClick={() =>
-                answer(/approve|allow|yes|批准|允许/i.test(op.id + op.label) ? 'approved' : 'rejected')
+                // 选项应答(plan_review 等):decision 恒为 approved,所选经 selected_label 传达;
+                // 按文案正则猜 approved/rejected 会把"自动接受"这类批准项映射成拒绝,语义反转
+                answer('approved', undefined, op.label)
               }
             >
               {op.label}

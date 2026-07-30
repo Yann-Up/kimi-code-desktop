@@ -42,11 +42,32 @@ fn free_port(from: u16) -> Result<u16, String> {
     Err("no free port found".to_string())
 }
 
+/// 强杀子进程;Windows 下 .cmd shim(npm 全局安装)的直接子进程是 cmd.exe,
+/// 普通 kill 只杀壳进程,真正的 node 服务进程变孤儿(继续占用端口与数据目录,
+/// 还可能最后写 server.token 污染下次启动),故用 taskkill /T 杀整棵进程树。
+/// 先 try_wait 确认仍在运行:进程已退出时 pid 可能已被系统复用,误杀他人
+async fn kill_child_tree(child: &mut Child) {
+    #[cfg(windows)]
+    {
+        if matches!(child.try_wait(), Ok(None)) {
+            if let Some(pid) = child.id() {
+                let _ = crate::cli::hidden_command("taskkill")
+                    .args(["/PID", &pid.to_string(), "/T", "/F"])
+                    .kill_on_drop(true)
+                    .output()
+                    .await;
+                return;
+            }
+        }
+    }
+    let _ = child.kill().await;
+}
+
 /// 启动失败/超时清理:Process 强杀;Ssh 关通道使远端收 HUP
 async fn kill_handle(handle: ServiceHandle) {
     match handle {
         ServiceHandle::Process(child) => {
-            let _ = child.lock().await.kill().await;
+            kill_child_tree(&mut *child.lock().await).await;
         }
         ServiceHandle::Ssh(proc) => proc.shutdown().await,
     }
@@ -61,7 +82,9 @@ pub enum ServiceHandle {
 pub struct ServerManager {
     proc: Option<ServiceHandle>,
     info: Option<ServerInfo>,
-    /// stop 置位,start 真正启动新进程前复位(退出监控据此区分意外退出)
+    /// stop 置位;每次 start 新建(代次隔离):旧代监控任务持有旧 flag,stop 后恒为 true,
+    /// 不会被新代 start 复位 —— 否则 restart 后旧监控看到旧进程已退出且 flag=false,
+    /// 误走一遍意外退出清理并多广播一次虚假 server:exited
     stopping: Arc<AtomicBool>,
 }
 
@@ -89,9 +112,9 @@ impl ServerManager {
         if let Some(info) = &mgr.info {
             return Ok(info.clone());
         }
-        // 复位 stopping:上次 stop 置位后若不清零,本次进程的意外退出
-        // 会被退出监控误判为主动停止,清理与前端通知全部失效
-        mgr.stopping.store(false, Ordering::SeqCst);
+        // 每次 start 新建 stopping 标志:旧代监控任务持有旧 flag(stop 后恒 true,
+        // 见上),新代监控持有新 flag,互不干扰
+        mgr.stopping = Arc::new(AtomicBool::new(false));
         // 连接目标决定启动/读 token/检测 CLI 的方式;REST/WS 永远连 127.0.0.1:port
         let target = cli::connection_target();
         let cli_version = target.detect_cli().await?;
@@ -179,6 +202,12 @@ impl ServerManager {
             tokio::spawn(async move {
                 loop {
                     tokio::time::sleep(Duration::from_millis(500)).await;
+                    // 主动停止(stop/启动失败的 kill 兜底)时直接退出:
+                    // SSH 目标下 alive 只在 drain 任务自然结束时翻转,而 shutdown/Drop
+                    // 会 abort drain,标志永不翻转,不检查 stopping 监控任务会永久空转
+                    if stopping.load(Ordering::SeqCst) {
+                        break;
+                    }
                     let exited = match &monitor_probe {
                         ExitProbe::Process(child) => match child.lock().await.try_wait() {
                             Ok(Some(status)) => Some(format!("code = {:?}", status.code())),
@@ -323,8 +352,8 @@ impl ServerManager {
             ServiceHandle::Process(child_arc) => {
                 let mut child = child_arc.lock().await;
                 let _ = tokio::time::timeout(Duration::from_secs(5), child.wait()).await;
-                // 兜底强杀(已退出时 kill 返回错误,忽略)
-                let _ = child.kill().await;
+                // 兜底强杀(已退出时 try_wait 命中、跳过 taskkill;kill 返回错误忽略)
+                kill_child_tree(&mut child).await;
             }
             ServiceHandle::Ssh(proc) => {
                 // 关闭 pty 通道,远端进程收 SIGHUP;转发监听一并停止

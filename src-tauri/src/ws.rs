@@ -20,10 +20,13 @@ use tokio_tungstenite::tungstenite::Message;
 
 use crate::server::ServerInfo;
 
-#[derive(Clone, Serialize)]
-struct Cursor {
+/// 订阅游标(事件水位):断线重连 client_hello / subscribe 帧携带;
+/// 也是 ws_subscribe 的可选入参(前端传入权威快照水位)
+#[derive(Clone, Serialize, serde::Deserialize)]
+pub struct Cursor {
+    #[serde(default)]
     seq: f64,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     epoch: Option<String>,
 }
 
@@ -31,6 +34,8 @@ pub struct WsClient {
     info: ServerInfo,
     app: AppHandle,
     log_dir: PathBuf,
+    /// 创建时的服务代次:与 AppState::generation 不一致即为绑定旧 port/token 的僵尸连接
+    generation: u64,
     subscriptions: tokio::sync::Mutex<HashSet<String>>,
     cursors: tokio::sync::Mutex<HashMap<String, Cursor>>,
     next_id: AtomicU64,
@@ -40,17 +45,23 @@ pub struct WsClient {
 }
 
 impl WsClient {
-    pub fn new(info: ServerInfo, app: AppHandle, log_dir: PathBuf) -> Arc<Self> {
+    pub fn new(info: ServerInfo, app: AppHandle, log_dir: PathBuf, generation: u64) -> Arc<Self> {
         Arc::new(Self {
             info,
             app,
             log_dir,
+            generation,
             subscriptions: tokio::sync::Mutex::new(HashSet::new()),
             cursors: tokio::sync::Mutex::new(HashMap::new()),
             next_id: AtomicU64::new(1),
             closed: AtomicBool::new(false),
             tx: tokio::sync::Mutex::new(None),
         })
+    }
+
+    /// 创建时的服务代次(供命令层识别僵尸连接)
+    pub fn generation(&self) -> u64 {
+        self.generation
     }
 
     /// 启动连接主循环(含断线重连),对应 TS 的 ws.connect()
@@ -202,6 +213,15 @@ impl WsClient {
                         .get("reason")
                         .and_then(|v| v.as_str())
                         .unwrap_or("unknown");
+                    // 就地更新游标到 current_seq:不更新的话,重连 client_hello 仍带过期
+                    // 游标,服务端再次 resync_required,死循环(上游 ws.ts 同款处理)
+                    if let Some(cs) = p.get("current_seq").and_then(|v| v.as_f64()) {
+                        let epoch = p.get("epoch").and_then(|v| v.as_str()).map(String::from);
+                        self.cursors
+                            .lock()
+                            .await
+                            .insert(session_id.to_string(), Cursor { seq: cs, epoch });
+                    }
                     let mut info = json!({ "session_id": session_id, "reason": reason });
                     if let Some(cs) = p.get("current_seq") {
                         info["current_seq"] = cs.clone();
@@ -271,8 +291,20 @@ impl WsClient {
     }
 
     /// v1 订阅(注意:subscribe_v2 会把服务端推送切换成 transcript.ops 通道
-    /// 并抑制 v1 会话事件(0.29.2 实测),导致流式事件丢失,不要移植 v2)
-    pub async fn subscribe(&self, session_id: &str) {
+    /// 并抑制 v1 会话事件(0.29.2 实测),导致流式事件丢失,不要移植 v2)。
+    /// cursor 为前端快照水位(as_of_seq/epoch):本地无游标或 epoch 不同(服务端
+    /// 事件流重置)时采用前端权威水位;同 epoch 取较大 seq,避免游标回退引发重复回放
+    pub async fn subscribe(&self, session_id: &str, cursor: Option<Cursor>) {
+        if let Some(c) = cursor {
+            let mut cursors = self.cursors.lock().await;
+            let adopt = match cursors.get(session_id) {
+                None => true,
+                Some(local) => local.epoch != c.epoch || c.seq > local.seq,
+            };
+            if adopt {
+                cursors.insert(session_id.to_string(), c);
+            }
+        }
         {
             let mut subs = self.subscriptions.lock().await;
             if !subs.insert(session_id.to_string()) {

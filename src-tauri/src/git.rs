@@ -48,12 +48,14 @@ pub struct GitCommit {
 async fn git(cwd: &str, args: &[&str]) -> Result<String, String> {
     match connection_target() {
         ConnectionTarget::Local => {
+            // kill_on_drop:超时(timeout 返回)后子进程随之被杀,不留后台残留
             let out = tokio::time::timeout(
                 GIT_TIMEOUT,
                 hidden_command("git")
                     .arg("-C")
                     .arg(cwd)
                     .args(args)
+                    .kill_on_drop(true)
                     .output(),
             )
             .await

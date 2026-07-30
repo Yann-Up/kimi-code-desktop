@@ -69,7 +69,7 @@ export interface PendingApproval {
   title?: string
   description?: string
   command?: string
-  options?: { id: string; label: string }[]
+  options?: { id: string; label: string; description?: string }[]
   raw: Record<string, unknown>
 }
 
@@ -124,16 +124,22 @@ interface StreamState {
   hasMore: boolean
   loadingEarlier: boolean
 
-  load: (sessionId: string, opts?: { quiet?: boolean }) => Promise<void>
+  load: (sessionId: string, opts?: { quiet?: boolean }) => Promise<{ seq: number; epoch?: string } | null>
   /** 向前翻一页更早的消息(prepend),返回是否实际发起了加载 */
   loadEarlier: () => Promise<boolean>
   handleEvent: (evt: Record<string, unknown>) => void
   handleResync: () => void
   refreshPending: () => Promise<void>
-  sendPrompt: (opts: SendPromptOptions) => Promise<void>
+  sendPrompt: (opts: SendPromptOptions) => Promise<boolean>
   abort: () => Promise<void>
   /** 返回是否提交成功,失败时调用方应保留卡片并提示重试 */
-  answerApproval: (id: string, decision: string, scope?: string, feedback?: string) => Promise<boolean>
+  answerApproval: (
+    id: string,
+    decision: string,
+    scope?: string,
+    feedback?: string,
+    selectedLabel?: string
+  ) => Promise<boolean>
   answerQuestion: (id: string, answers: Record<string, unknown>) => Promise<boolean>
   dismissQuestion: (id: string) => Promise<boolean>
   reset: () => void
@@ -146,6 +152,11 @@ const nid = () => `local_${++itemSeq}`
 
 /** 当前已加载的最早消息 id(loadEarlier 的分页游标,随 load/loadEarlier 更新) */
 let oldestMessageId = ''
+
+/** 事件水位去重:快照与 WS 回放重叠时,seq ≤ 水位的事件直接丢弃(切页往返消息翻倍的防线)。
+ *  与 Rust 侧订阅游标互补:游标让服务端从水位之后回放,这里兜底任何仍漏进来的重复投递 */
+let lastSeq = 0
+let lastEpoch: string | undefined
 
 /** CLI 把文件附件转成 "Attached file ..." 说明文本;解析回结构化附件 */
 const ATTACHED_FILE_RE =
@@ -379,7 +390,11 @@ export const useStream = create<StreamState>((set, get) => ({
         pending_approvals?: unknown[]
         pending_questions?: unknown[]
       }>(`/api/v1/sessions/${sessionId}/snapshot`)
-      if (stale()) return
+      if (stale()) return null
+
+      // 快照水位:事件去重与订阅游标都以此为准
+      lastSeq = typeof snap.as_of_seq === 'number' ? snap.as_of_seq : 0
+      lastEpoch = typeof snap.epoch === 'string' ? snap.epoch : undefined
 
       const items = hydrateMessages(snap.messages?.items ?? [])
       // snapshot 仅含最近 100 条:记录分页游标(正序首条)与 has_more,供 loadEarlier 翻页
@@ -439,7 +454,7 @@ export const useStream = create<StreamState>((set, get) => ({
         }
       })
       await get().refreshPending()
-      if (stale()) return
+      if (stale()) return null
       // 补充实时状态(上下文用量/模型/思考档位),供用量环与回显
       try {
         const st = await rest<{
@@ -450,7 +465,7 @@ export const useStream = create<StreamState>((set, get) => ({
           max_context_tokens?: number
           context_usage?: number
         }>(`/api/v1/sessions/${sessionId}/status`)
-        if (stale()) return
+        if (stale()) return null
         set((s) => ({
           status: {
             ...s.status,
@@ -464,9 +479,17 @@ export const useStream = create<StreamState>((set, get) => ({
       } catch {
         /* 状态接口非关键 */
       }
+      return { seq: lastSeq, epoch: lastEpoch }
     } catch (e) {
-      if (stale()) return
+      if (stale()) return null
+      // quiet 后台重载失败保留现有内容:快照接口短暂不可用(CLI 重启窗口等)
+      // 不应把健康的聊天替换成整屏错误页
+      if (quiet) {
+        console.warn('后台重载快照失败:', e)
+        return null
+      }
       set({ loading: false, error: e instanceof Error ? e.message : String(e) })
+      return null
     }
   },
 
@@ -475,6 +498,20 @@ export const useStream = create<StreamState>((set, get) => ({
     if (!sessionId || evt.session_id !== sessionId) return
     const type = String(evt.type ?? '')
     set({ lastEventAt: Date.now() })
+
+    // 水位去重:快照已覆盖(seq ≤ 水位)的回放事件丢弃;
+    // epoch 翻转说明服务端事件流重置,接受并就地重置水位
+    const seq = typeof evt.seq === 'number' ? evt.seq : null
+    if (seq !== null) {
+      const ep = typeof evt.epoch === 'string' ? evt.epoch : undefined
+      if (ep && lastEpoch && ep !== lastEpoch) {
+        lastEpoch = ep
+        lastSeq = seq
+      } else {
+        if (seq <= lastSeq) return
+        lastSeq = seq
+      }
+    }
 
     set((state) => {
       const items = [...state.items]
@@ -645,12 +682,12 @@ export const useStream = create<StreamState>((set, get) => ({
       void get().refreshPending()
     }
 
-    // 事件流自愈:轮次结束但本轮没有任何助手输出(疑似 delta 丢失),重载快照兜底
+    // 事件流自愈:轮次结束但本轮没有任何助手输出(疑似 delta 丢失),静默重载快照兜底
     if (type === 'turn.ended' || type === 'prompt.completed' || type === 'prompt.aborted') {
       const cur = get().items
       const lastItem = cur[cur.length - 1]
       if (lastItem?.kind === 'user') {
-        void get().load(sessionId)
+        void get().load(sessionId, { quiet: true })
       }
     }
 
@@ -677,7 +714,8 @@ export const useStream = create<StreamState>((set, get) => ({
 
   handleResync: () => {
     const { sessionId } = get()
-    if (sessionId) void get().load(sessionId)
+    // quiet 重载:非 quiet 会清空消息列表整屏 loading,每次 resync 都闪烁
+    if (sessionId) void get().load(sessionId, { quiet: true })
   },
 
   refreshPending: async () => {
@@ -703,22 +741,33 @@ export const useStream = create<StreamState>((set, get) => ({
       const normApprovals: PendingApproval[] = unwrap(approvalsRes).map((a) => {
         const o = a as Record<string, unknown>
         const display = (o.tool_input_display ?? {}) as Record<string, unknown>
+        // 选项(plan_review 类)在 tool_input_display.options 内,元素无 id 只有
+        // label/description(上游 display schema);顶层 options 不存在,勿回退
+        const rawOptions = Array.isArray(display.options) ? display.options : []
         return {
           id: String(o.approval_id ?? o.id ?? ''),
           tool_name: String(o.tool_name ?? ''),
           title: String(o.action ?? o.tool_name ?? '工具审批'),
           description: typeof o.description === 'string' ? o.description : undefined,
+          // plan_review 时把计划内容展示出来,否则盲批
           command:
             typeof display.command === 'string'
               ? display.command
-              : o.tool_input
-                ? JSON.stringify(o.tool_input).slice(0, 500)
-                : undefined,
-          options: Array.isArray(o.options)
-            ? (o.options as { id?: string; label?: string }[]).map((x) => ({
-                id: String(x.id ?? ''),
-                label: String(x.label ?? x.id ?? '')
-              }))
+              : typeof display.plan === 'string'
+                ? display.plan
+                : o.tool_input
+                  ? JSON.stringify(o.tool_input).slice(0, 500)
+                  : undefined,
+          options: rawOptions.length
+            ? rawOptions.map((x) => {
+                const op = x as { label?: unknown; description?: unknown }
+                const label = String(op.label ?? '')
+                return {
+                  id: label,
+                  label,
+                  description: typeof op.description === 'string' ? op.description : undefined
+                }
+              })
             : undefined,
           raw: o
         }
@@ -753,7 +802,7 @@ export const useStream = create<StreamState>((set, get) => ({
   sendPrompt: async (opts) => {
     const { sessionId } = get()
     const { text, attachments } = opts
-    if (!sessionId || (!text.trim() && !attachments?.length)) return
+    if (!sessionId || (!text.trim() && !attachments?.length)) return false
     const content: Record<string, unknown>[] = []
     for (const att of attachments ?? []) {
       if (att.type === 'image') {
@@ -806,6 +855,7 @@ export const useStream = create<StreamState>((set, get) => ({
           ...(opts.goalObjective ? { goal_objective: opts.goalObjective } : {})
         }
       })
+      return true
     } catch (e) {
       set((s) => ({
         items: [
@@ -814,6 +864,7 @@ export const useStream = create<StreamState>((set, get) => ({
         ],
         status: { ...s.status, busy: false }
       }))
+      return false
     }
   },
 
@@ -839,13 +890,19 @@ export const useStream = create<StreamState>((set, get) => ({
     set((s) => ({ status: { ...s.status, busy: false } }))
   },
 
-  answerApproval: async (id, decision, scope, feedback) => {
+  answerApproval: async (id, decision, scope, feedback, selectedLabel) => {
     const { sessionId } = get()
     if (!sessionId) return false
     try {
       await rest(`/api/v1/sessions/${sessionId}/approvals/${id}`, {
         method: 'POST',
-        body: { decision, ...(scope ? { scope } : {}), ...(feedback ? { feedback } : {}) }
+        body: {
+          decision,
+          ...(scope ? { scope } : {}),
+          ...(feedback ? { feedback } : {}),
+          // 选项应答(plan_review 等):上游协议以 selected_label 表达用户选了哪项
+          ...(selectedLabel ? { selected_label: selectedLabel } : {})
+        }
       })
     } catch (e) {
       console.error('提交审批失败:', e)
@@ -880,14 +937,21 @@ export const useStream = create<StreamState>((set, get) => ({
         body: {}
       })
     } catch (e) {
-      console.error('忽略问题失败:', e)
-      return false
+      // 上游 dismiss 的成功响应就是 code=40909(QUESTION_DISMISSED,"已驳回=幂等成功"),
+      // 而 REST 层 code≠0 一律 reject;其 msg 形如 "question <id> dismissed",按成功处理
+      const msg = e instanceof Error ? e.message : String(e)
+      if (!/dismissed/i.test(msg)) {
+        console.error('忽略问题失败:', e)
+        return false
+      }
     }
     await get().refreshPending()
     return true
   },
 
-  reset: () =>
+  reset: () => {
+    lastSeq = 0
+    lastEpoch = undefined
     set({
       sessionId: null,
       items: [],
@@ -898,4 +962,5 @@ export const useStream = create<StreamState>((set, get) => ({
       hasMore: false,
       loadingEarlier: false
     })
+  }
 }))

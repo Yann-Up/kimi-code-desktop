@@ -184,12 +184,22 @@ function fmtContext(n?: number): string {
 
 // ---------- 组件 ----------
 
+/** 按会话暂存的输入草稿(模块级):切会话/开设置页 Composer 卸载后文本不丢。
+ *  仅暂存文本;附件含已上传 fileId 与 base64,恢复链路复杂,暂不暂存 */
+const draftCache = new Map<string, string>()
+
 export function Composer({ sessionId }: { sessionId: string }) {
   const { sendPrompt, abort, status } = useStream()
   const { profile: delegateProfile, setProfile: setDelegateProfile } = useDelegate()
 
-  const [text, setText] = useState('')
+  const [text, setText] = useState(() => draftCache.get(sessionId) ?? '')
   const [attachments, setAttachments] = useState<Attachment[]>([])
+
+  // 草稿随写随存(空则清除),卸载/换会话后重新挂载时恢复
+  useEffect(() => {
+    if (text) draftCache.set(sessionId, text)
+    else draftCache.delete(sessionId)
+  }, [text, sessionId])
   const [attachNote, setAttachNote] = useState('')
   const [dragOver, setDragOver] = useState(false)
 
@@ -538,6 +548,7 @@ export function Composer({ sessionId }: { sessionId: string }) {
   const doSend = () => {
     if (!canSend) return
     const ready = attachments.filter((a) => a.kind === 'image' || a.fileId)
+    const sentText = text
     void sendPrompt({
       text,
       attachments: ready.map((a) =>
@@ -553,10 +564,14 @@ export function Composer({ sessionId }: { sessionId: string }) {
       planMode: mode === 'plan',
       swarmMode: mode === 'swarm',
       goalObjective: mode === 'goal' && goal.trim() ? goal.trim() : undefined
+    }).then((ok) => {
+      // 发送失败不清空:草稿仍在输入框(且 draftCache 已存),用户可直接重试
+      if (!ok) return
+      // 发送期间用户可能继续输入:仅在文本未变时清空,避免误删新内容
+      setText((cur) => (cur === sentText ? '' : cur))
+      setAttachments([])
+      setDelegateProfile(null)
     })
-    setText('')
-    setAttachments([])
-    setDelegateProfile(null)
   }
 
   // ---------- 渲染辅助 ----------

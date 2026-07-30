@@ -111,7 +111,7 @@ const api: KimiApi = {
     }),
 
   // ws
-  wsSubscribe: (sessionId) => invoke('ws_subscribe', { session_id: sessionId }),
+  wsSubscribe: (sessionId, cursor) => invoke('ws_subscribe', { session_id: sessionId, cursor }),
   wsUnsubscribe: (sessionId) => invoke('ws_unsubscribe', { session_id: sessionId }),
   onSessionEvent: (cb) => on('ws:session-event', cb),
   onResync: (cb) => on('ws:resync', cb),

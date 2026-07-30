@@ -20,8 +20,9 @@ mod ws;
 
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
+use std::time::Duration;
 
 use base64::Engine as _;
 use serde_json::{json, Value};
@@ -46,6 +47,12 @@ pub struct AppState {
     pub backend_running: AtomicBool,
     /// 退出清理标记:防止 ExitRequested 二次进入
     pub exit_cleaned: AtomicBool,
+    /// 服务代次:每次 init_backend(服务就绪)递增;WsClient 记录创建时的代次,
+    /// 与当前代次不一致即为绑定旧 port/token 的僵尸连接,ws_subscribe 据此关闭重建
+    pub generation: AtomicU64,
+    /// bootstrap 进行中的停止请求:stop_backend 置位,run_bootstrap 启动成功后检查,
+    /// 避免"安装/启动途中点停止"被随后完成的 bootstrap 静默撤销
+    pub manual_stop: AtomicBool,
 }
 
 impl AppState {
@@ -55,9 +62,17 @@ impl AppState {
             rest: tokio::sync::Mutex::new(None),
             server_info: tokio::sync::Mutex::new(None),
             ws: tokio::sync::Mutex::new(None),
-            http: reqwest::Client::new(),
+            // 显式超时:默认无超时的 Client 在连接 stall(SSH 转发断流/对端休眠)时
+            // 会永久挂起,卡死 start/stop/退出整条生命周期链路
+            http: reqwest::Client::builder()
+                .connect_timeout(Duration::from_secs(10))
+                .timeout(Duration::from_secs(30))
+                .build()
+                .unwrap_or_else(|_| reqwest::Client::new()),
             backend_running: AtomicBool::new(false),
             exit_cleaned: AtomicBool::new(false),
+            generation: AtomicU64::new(0),
+            manual_stop: AtomicBool::new(false),
         }
     }
 }
@@ -75,18 +90,21 @@ async fn init_backend(state: &AppState, info: &ServerInfo) {
     *state.server_info.lock().await = Some(info.clone());
     *state.rest.lock().await = Some(RestClient::new(info.clone(), state.http.clone()));
     state.backend_running.store(true, Ordering::SeqCst);
+    // 代次最后递增:读到新代次的 ws_subscribe 必能看到新 server_info
+    state.generation.fetch_add(1, Ordering::SeqCst);
 }
 
 /// kimi web 意外退出时的清理(server.rs 退出监控回调):
-/// 关 WS(绑定了旧的 port/token)→ 清 REST/ServerInfo → 复位 backend_running → 广播 server:exited。
+/// 先清 REST/ServerInfo(否则清理窗口内 ws_subscribe 会拿旧 port/token 建僵尸连接)
+/// → 关 WS → 复位 backend_running → 广播 server:exited。
 /// 不做的话崩溃后 start_backend 会因 server_info.is_some() 永久 no-op,卡死在假"运行中"状态
 pub(crate) async fn handle_unexpected_exit(app: &AppHandle, detail: &str) {
     let state = app.state::<Arc<AppState>>();
+    *state.rest.lock().await = None;
+    *state.server_info.lock().await = None;
     if let Some(ws) = state.ws.lock().await.take() {
         ws.close().await;
     }
-    *state.rest.lock().await = None;
-    *state.server_info.lock().await = None;
     state.backend_running.store(false, Ordering::SeqCst);
     let _ = app.emit("server:exited", json!({ "detail": detail }));
 }
@@ -230,15 +248,18 @@ async fn start_backend(app: AppHandle, state: State<'_, Arc<AppState>>) -> Resul
     Ok(())
 }
 
-/// 停止后端:关 WS(绑定了旧的 port/token)→ 停 kimi web → 清 REST/ServerInfo
+/// 停止后端:先清 REST/ServerInfo(停服窗口内 ws_subscribe 报 server not ready,
+/// 不会拿旧 port/token 建僵尸连接)→ 关 WS → 停 kimi web → 复位 backend_running
 #[tauri::command]
 async fn stop_backend(app: AppHandle, state: State<'_, Arc<AppState>>) -> Result<(), String> {
+    // 记录停止请求:bootstrap 进行中时 stop 对空 proc 空转,由 bootstrap 启动成功后自查
+    state.manual_stop.store(true, Ordering::SeqCst);
+    *state.rest.lock().await = None;
+    *state.server_info.lock().await = None;
     if let Some(ws) = state.ws.lock().await.take() {
         ws.close().await;
     }
     ServerManager::stop(&state.server, &state.http).await;
-    *state.rest.lock().await = None;
-    *state.server_info.lock().await = None;
     state.backend_running.store(false, Ordering::SeqCst);
     let _ = app.emit("server:stopped", ());
     Ok(())
@@ -322,16 +343,17 @@ async fn get_kimi_home() -> Value {
     })
 }
 
-/// 重启后端:WS 绑定了旧的 port/token,必须先关掉(下次 subscribe 时按新 ServerInfo 重建);
-/// 然后停服务、清 REST/ServerInfo、按新配置重新启动并广播 server:ready / server:error
+/// 重启后端:先清 REST/ServerInfo(理由同 stop_backend,杜绝僵尸 WS 窗口)→
+/// 关 WS(下次 subscribe 时按新 ServerInfo 重建)→ 停服务 → 按新配置重新启动
+/// 并广播 server:ready / server:error
 async fn restart_backend(app: &AppHandle, state: &AppState) -> Result<(), String> {
+    *state.rest.lock().await = None;
+    *state.server_info.lock().await = None;
+    state.backend_running.store(false, Ordering::SeqCst);
     if let Some(ws) = state.ws.lock().await.take() {
         ws.close().await;
     }
     ServerManager::stop(&state.server, &state.http).await;
-    *state.rest.lock().await = None;
-    *state.server_info.lock().await = None;
-    state.backend_running.store(false, Ordering::SeqCst);
 
     match ServerManager::start(&state.server, &state.http, app).await {
         Ok(info) => {
@@ -694,9 +716,10 @@ async fn fetch_provider_models(
         .await
         .map_err(|e| format!("响应不是合法 JSON:{e}"))?;
     if !status.is_success() {
-        let mut s = body.to_string();
-        if s.len() > 200 {
-            s.truncate(200);
+        // chars().take:truncate(200) 切断 UTF-8 字符边界会 panic(非 ASCII 错误响应)
+        let raw = body.to_string();
+        let mut s: String = raw.chars().take(200).collect();
+        if raw.chars().count() > 200 {
             s.push('…');
         }
         return Err(format!("HTTP {status}:{s}"));
@@ -726,15 +749,25 @@ async fn fetch_provider_models(
 
 // ---------- ws ----------
 
+/// cursor 为前端快照水位(as_of_seq/epoch):seed 订阅游标,服务端从水位之后回放,
+/// 避免与快照内容重复(切页往返消息翻倍的根因修复)
 #[tauri::command(rename_all = "snake_case")]
 async fn ws_subscribe(
     app: AppHandle,
     state: State<'_, Arc<AppState>>,
     session_id: String,
+    cursor: Option<ws::Cursor>,
 ) -> Result<(), String> {
-    // ensureWs:首次订阅时创建并连接
+    // ensureWs:首次订阅时创建并连接;代次不符说明绑定的是旧 port/token(僵尸连接),关闭重建
     {
         let mut ws_guard = state.ws.lock().await;
+        let generation = state.generation.load(Ordering::SeqCst);
+        if let Some(old) = ws_guard.as_ref() {
+            if old.generation() != generation {
+                old.close().await;
+                *ws_guard = None;
+            }
+        }
         if ws_guard.is_none() {
             let info = state
                 .server_info
@@ -742,14 +775,14 @@ async fn ws_subscribe(
                 .await
                 .clone()
                 .ok_or("server not ready")?;
-            let client = WsClient::new(info, app.clone(), log_dir(&app));
+            let client = WsClient::new(info, app.clone(), log_dir(&app), generation);
             client.start();
             *ws_guard = Some(client);
         }
     }
     let ws = state.ws.lock().await.clone();
     if let Some(ws) = ws {
-        ws.subscribe(&session_id).await;
+        ws.subscribe(&session_id, cursor).await;
     }
     Ok(())
 }
@@ -904,8 +937,15 @@ fn create_tray(app: &AppHandle) -> tauri::Result<()> {
 async fn run_bootstrap(app: AppHandle, state: Arc<AppState>) {
     let run = async {
         let target = cli::connection_target();
+        state.manual_stop.store(false, Ordering::SeqCst);
         // 1. 检测安装(仅本机目标支持自动安装;WSL/SSH 需用户自行在对应环境安装)
-        let mut version = cli::detect_installed().await;
+        // 非本机目标直接透传探测错误:detect_installed 的 Option 语义会把 SSH 认证
+        // 失败等真实错误吞成 None,误报为"未安装 CLI"引导用户重装
+        let mut version = if target.is_local() {
+            cli::detect_installed().await
+        } else {
+            Some(target.detect_cli().await?)
+        };
         if version.is_none() && target.is_local() {
             let _ = app.emit("cli:installing", ());
             cli::install_cli().await?;
@@ -939,6 +979,12 @@ async fn run_bootstrap(app: AppHandle, state: Arc<AppState>) {
         }
         // 3. 启动 kimi web
         let info = ServerManager::start(&state.server, &state.http, &app).await?;
+        // bootstrap 途中用户点了停止(stop_backend 对空 proc 空转):停掉刚拉起的服务,
+        // 尊重停止意图,而不是静默完成启动
+        if state.manual_stop.swap(false, Ordering::SeqCst) {
+            ServerManager::stop(&state.server, &state.http).await;
+            return Ok::<(), String>(());
+        }
         init_backend(&state, &info).await;
         let _ = app.emit(
             "server:ready",

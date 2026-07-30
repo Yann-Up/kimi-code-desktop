@@ -99,8 +99,13 @@ export function ChatPage({ sessionId }: { sessionId: string }) {
   const prevBusy = useRef(false)
 
   useEffect(() => {
-    void load(sessionId)
-    void window.kimiApi.wsSubscribe(sessionId)
+    let disposed = false
+    // 先快照后订阅:把快照水位(as_of_seq/epoch)带给服务端,回放从水位之后开始,
+    // 避免快照内容与游标回放双写(切走再回来消息翻倍的根因)
+    void (async () => {
+      const cursor = await load(sessionId)
+      if (!disposed) void window.kimiApi.wsSubscribe(sessionId, cursor ?? undefined)
+    })()
     const offEvt = window.kimiApi.onSessionEvent((evt) => {
       const e = evt as Record<string, unknown>
       if (e.session_id === sessionId) handleEvent(e)
@@ -109,12 +114,15 @@ export function ChatPage({ sessionId }: { sessionId: string }) {
       if (info.session_id === sessionId) handleResync()
     })
     // 后端重启(CLI 升级等)后 WS 连接由 Rust 侧重建,server:ready 时重新订阅当前会话
-    // 并静默重载快照,补齐断流期间错过的事件
+    // 并静默重载快照,补齐断流期间错过的事件;同样按"先快照后订阅"绑定水位
     const offReady = window.kimiApi.onServerReady(() => {
-      void window.kimiApi.wsSubscribe(sessionId)
-      void load(sessionId, { quiet: true })
+      void (async () => {
+        const cursor = await load(sessionId, { quiet: true })
+        if (!disposed) void window.kimiApi.wsSubscribe(sessionId, cursor ?? undefined)
+      })()
     })
     return () => {
+      disposed = true
       offEvt()
       offResync()
       offReady()
@@ -153,8 +161,14 @@ export function ChatPage({ sessionId }: { sessionId: string }) {
 
   if (error) {
     return (
-      <div className="flex flex-1 items-center justify-center">
+      <div className="flex flex-1 flex-col items-center justify-center gap-3">
         <p className="text-sm text-danger">加载会话失败:{error}</p>
+        <button
+          className="rounded-lg border border-border px-3.5 py-1.5 text-[13px] text-text-secondary hover:bg-surface-tertiary"
+          onClick={() => void load(sessionId)}
+        >
+          重试
+        </button>
       </div>
     )
   }

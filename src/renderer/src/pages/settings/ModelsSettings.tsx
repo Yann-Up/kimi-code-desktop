@@ -664,15 +664,14 @@ function DeviceFlow(props: {
           <div className="mt-1 flex items-center gap-2">
             {props.verifyUrl ? (
               <>
-                <a
-                  href={props.verifyUrl}
-                  target="_blank"
-                  rel="noreferrer"
+                {/* webview 内 target=_blank 默认不放行新窗口,走 openExternal 调系统浏览器 */}
+                <button
                   className="inline-flex min-w-0 items-center gap-1 text-[12.5px] text-primary hover:underline"
+                  onClick={() => void window.kimiApi.openExternal(props.verifyUrl!)}
                 >
                   <span className="max-w-[280px] truncate">{props.verifyUrl}</span>
                   <ExternalLink size={12} className="shrink-0" />
-                </a>
+                </button>
                 <CopyChip value={props.verifyUrl} />
               </>
             ) : (

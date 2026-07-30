@@ -112,7 +112,8 @@ export interface KimiApi {
   }): Promise<string[]>
 
   // ws
-  wsSubscribe(sessionId: string): Promise<any>
+  /** 订阅会话事件;cursor 为权威快照水位(as_of_seq/epoch),服务端从水位之后回放,避免与快照重复 */
+  wsSubscribe(sessionId: string, cursor?: { seq: number; epoch?: string }): Promise<any>
   wsUnsubscribe(sessionId: string): Promise<any>
   onSessionEvent(cb: (evt: unknown) => void): Unsubscribe
   onResync(cb: (info: { session_id: string; reason: string }) => void): Unsubscribe

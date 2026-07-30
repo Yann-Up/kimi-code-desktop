@@ -485,7 +485,9 @@ impl ConnectionTarget {
             command
                 .stdin(Stdio::piped())
                 .stdout(Stdio::piped())
-                .stderr(Stdio::piped());
+                .stderr(Stdio::piped())
+                // kill_on_drop:外层 timeout 返回后子进程随之被杀,不留 wsl.exe 残留
+                .kill_on_drop(true);
             let mut child = command
                 .spawn()
                 .map_err(|e| format!("wsl.exe 执行失败: {e}"))?;
@@ -734,9 +736,12 @@ impl ConnectionTarget {
                 }
             }
             ConnectionTarget::Wsl { distro } => {
+                // kill_on_drop:超时后子进程随之被杀,不留 wsl.exe 残留
                 let out = tokio::time::timeout(
                     Duration::from_secs(10),
-                    Self::wsl_shell_command(distro, "cat ~/.kimi-code/server.token").output(),
+                    Self::wsl_shell_command(distro, "cat ~/.kimi-code/server.token")
+                        .kill_on_drop(true)
+                        .output(),
                 )
                 .await
                 .map_err(|_| "wsl cat server.token 超时".to_string())?
@@ -887,7 +892,8 @@ impl ConnectionTarget {
             }
             ConnectionTarget::Ssh { .. } => unreachable!(),
         };
-        let out = tokio::time::timeout(Duration::from_secs(15), cmd.output())
+        // kill_on_drop:超时后子进程随之被杀,不留残留
+        let out = tokio::time::timeout(Duration::from_secs(15), cmd.kill_on_drop(true).output())
             .await
             .map_err(|_| format!("kimi --version 超时({})", self.describe()))?
             .map_err(|e| format!("kimi --version 执行失败({}): {e}", self.describe()))?;

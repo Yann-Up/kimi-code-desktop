@@ -130,9 +130,15 @@ export function GitPanel(props: { cwd: string }): JSX.Element {
     }
     setExpanded(k)
     if (diffs[k] === undefined) {
-      void window.kimiApi.gitDiff(cwd, c.path, c.staged).then((d) => {
-        setDiffs((m) => ({ ...m, [k]: typeof d === 'string' ? d : '' }))
-      })
+      void window.kimiApi
+        .gitDiff(cwd, c.path, c.staged)
+        .then((d) => {
+          setDiffs((m) => ({ ...m, [k]: typeof d === 'string' ? d : '' }))
+        })
+        // IPC 失败时落为空串(视为无 diff),否则 unhandled rejection 且展开区永远"加载中"
+        .catch(() => {
+          setDiffs((m) => ({ ...m, [k]: '' }))
+        })
     }
   }
 

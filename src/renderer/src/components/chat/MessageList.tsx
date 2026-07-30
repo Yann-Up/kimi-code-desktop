@@ -361,7 +361,11 @@ export function MessageList({ items }: { items: ChatItem[] }) {
   const startLoadEarlier = () => {
     const el = containerRef.current
     if (el) prependHeightRef.current = el.scrollHeight
-    void loadEarlier()
+    // 未实际发起( guard 拒绝/请求失败/会话已切换)时清掉记录的高度,
+    // 否则旧高度差会在下一次任意 items 变化时被误套用,视口猛跳
+    void loadEarlier().then((started) => {
+      if (!started) prependHeightRef.current = null
+    })
   }
 
   /* 贴底自动滚动:只滚消息容器自身(scrollIntoView 会连祖先一起滚导致整页跳动),
