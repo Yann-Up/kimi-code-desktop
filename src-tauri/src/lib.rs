@@ -1,0 +1,999 @@
+//! Kimi Code 桌面端 Tauri 后端:替代 Electron 主进程 + preload 的全部职责。
+//! 模块划分对照原 TS:
+//! - cli.rs          ↔ src/main/cli-manager.ts
+//! - server.rs       ↔ src/main/server-manager.ts
+//! - rest.rs         ↔ src/main/rest-client.ts
+//! - ws.rs           ↔ src/main/ws-client.ts
+//! - git.rs          ↔ src/main/git.ts
+//! - local_store.rs  ↔ src/main/local-store.ts
+//! - 本文件命令/事件 ↔ src/main/ipc.ts + index.ts
+
+mod cli;
+mod config;
+mod git;
+mod local_store;
+mod rest;
+mod server;
+mod ssh;
+mod target;
+mod ws;
+
+use std::collections::HashMap;
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+
+use base64::Engine as _;
+use serde_json::{json, Value};
+use tauri::menu::{MenuBuilder, MenuItemBuilder, PredefinedMenuItem};
+use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
+use tauri::{AppHandle, Emitter, Manager, State};
+use tauri_plugin_notification::NotificationExt;
+use tauri_plugin_opener::OpenerExt;
+
+use rest::RestClient;
+use server::{ServerInfo, ServerManager, SharedServer};
+use ws::WsClient;
+
+/// 全局状态:ServerManager / RestClient / WsClient 均以 tokio Mutex 管理
+pub struct AppState {
+    pub server: SharedServer,
+    pub rest: tokio::sync::Mutex<Option<RestClient>>,
+    pub server_info: tokio::sync::Mutex<Option<ServerInfo>>,
+    pub ws: tokio::sync::Mutex<Option<Arc<WsClient>>>,
+    pub http: reqwest::Client,
+    /// 后端(kimi web)是否在运行:供窗口关闭拦截判断,无锁读取
+    pub backend_running: AtomicBool,
+    /// 退出清理标记:防止 ExitRequested 二次进入
+    pub exit_cleaned: AtomicBool,
+}
+
+impl AppState {
+    fn new() -> Self {
+        Self {
+            server: Arc::new(tokio::sync::Mutex::new(ServerManager::default())),
+            rest: tokio::sync::Mutex::new(None),
+            server_info: tokio::sync::Mutex::new(None),
+            ws: tokio::sync::Mutex::new(None),
+            http: reqwest::Client::new(),
+            backend_running: AtomicBool::new(false),
+            exit_cleaned: AtomicBool::new(false),
+        }
+    }
+}
+
+/// <app_data_dir>/logs(等价 Electron 的 userData/logs)
+fn log_dir(app: &AppHandle) -> PathBuf {
+    app.path()
+        .app_data_dir()
+        .unwrap_or_else(|_| PathBuf::from("."))
+        .join("logs")
+}
+
+/// 服务就绪后初始化 REST 单例与 server_info(对应 ipc.ts initBackend)
+async fn init_backend(state: &AppState, info: &ServerInfo) {
+    *state.server_info.lock().await = Some(info.clone());
+    *state.rest.lock().await = Some(RestClient::new(info.clone(), state.http.clone()));
+    state.backend_running.store(true, Ordering::SeqCst);
+}
+
+/// kimi web 意外退出时的清理(server.rs 退出监控回调):
+/// 关 WS(绑定了旧的 port/token)→ 清 REST/ServerInfo → 复位 backend_running → 广播 server:exited。
+/// 不做的话崩溃后 start_backend 会因 server_info.is_some() 永久 no-op,卡死在假"运行中"状态
+pub(crate) async fn handle_unexpected_exit(app: &AppHandle, detail: &str) {
+    let state = app.state::<Arc<AppState>>();
+    if let Some(ws) = state.ws.lock().await.take() {
+        ws.close().await;
+    }
+    *state.rest.lock().await = None;
+    *state.server_info.lock().await = None;
+    state.backend_running.store(false, Ordering::SeqCst);
+    let _ = app.emit("server:exited", json!({ "detail": detail }));
+}
+
+// ---------- app ----------
+
+#[tauri::command]
+async fn app_info(app: AppHandle, state: State<'_, Arc<AppState>>) -> Result<Value, String> {
+    let info = state.server_info.lock().await;
+    Ok(json!({
+        "appVersion": app.package_info().version.to_string(),
+        "cliVersion": info.as_ref().map(|i| i.cli_version.clone()),
+        "port": info.as_ref().map(|i| i.port),
+        "meta": info.as_ref().and_then(|i| i.meta.clone()),
+    }))
+}
+
+#[tauri::command]
+async fn app_open_logs(app: AppHandle) -> Result<(), String> {
+    let dir = log_dir(&app);
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    app.opener()
+        .open_path(dir.to_string_lossy().into_owned(), None::<&str>)
+        .map_err(|e| e.to_string())
+}
+
+/// 打开外部链接:仅允许 http/https scheme(javascript:/file: 等一律拒绝,防链接劫持)
+#[tauri::command]
+fn open_external(app: AppHandle, target: String) -> Result<(), String> {
+    let lower = target.trim().to_lowercase();
+    if !(lower.starts_with("https://") || lower.starts_with("http://")) {
+        return Err(format!("不允许的链接协议(仅支持 http/https): {target}"));
+    }
+    app.opener()
+        .open_url(target, None::<&str>)
+        .map_err(|e| e.to_string())
+}
+
+/// 前端在退出确认弹窗中点"退出"后调用:直接退出(仍走 ExitRequested 优雅关停)
+#[tauri::command]
+fn confirm_close(app: AppHandle) {
+    app.exit(0);
+}
+
+/// app:notify 等价物
+#[tauri::command]
+fn notify(app: AppHandle, title: String, body: String) -> Result<(), String> {
+    app.notification()
+        .builder()
+        .title(title)
+        .body(body)
+        .show()
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn cli_upgrade(app: AppHandle, state: State<'_, Arc<AppState>>) -> Result<String, String> {
+    // WSL/SSH:CLI 在远端环境,走远端升级路径
+    let conn_target = cli::connection_target();
+    if !conn_target.is_local() {
+        return cli_upgrade_remote(&app, &state, &conn_target).await;
+    }
+    // 一键升级仅适用于官方脚本安装的 CLI(数据目录/bin 或默认目录/bin);
+    // npm 全局/自定义路径安装的请用对应包管理器升级
+    match cli::kimi_bin_source() {
+        "home" => {}
+        "custom" | "env" => {
+            return Err("当前 CLI 为自定义路径安装,请自行升级(如 npm update -g @moonshot-ai/kimi-code)".to_string())
+        }
+        _ => {
+            return Err("当前 CLI 来自 PATH(可能为 npm 安装),请用对应包管理器升级".to_string())
+        }
+    }
+    // kimi upgrade 本身失败时不 emit,直接抛错(与 Electron 版一致)
+    let _out = cli::upgrade_cli().await?;
+    // 升级后重启 kimi web 服务使新二进制生效
+    ServerManager::stop(&state.server, &state.http).await;
+    match ServerManager::start(&state.server, &state.http, &app).await {
+        Ok(info) => {
+            init_backend(&state, &info).await;
+            let _ = app.emit(
+                "cli:upgraded",
+                json!({ "version": info.cli_version, "restartOk": true }),
+            );
+            Ok(info.cli_version)
+        }
+        Err(e) => {
+            let _ = app.emit(
+                "cli:upgraded",
+                json!({ "version": Value::Null, "restartOk": false }),
+            );
+            Err(e)
+        }
+    }
+}
+
+/// WSL/SSH 远端升级:路径含 .kimi-code/bin 视为官方脚本安装(重跑安装脚本),
+/// 否则按 npm 全局安装处理(npm update -g,经 bash -lc 拿 PATH)。
+/// 完成后重启后端并广播 cli:upgraded(事件格式与本机升级一致)
+async fn cli_upgrade_remote(
+    app: &AppHandle,
+    state: &AppState,
+    conn_target: &target::ConnectionTarget,
+) -> Result<String, String> {
+    let bin = conn_target.kimi_bin_resolved().await?;
+    let cmd = if bin.contains(".kimi-code/bin") {
+        "curl -fsSL https://code.kimi.com/kimi-code/install.sh | bash".to_string()
+    } else {
+        "bash -lc 'npm update -g @moonshot-ai/kimi-code'".to_string()
+    };
+    let out = conn_target
+        .run_shell(&cmd, std::time::Duration::from_secs(600))
+        .await?;
+    if out.code != 0 {
+        let stderr: String = out.stderr.trim().chars().take(300).collect();
+        return Err(format!("远端升级失败({}): {stderr}", conn_target.describe()));
+    }
+    restart_backend(app, state).await?;
+    let version = cli::detect_installed().await;
+    let _ = app.emit(
+        "cli:upgraded",
+        json!({ "version": version, "restartOk": true }),
+    );
+    version.ok_or_else(|| "升级后检测 CLI 版本失败".to_string())
+}
+
+// ---------- 后端服务启停 ----------
+
+/// 手动启动后端:已在运行则直接返回;否则按 bootstrap 流程
+/// (CLI 检测→缺失则安装→查更新→启动 kimi web)异步执行,进度经事件广播
+#[tauri::command]
+async fn start_backend(app: AppHandle, state: State<'_, Arc<AppState>>) -> Result<(), String> {
+    if state.server_info.lock().await.is_some() {
+        return Ok(());
+    }
+    let app2 = app.clone();
+    let st = state.inner().clone();
+    tauri::async_runtime::spawn(async move {
+        run_bootstrap(app2, st).await;
+    });
+    Ok(())
+}
+
+/// 停止后端:关 WS(绑定了旧的 port/token)→ 停 kimi web → 清 REST/ServerInfo
+#[tauri::command]
+async fn stop_backend(app: AppHandle, state: State<'_, Arc<AppState>>) -> Result<(), String> {
+    if let Some(ws) = state.ws.lock().await.take() {
+        ws.close().await;
+    }
+    ServerManager::stop(&state.server, &state.http).await;
+    *state.rest.lock().await = None;
+    *state.server_info.lock().await = None;
+    state.backend_running.store(false, Ordering::SeqCst);
+    let _ = app.emit("server:stopped", ());
+    Ok(())
+}
+
+/// 启动应用时是否自动连接服务(默认 false:进入手动启动页)
+#[tauri::command]
+fn get_auto_start(app: AppHandle) -> bool {
+    config::load(&app).auto_start.unwrap_or(false)
+}
+
+#[tauri::command]
+fn set_auto_start(app: AppHandle, enabled: bool) -> Result<(), String> {
+    let mut cfg = config::load(&app);
+    cfg.auto_start = Some(enabled);
+    config::save(&app, &cfg)
+}
+
+/// npm 快捷升级(npm 全局/自定义路径安装时可用):npm update -g → 重启后端 → 广播 cli:upgraded
+#[tauri::command]
+async fn cli_npm_upgrade(app: AppHandle, state: State<'_, Arc<AppState>>) -> Result<String, String> {
+    if cli::kimi_bin_source() == "home" {
+        return Err("当前为官方脚本安装,请使用应用内一键升级".to_string());
+    }
+    let _out = cli::npm_upgrade().await?;
+    // 服务在跑则重启使新版本生效;未启动只需报告新版本号
+    let was_running = state.server_info.lock().await.is_some();
+    if was_running {
+        restart_backend(&app, &state).await?;
+    }
+    let version = cli::detect_installed().await;
+    let _ = app.emit(
+        "cli:upgraded",
+        json!({ "version": version, "restartOk": was_running }),
+    );
+    version.ok_or_else(|| "升级后检测 CLI 版本失败".to_string())
+}
+
+// ---------- kimi 数据目录(工作区) ----------
+
+/// 当前数据目录信息:生效路径 / 来源(custom|env|default|remote)/ 默认路径。
+/// 非本机目标返回远端数据目录(远端 $HOME/.kimi-code,经目标通道探测;
+/// 探测失败回退 "~/.kimi-code" 字样,不影响设置页打开)
+#[tauri::command]
+async fn get_kimi_home() -> Value {
+    let target = cli::connection_target();
+    if target.is_local() {
+        return json!({
+            "home": cli::kimi_home().to_string_lossy(),
+            "source": cli::kimi_home_source(),
+            "defaultHome": cli::default_kimi_home().to_string_lossy(),
+        });
+    }
+    let home = target
+        .kimi_home_str()
+        .await
+        .unwrap_or_else(|_| "~/.kimi-code".to_string());
+    json!({
+        "home": home,
+        "source": "remote",
+        "defaultHome": home,
+    })
+}
+
+/// 重启后端:WS 绑定了旧的 port/token,必须先关掉(下次 subscribe 时按新 ServerInfo 重建);
+/// 然后停服务、清 REST/ServerInfo、按新配置重新启动并广播 server:ready / server:error
+async fn restart_backend(app: &AppHandle, state: &AppState) -> Result<(), String> {
+    if let Some(ws) = state.ws.lock().await.take() {
+        ws.close().await;
+    }
+    ServerManager::stop(&state.server, &state.http).await;
+    *state.rest.lock().await = None;
+    *state.server_info.lock().await = None;
+    state.backend_running.store(false, Ordering::SeqCst);
+
+    match ServerManager::start(&state.server, &state.http, app).await {
+        Ok(info) => {
+            init_backend(state, &info).await;
+            let _ = app.emit(
+                "server:ready",
+                json!({ "cliVersion": info.cli_version, "port": info.port, "meta": info.meta }),
+            );
+            Ok(())
+        }
+        Err(e) => {
+            let _ = app.emit("server:error", e.clone());
+            Err(e)
+        }
+    }
+}
+
+/// 设置/清除自定义数据目录:持久化 → 重启 kimi web 服务 → 重新初始化 REST/WS。
+/// path 为 None 时恢复默认(清除覆盖)。
+#[tauri::command]
+async fn set_kimi_home(
+    app: AppHandle,
+    state: State<'_, Arc<AppState>>,
+    path: Option<String>,
+) -> Result<Value, String> {
+    let override_path = match path {
+        Some(p) => {
+            let p = p.trim().to_string();
+            if p.is_empty() {
+                return Err("路径不能为空".to_string());
+            }
+            let dir = PathBuf::from(&p);
+            // 目录不存在则创建(全新工作区是合法场景)
+            std::fs::create_dir_all(&dir).map_err(|e| format!("创建目录失败: {e}"))?;
+            if !dir.is_dir() {
+                return Err("路径不是目录".to_string());
+            }
+            Some(dir)
+        }
+        None => None,
+    };
+
+    // 持久化(合并已有配置,保留 cli_bin)+ 应用到全局
+    let mut cfg = config::load(&app);
+    cfg.kimi_home = override_path
+        .as_ref()
+        .map(|p| p.to_string_lossy().into_owned());
+    config::save(&app, &cfg)?;
+    cli::set_kimi_home_override(override_path);
+
+    restart_backend(&app, &state).await?;
+    Ok(get_kimi_home().await)
+}
+
+// ---------- 连接目标(本机 / WSL / SSH) ----------
+
+/// 首次启动向导状态(App.tsx 挂载时据此决定是否进入向导)
+#[tauri::command]
+fn get_setup_state(app: AppHandle) -> Value {
+    json!({
+        "setupDone": config::load(&app).setup_done.unwrap_or(false),
+    })
+}
+
+/// 复位向导标记(设置页"重新运行初始向导"入口):下次启动或前端主动打开时重新进入向导
+#[tauri::command]
+fn reset_setup(app: AppHandle) -> Result<(), String> {
+    let mut cfg = config::load(&app);
+    cfg.setup_done = Some(false);
+    config::save(&app, &cfg)
+}
+
+/// 测试连接目标(向导/设置页"测试连接"用,不持久化):
+/// SSH 走完整认证 + kimi --version(password 显式传入,不进共享缓存);
+/// WSL 走 wsl detect;Local 走本地 detect
+#[tauri::command]
+async fn test_connection_target(cfg: Value, password: Option<String>) -> Result<Value, String> {
+    let conn: target::ConnectionConfig =
+        serde_json::from_value(cfg).map_err(|e| format!("连接目标配置格式错误: {e}"))?;
+    let target = target::ConnectionTarget::from(conn);
+    if let target::ConnectionTarget::Ssh { host, .. } = &target {
+        if host.trim().is_empty() {
+            return Err("SSH 目标必须填写 user@host".to_string());
+        }
+    }
+    let version = target
+        .detect_cli_with_password(password.as_deref().filter(|p| !p.is_empty()))
+        .await?;
+    Ok(json!({
+        "version": version,
+        "describe": target.describe(),
+    }))
+}
+
+/// 当前连接目标配置与展示名(设置页用);hasPassword 供回显"已保存密码",
+/// config.remoteBin 取自全局覆盖(ConnectionTarget 本身不携带,这里补回供设置页回显/保存时保留)
+#[tauri::command]
+fn get_connection_target() -> Value {
+    let target = cli::connection_target();
+    let has_password = match &target {
+        target::ConnectionTarget::Ssh { .. } => target
+            .ssh_config()
+            .map(|c| ssh::has_password(&c.user, &c.host, c.port))
+            .unwrap_or(false),
+        _ => false,
+    };
+    let mut config = target::ConnectionConfig::from(&target);
+    config.remote_bin = cli::remote_bin_override();
+    json!({
+        "config": config,
+        "describe": target.describe(),
+        "hasPassword": has_password,
+    })
+}
+
+/// 切换连接目标:持久化 → 重启 kimi web 服务(照 set_kimi_home 模式)。
+/// SSH 目标必须填写 host;非本机目标下数据目录/CLI 路径设置不生效(远端用自己的 ~/.kimi-code)。
+/// ssh_auth = "password" 且传入 password 时,密码存 keyring(keyring 不可用则直接报错),
+/// 密码永不写入 desktop-config.json;保存后置 setup_done = true(向导完成)
+#[tauri::command]
+async fn set_connection_target(
+    app: AppHandle,
+    state: State<'_, Arc<AppState>>,
+    cfg: Value,
+    password: Option<String>,
+) -> Result<Value, String> {
+    let conn: target::ConnectionConfig =
+        serde_json::from_value(cfg).map_err(|e| format!("连接目标配置格式错误: {e}"))?;
+    let target = target::ConnectionTarget::from(conn.clone());
+    if let target::ConnectionTarget::Ssh { host, .. } = &target {
+        if host.trim().is_empty() {
+            return Err("SSH 目标必须填写 user@host".to_string());
+        }
+    }
+
+    // 密码认证:保存到系统凭据管理器。ssh 侧只从 keyring 读密码,
+    // keyring 写失败则后端启动必失败,这里直接报错(不做无实际存储的假"内存生效"降级)
+    let mut password_saved = false;
+    if let target::ConnectionTarget::Ssh { auth, .. } = &target {
+        if auth.as_deref() != Some("key") {
+            if let Some(pw) = password.as_deref().filter(|p| !p.is_empty()) {
+                target
+                    .ssh_config()
+                    .and_then(|c| ssh::save_password(&c.user, &c.host, c.port, pw))
+                    .map_err(|e| format!("系统凭据管理器不可用,密码无法保存: {e}"))?;
+                password_saved = true;
+            }
+        }
+    }
+
+    let mut desktop = config::load(&app);
+    desktop.connection = Some(conn);
+    desktop.setup_done = Some(true);
+    config::save(&app, &desktop)?;
+    // 目标可能变化:丢弃旧 SSH 共享连接与远端路径缓存,restart 时按新配置重连/重探测
+    ssh::invalidate().await;
+    target::invalidate_remote_caches();
+    // 应用新配置的远端 CLI 覆盖(随连接目标一起持久化在 connection.remoteBin;空串视为 None)
+    cli::set_remote_bin_override(
+        desktop
+            .connection
+            .as_ref()
+            .and_then(|c| c.remote_bin.clone())
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty()),
+    );
+    cli::set_connection_target(target);
+
+    restart_backend(&app, &state).await?;
+    let mut out = get_connection_target();
+    if let Some(obj) = out.as_object_mut() {
+        obj.insert("passwordSaved".to_string(), json!(password_saved));
+    }
+    Ok(out)
+}
+
+// ---------- CLI 二进制来源 ----------
+
+/// 当前 CLI 二进制信息:生效路径 / 来源 / 版本。
+/// Local:来源 custom|env|home|path;WSL/SSH:来源 custom(remote_bin 覆盖)|auto(自动探测),
+/// 探测失败时 bin/version 给 null(不报错,设置页仍要能打开)
+#[tauri::command]
+async fn get_cli_bin() -> Value {
+    let conn_target = cli::connection_target();
+    if conn_target.is_local() {
+        return json!({
+            "bin": cli::kimi_bin(),
+            "source": cli::kimi_bin_source(),
+            "version": cli::detect_installed().await,
+        });
+    }
+    let (bin, version) = match conn_target.kimi_bin_resolved().await {
+        Ok(bin) => {
+            let version = conn_target.detect_cli().await.ok().filter(|v| !v.is_empty());
+            (Value::String(bin), version.map_or(Value::Null, Value::String))
+        }
+        Err(_) => (Value::Null, Value::Null),
+    };
+    json!({
+        "bin": bin,
+        "source": if cli::remote_bin_override().is_some() { "custom" } else { "auto" },
+        "version": version,
+    })
+}
+
+/// 指定/清除远端 CLI 二进制路径(仅 WSL/SSH 连接目标;None 恢复自动探测)。
+/// Some 时必须是 / 开头的绝对路径且在目标上可执行(test -x);
+/// 持久化到 connection.remoteBin → 应用覆盖 → 清探测缓存 → 重启服务 → 返回最新 CLI 状态
+#[tauri::command]
+async fn set_remote_bin(
+    app: AppHandle,
+    state: State<'_, Arc<AppState>>,
+    path: Option<String>,
+) -> Result<Value, String> {
+    let conn_target = cli::connection_target();
+    if conn_target.is_local() {
+        return Err("远端 CLI 路径仅在 WSL/SSH 连接目标下可设置".to_string());
+    }
+    let bin = match path {
+        Some(p) => {
+            let p = p.trim().to_string();
+            if !p.starts_with('/') {
+                return Err("远端路径必须是 / 开头的绝对路径".to_string());
+            }
+            let out = conn_target
+                .run_shell(
+                    &format!("test -x {}", target::sq(&p)),
+                    std::time::Duration::from_secs(15),
+                )
+                .await?;
+            if out.code != 0 {
+                return Err(format!("自定义远端路径不可执行: {p}"));
+            }
+            Some(p)
+        }
+        None => None,
+    };
+
+    // 持久化(连接目标本身不变,只更新 remoteBin 字段)
+    let mut cfg = config::load(&app);
+    let mut conn = cfg
+        .connection
+        .unwrap_or_else(|| target::ConnectionConfig::from(&conn_target));
+    conn.remote_bin = bin.clone();
+    cfg.connection = Some(conn);
+    config::save(&app, &cfg)?;
+    cli::set_remote_bin_override(bin);
+    // 路径变化:丢弃探测缓存,restart 时按新路径/重新探测
+    target::invalidate_remote_caches();
+
+    restart_backend(&app, &state).await?;
+    Ok(get_cli_bin().await)
+}
+
+/// 指定/清除自定义 CLI 二进制(npm 全局安装选 D:\...\nodejs\kimi.cmd 这类 shim 亦可,
+/// .cmd/.bat 自动经 cmd.exe 包装)。path 为 None 时恢复自动解析。
+#[tauri::command]
+async fn set_cli_bin(
+    app: AppHandle,
+    state: State<'_, Arc<AppState>>,
+    path: Option<String>,
+) -> Result<Value, String> {
+    let bin = match path {
+        Some(p) => {
+            let p = p.trim().to_string();
+            if p.is_empty() {
+                return Err("路径不能为空".to_string());
+            }
+            if !PathBuf::from(&p).is_file() {
+                return Err(format!("文件不存在: {p}"));
+            }
+            Some(p)
+        }
+        None => None,
+    };
+
+    let mut cfg = config::load(&app);
+    cfg.cli_bin = bin.clone();
+    config::save(&app, &cfg)?;
+    cli::set_cli_bin_override(bin);
+
+    restart_backend(&app, &state).await?;
+    Ok(get_cli_bin().await)
+}
+
+// ---------- rest ----------
+
+#[tauri::command]
+async fn rest_request(
+    state: State<'_, Arc<AppState>>,
+    method: Option<String>,
+    path: String,
+    body: Option<Value>,
+    query: Option<HashMap<String, String>>,
+) -> Result<Value, String> {
+    // 锁内 clone 出 RestClient 后即释放 guard,HTTP await 不再持有全局锁(避免所有 REST 调用串行化)
+    let rest = state.rest.lock().await.clone().ok_or("server not ready")?;
+    rest.request(method.as_deref(), &path, body, query)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// 拉取服务端文件(图片等),字节转 base64 返回(桥接层解码)
+#[tauri::command(rename_all = "snake_case")]
+async fn rest_file(state: State<'_, Arc<AppState>>, file_id: String) -> Result<String, String> {
+    // 同 rest_request:clone 后即释放锁
+    let rest = state.rest.lock().await.clone().ok_or("server not ready")?;
+    let bytes = rest.download_file(&file_id).await.map_err(|e| e.to_string())?;
+    Ok(base64::engine::general_purpose::STANDARD.encode(bytes))
+}
+
+#[tauri::command(rename_all = "snake_case")]
+async fn rest_upload(
+    state: State<'_, Arc<AppState>>,
+    bytes_base64: String,
+    name: String,
+    media_type: String,
+) -> Result<Value, String> {
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(bytes_base64)
+        .map_err(|e| e.to_string())?;
+    // 同 rest_request:clone 后即释放锁
+    let rest = state.rest.lock().await.clone().ok_or("server not ready")?;
+    rest.upload_file(bytes, &name, &media_type)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+// ---------- ws ----------
+
+#[tauri::command(rename_all = "snake_case")]
+async fn ws_subscribe(
+    app: AppHandle,
+    state: State<'_, Arc<AppState>>,
+    session_id: String,
+) -> Result<(), String> {
+    // ensureWs:首次订阅时创建并连接
+    {
+        let mut ws_guard = state.ws.lock().await;
+        if ws_guard.is_none() {
+            let info = state
+                .server_info
+                .lock()
+                .await
+                .clone()
+                .ok_or("server not ready")?;
+            let client = WsClient::new(info, app.clone(), log_dir(&app));
+            client.start();
+            *ws_guard = Some(client);
+        }
+    }
+    let ws = state.ws.lock().await.clone();
+    if let Some(ws) = ws {
+        ws.subscribe(&session_id).await;
+    }
+    Ok(())
+}
+
+#[tauri::command(rename_all = "snake_case")]
+async fn ws_unsubscribe(
+    state: State<'_, Arc<AppState>>,
+    session_id: String,
+) -> Result<(), String> {
+    let ws = state.ws.lock().await.clone();
+    if let Some(ws) = ws {
+        ws.unsubscribe(&session_id).await;
+    }
+    Ok(())
+}
+
+// ---------- git ----------
+
+#[tauri::command]
+async fn git_status(cwd: String) -> git::GitStatus {
+    git::git_status(&cwd).await
+}
+
+#[tauri::command]
+async fn git_log(cwd: String, limit: Option<u32>) -> Vec<git::GitCommit> {
+    git::git_log(&cwd, limit).await
+}
+
+#[tauri::command]
+async fn git_diff(cwd: String, path: String, staged: bool) -> String {
+    git::git_diff_file(&cwd, &path, staged).await
+}
+
+// ---------- local ----------
+
+#[tauri::command]
+async fn local_plugins() -> Vec<local_store::PluginEntry> {
+    local_store::list_plugins().await
+}
+
+#[tauri::command]
+async fn local_skills() -> Vec<local_store::SkillEntry> {
+    local_store::list_skills().await
+}
+
+#[tauri::command]
+async fn local_agents() -> Vec<local_store::AgentProfile> {
+    local_store::list_agent_profiles().await
+}
+
+#[tauri::command]
+async fn local_cron() -> Vec<local_store::CronEntry> {
+    local_store::list_cron_jobs().await
+}
+
+#[tauri::command]
+async fn local_usage() -> Vec<local_store::UsageByWorkdir> {
+    local_store::aggregate_usage().await
+}
+
+#[tauri::command]
+async fn local_usage_daily(days: Option<u32>) -> local_store::UsageDailyResult {
+    local_store::aggregate_usage_daily(days.unwrap_or(30)).await
+}
+
+/// 今日逐小时用量(实时曲线,Tauri 专属)
+#[tauri::command]
+async fn local_usage_today() -> local_store::UsageTodayResult {
+    local_store::aggregate_usage_today().await
+}
+
+#[tauri::command]
+async fn local_mcp_read() -> Value {
+    local_store::read_mcp_config().await
+}
+
+#[tauri::command]
+async fn local_mcp_write(data: Value) -> Result<String, String> {
+    local_store::write_mcp_config(data).await
+}
+
+#[tauri::command]
+fn local_drives() -> Vec<String> {
+    local_store::list_drives()
+}
+
+// ---------- 托盘 ----------
+
+/// 托盘图标:打包后 resource_dir/tray.png;dev 回退 ../build/tray.png(项目 build/tray.png)
+fn tray_icon(app: &AppHandle) -> Option<tauri::image::Image<'static>> {
+    let mut candidates: Vec<PathBuf> = Vec::new();
+    if let Ok(dir) = app.path().resource_dir() {
+        candidates.push(dir.join("tray.png"));
+    }
+    candidates.push(PathBuf::from("../build/tray.png"));
+    for p in candidates {
+        if let Ok(img) = tauri::image::Image::from_path(&p) {
+            return Some(img);
+        }
+    }
+    None
+}
+
+fn create_tray(app: &AppHandle) -> tauri::Result<()> {
+    let Some(icon) = tray_icon(app) else {
+        return Ok(());
+    };
+    let show = MenuItemBuilder::with_id("show", "显示主窗口").build(app)?;
+    let sep = PredefinedMenuItem::separator(app)?;
+    let quit = MenuItemBuilder::with_id("quit", "退出").build(app)?;
+    let menu = MenuBuilder::new(app).items(&[&show, &sep, &quit]).build()?;
+    TrayIconBuilder::with_id("main-tray")
+        .icon(icon)
+        .tooltip("Kimi Code Desktop")
+        .menu(&menu)
+        .on_menu_event(|app, event| match event.id().as_ref() {
+            "show" => {
+                if let Some(w) = app.get_webview_window("main") {
+                    let _ = w.show();
+                    let _ = w.set_focus();
+                }
+            }
+            "quit" => app.exit(0),
+            _ => {}
+        })
+        .on_tray_icon_event(|tray, event| {
+            if let TrayIconEvent::Click {
+                button: MouseButton::Left,
+                button_state: MouseButtonState::Up,
+                ..
+            } = event
+            {
+                if let Some(w) = tray.app_handle().get_webview_window("main") {
+                    // 可见则聚焦,不可见则显示
+                    if w.is_visible().unwrap_or(false) {
+                        let _ = w.set_focus();
+                    } else {
+                        let _ = w.show();
+                        let _ = w.set_focus();
+                    }
+                }
+            }
+        })
+        .build(app)?;
+    Ok(())
+}
+
+// ---------- bootstrap ----------
+
+/// 启动流程:CLI 自检测(缺则自动装)→ 查更新(不阻塞)→ 启动 kimi web。
+/// 由 setup(auto_start 开启时)和 start_backend 命令(手动启动)共用。
+async fn run_bootstrap(app: AppHandle, state: Arc<AppState>) {
+    let run = async {
+        let target = cli::connection_target();
+        // 1. 检测安装(仅本机目标支持自动安装;WSL/SSH 需用户自行在对应环境安装)
+        let mut version = cli::detect_installed().await;
+        if version.is_none() && target.is_local() {
+            let _ = app.emit("cli:installing", ());
+            cli::install_cli().await?;
+            version = cli::detect_installed().await;
+            if version.is_none() {
+                return Err("CLI 安装后仍不可用,请手动执行: irm https://code.kimi.com/kimi-code/install.ps1 | iex".to_string());
+            }
+            let _ = app.emit("cli:installed", version.clone().unwrap());
+        }
+        let Some(version) = version else {
+            return Err(format!(
+                "未能在 {} 检测到 kimi CLI,请先在该环境安装后重试",
+                target.describe()
+            ));
+        };
+        // 2. 查更新(不阻塞启动;仅本机目标,npm 查询对远端环境无意义)
+        if target.is_local() {
+            let app2 = app.clone();
+            let http = state.http.clone();
+            let current = version.clone();
+            tauri::async_runtime::spawn(async move {
+                if let Some(latest) = cli::fetch_latest_version(&http).await {
+                    if cli::is_newer(&latest, &current) {
+                        let _ = app2.emit(
+                            "cli:update-available",
+                            json!({ "current": current, "latest": latest }),
+                        );
+                    }
+                }
+            });
+        }
+        // 3. 启动 kimi web
+        let info = ServerManager::start(&state.server, &state.http, &app).await?;
+        init_backend(&state, &info).await;
+        let _ = app.emit(
+            "server:ready",
+            json!({ "cliVersion": info.cli_version, "port": info.port, "meta": info.meta }),
+        );
+        Ok::<(), String>(())
+    };
+    if let Err(e) = run.await {
+        eprintln!("bootstrap failed: {e}");
+        let _ = app.emit("server:error", e);
+    }
+}
+
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
+pub fn run() {
+    let state = Arc::new(AppState::new());
+    let state_for_setup = state.clone();
+
+    let app = tauri::Builder::default()
+        // 单实例:第二实例 show + focus 主窗口
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            if let Some(w) = app.get_webview_window("main") {
+                if w.is_minimized().unwrap_or(false) {
+                    let _ = w.unminimize();
+                }
+                let _ = w.show();
+                let _ = w.set_focus();
+            }
+        }))
+        .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_opener::init())
+        .manage(state)
+        .invoke_handler(tauri::generate_handler![
+            app_info,
+            app_open_logs,
+            open_external,
+            confirm_close,
+            notify,
+            cli_upgrade,
+            cli_npm_upgrade,
+            start_backend,
+            stop_backend,
+            get_auto_start,
+            set_auto_start,
+            get_kimi_home,
+            set_kimi_home,
+            get_setup_state,
+            reset_setup,
+            test_connection_target,
+            get_connection_target,
+            set_connection_target,
+            get_cli_bin,
+            set_cli_bin,
+            set_remote_bin,
+            rest_request,
+            rest_file,
+            rest_upload,
+            ws_subscribe,
+            ws_unsubscribe,
+            git_status,
+            git_log,
+            git_diff,
+            local_plugins,
+            local_skills,
+            local_agents,
+            local_cron,
+            local_usage,
+            local_usage_daily,
+            local_usage_today,
+            local_mcp_read,
+            local_mcp_write,
+            local_drives,
+        ])
+        .setup(move |app| {
+            // 加载用户自定义配置(数据目录/CLI 二进制,必须先于 bootstrap 启动服务)
+            let cfg = config::load(app.handle());
+            if let Some(home) = cfg.kimi_home {
+                if !home.trim().is_empty() {
+                    cli::set_kimi_home_override(Some(PathBuf::from(home)));
+                }
+            }
+            if let Some(bin) = cfg.cli_bin {
+                if !bin.trim().is_empty() {
+                    cli::set_cli_bin_override(Some(bin));
+                }
+            }
+            // 连接目标(本机 / WSL / SSH),必须先于 bootstrap 启动服务;
+            // 同时加载其携带的远端 CLI 覆盖(WSL/SSH 生效)
+            if let Some(conn) = cfg.connection {
+                cli::set_remote_bin_override(
+                    conn.remote_bin
+                        .clone()
+                        .map(|s| s.trim().to_string())
+                        .filter(|s| !s.is_empty()),
+                );
+                cli::set_connection_target(conn.into());
+            }
+            create_tray(app.handle())?;
+            // 关闭拦截:后端运行中时不直接关窗,通知前端弹退出确认框(确认后走 confirm_close);
+            // 覆盖标题栏关闭按钮、Alt+F4、任务栏关闭等所有关窗路径
+            if let Some(win) = app.get_webview_window("main") {
+                let st = app.state::<Arc<AppState>>().inner().clone();
+                let win2 = win.clone();
+                win.on_window_event(move |e| {
+                    if let tauri::WindowEvent::CloseRequested { api, .. } = e {
+                        if st.backend_running.load(Ordering::SeqCst) {
+                            api.prevent_close();
+                            let _ = win2.emit("app:close-requested", ());
+                        }
+                    }
+                });
+            }
+            // 默认不自动连接:仅在用户开启 auto_start 时启动后端,否则进入手动启动页
+            if cfg.auto_start.unwrap_or(false) {
+                let app2 = app.handle().clone();
+                let st = state_for_setup.clone();
+                tauri::async_runtime::spawn(async move {
+                    run_bootstrap(app2, st).await;
+                });
+            }
+            Ok(())
+        })
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application");
+
+    // 退出前优雅关停 kimi web(对应 Electron 的 before-quit)
+    app.run(|handle, event| {
+        if let tauri::RunEvent::ExitRequested { api, .. } = event {
+            let state = handle.state::<Arc<AppState>>();
+            if !state.exit_cleaned.swap(true, Ordering::SeqCst) {
+                api.prevent_exit();
+                let h = handle.clone();
+                tauri::async_runtime::spawn(async move {
+                    let s = h.state::<Arc<AppState>>();
+                    ServerManager::stop(&s.server, &s.http).await;
+                    h.exit(0);
+                });
+            }
+        }
+    });
+}

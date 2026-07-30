@@ -1,0 +1,121 @@
+@import 'tailwindcss';
+
+@theme {
+  /* Kimi Web 风格:白底 + 蓝色主色 */
+  --color-primary: #2563eb;
+  --color-primary-hover: #1d4ed8;
+  --color-primary-soft: #eff6ff;
+  --color-primary-border: #bfdbfe;
+  --color-surface: #ffffff;
+  --color-surface-secondary: #f8fafc;
+  --color-surface-tertiary: #f1f5f9;
+  --color-border: #e2e8f0;
+  --color-border-light: #f1f5f9;
+  --color-text: #0f172a;
+  --color-text-secondary: #475569;
+  --color-text-tertiary: #94a3b8;
+  --color-success: #16a34a;
+  --color-success-soft: #f0fdf4;
+  --color-danger: #dc2626;
+  --color-danger-soft: #fef2f2;
+  --color-warning: #d97706;
+  --color-warning-soft: #fffbeb;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-family:
+    -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB',
+    'Microsoft YaHei', sans-serif;
+  font-size: 14px;
+  overflow: hidden;
+  user-select: none;
+}
+
+/* 标题栏拖拽区 */
+.drag-region {
+  -webkit-app-region: drag;
+}
+.no-drag {
+  -webkit-app-region: no-drag;
+}
+
+/* 滚动条 */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* Markdown 内容 */
+.markdown-body {
+  user-select: text;
+  line-height: 1.7;
+  word-break: break-word;
+}
+.markdown-body pre {
+  background: var(--color-surface-tertiary);
+  border: 1px solid var(--color-border-light);
+  border-radius: 8px;
+  padding: 12px;
+  overflow-x: auto;
+  font-size: 13px;
+}
+.markdown-body code {
+  font-family: 'Cascadia Code', Consolas, 'Courier New', monospace;
+  font-size: 0.92em;
+}
+.markdown-body p > code,
+.markdown-body li > code,
+.markdown-body td > code {
+  background: var(--color-surface-tertiary);
+  padding: 1px 5px;
+  border-radius: 4px;
+}
+.markdown-body h1,
+.markdown-body h2,
+.markdown-body h3,
+.markdown-body h4 {
+  margin: 0.8em 0 0.4em;
+  font-weight: 600;
+}
+.markdown-body p {
+  margin: 0.5em 0;
+}
+.markdown-body ul,
+.markdown-body ol {
+  margin: 0.4em 0;
+  padding-left: 1.6em;
+}
+.markdown-body table {
+  border-collapse: collapse;
+  margin: 0.6em 0;
+}
+.markdown-body th,
+.markdown-body td {
+  border: 1px solid var(--color-border);
+  padding: 4px 10px;
+}
+.markdown-body a {
+  color: var(--color-primary);
+}
+.markdown-body blockquote {
+  border-left: 3px solid var(--color-primary-border);
+  margin: 0.5em 0;
+  padding: 2px 12px;
+  color: var(--color-text-secondary);
+}

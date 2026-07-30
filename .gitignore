@@ -1,0 +1,12 @@
+node_modules
+out
+dist
+release
+.ebin
+.npm-cache
+*.log
+.DS_Store
+.idea/
+.design-tmp/
+src-tauri/target/
+src-tauri/gen/

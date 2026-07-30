@@ -1,0 +1,38 @@
+[package]
+name = "kimi-desktop-tauri"
+version = "0.2.0"
+description = "Desktop client for Kimi Code CLI (kimi web backend) - Tauri shell"
+edition = "2021"
+rust-version = "1.77"
+license = "AGPL-3.0-only"
+
+[lib]
+name = "kimi_desktop_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon", "image-png", "image-ico"] }
+tauri-plugin-single-instance = "2"
+tauri-plugin-notification = "2"
+tauri-plugin-opener = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "multipart", "rustls-tls"] }
+tokio-tungstenite = { version = "0.24", default-features = false, features = ["connect", "rustls-tls-webpki-roots"] }
+futures-util = "0.3"
+base64 = "0.22"
+# 本地时区日期计算(用量统计 dayKey / streak 依赖本地日历日)
+chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
+# SSH 进程内客户端(替代外部 ssh.exe);ring 加密后端,避开 aws-lc-rs 的 cmake 构建依赖
+russh = { version = "0.62", default-features = false, features = ["ring", "rsa"] }
+# SSH 密码存系统凭据管理器(Windows Credential Manager),不落明文配置
+keyring = "4"
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true

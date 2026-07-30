@@ -1,0 +1,42 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Kimi Code Desktop",
+  "version": "0.2.0",
+  "identifier": "com.github.yann.kimi-desktop",
+  "build": {
+    "beforeDevCommand": "npm run dev:renderer",
+    "devUrl": "http://localhost:5188",
+    "beforeBuildCommand": "npm run build:renderer",
+    "frontendDist": "../out/renderer"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "Kimi Code Desktop",
+        "width": 1440,
+        "height": 900,
+        "minWidth": 1024,
+        "minHeight": 640,
+        "decorations": false,
+        "dragDropEnabled": false,
+        "backgroundColor": "#ffffff"
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "icon": [
+      "../build/icon.png"
+    ],
+    "resources": ["../build/tray.png"],
+    "windows": {
+      "nsis": {
+        "installMode": "perMachine"
+      }
+    }
+  }
+}
