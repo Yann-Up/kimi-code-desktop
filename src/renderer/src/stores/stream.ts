@@ -49,7 +49,7 @@ export type ChatItem =
       summary?: string
     }
   | { kind: 'notice'; id: string; text: string }
-  | { kind: 'error'; id: string; text: string }
+  | { kind: 'error'; id: string; text: string; action?: 'login' }
 
 export interface SessionStatus {
   model?: string
@@ -157,6 +157,10 @@ let oldestMessageId = ''
  *  与 Rust 侧订阅游标互补:游标让服务端从水位之后回放,这里兜底任何仍漏进来的重复投递 */
 let lastSeq = 0
 let lastEpoch: string | undefined
+
+/** 上游认证错误(AuthTokenMissing / AuthProvisioningRequired):WSL/SSH 环境的
+ *  ~/.kimi-code 与本机相互独立,未在该环境登录时发送会报这类错,引导用户去登录 */
+const AUTH_ERROR_RE = /has no credential configured|no provider configured|AuthTokenMissing|AuthProvisioning/i
 
 /** CLI 把文件附件转成 "Attached file ..." 说明文本;解析回结构化附件 */
 const ATTACHED_FILE_RE =
@@ -499,10 +503,12 @@ export const useStream = create<StreamState>((set, get) => ({
     const type = String(evt.type ?? '')
     set({ lastEventAt: Date.now() })
 
-    // 水位去重:快照已覆盖(seq ≤ 水位)的回放事件丢弃;
-    // epoch 翻转说明服务端事件流重置,接受并就地重置水位
+    // 水位去重(仅 durable 事件):快照已覆盖(seq ≤ 水位)的回放事件丢弃;
+    // epoch 翻转说明服务端事件流重置,接受并就地重置水位。
+    // volatile 帧(assistant.delta/thinking.delta)的 seq 是当前水位而非自增,
+    // 且永不写入 journal、永不回放 —— 不可能是重复投递,必须放行,否则流式输出全被误杀
     const seq = typeof evt.seq === 'number' ? evt.seq : null
-    if (seq !== null) {
+    if (seq !== null && evt.volatile !== true) {
       const ep = typeof evt.epoch === 'string' ? evt.epoch : undefined
       if (ep && lastEpoch && ep !== lastEpoch) {
         lastEpoch = ep
@@ -659,10 +665,15 @@ export const useStream = create<StreamState>((set, get) => ({
           items.push({ kind: 'notice', id: nid(), text: '上下文压缩完成' })
           break
         case 'error': {
+          const msg = String(evt.message ?? evt.code ?? '未知错误')
+          const authFail = AUTH_ERROR_RE.test(msg)
           items.push({
             kind: 'error',
             id: nid(),
-            text: String(evt.message ?? evt.code ?? '未知错误')
+            text: authFail
+              ? '当前环境未登录 Kimi 账户(WSL/SSH 环境与本机的登录凭据相互独立)'
+              : msg,
+            ...(authFail ? { action: 'login' as const } : {})
           })
           status.busy = false
           break
@@ -857,10 +868,20 @@ export const useStream = create<StreamState>((set, get) => ({
       })
       return true
     } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e)
+      // 认证错误(WSL/SSH 环境未登录)给出明确引导,而不是甩一串英文
+      const authFail = AUTH_ERROR_RE.test(msg)
       set((s) => ({
         items: [
           ...s.items,
-          { kind: 'error', id: nid(), text: `发送失败:${e instanceof Error ? e.message : e}` }
+          {
+            kind: 'error',
+            id: nid(),
+            text: authFail
+              ? '发送失败:当前环境未登录 Kimi 账户(WSL/SSH 环境与本机的登录凭据相互独立)'
+              : `发送失败:${msg}`,
+            ...(authFail ? { action: 'login' as const } : {})
+          }
         ],
         status: { ...s.status, busy: false }
       }))

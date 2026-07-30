@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { Bot, Brain, ChevronDown, ChevronRight, CircleDashed, CheckCircle2, XCircle, AlertCircle, Info, X, FileVideo, FileAudio, File as FileIcon, History, Loader2 } from 'lucide-react'
 import type { ChatItem, UserImage, UserFile } from '../../stores/stream'
 import { useStream } from '../../stores/stream'
+import { useUi } from '../../stores/ui'
 import { Markdown } from '../Markdown'
 import { ToolGroup } from './ToolCallCard'
 
@@ -471,7 +472,16 @@ export function MessageList({ items }: { items: ChatItem[] }) {
               case 'error':
                 return (
                   <div key={b.id} className="flex items-center gap-1.5 rounded-lg bg-danger-soft px-3 py-2 text-[12.5px] text-danger">
-                    <AlertCircle size={13} /> {b.text}
+                    <AlertCircle size={13} className="shrink-0" />
+                    <span className="min-w-0 flex-1">{b.text}</span>
+                    {b.action === 'login' && (
+                      <button
+                        className="shrink-0 rounded-md bg-danger px-2.5 py-1 text-[12px] font-medium text-white hover:opacity-90"
+                        onClick={() => useUi.getState().openSettings('models')}
+                      >
+                        去登录
+                      </button>
+                    )}
                   </div>
                 )
               default:

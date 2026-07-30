@@ -256,7 +256,9 @@ impl WsClient {
                 .await
                 .insert(session_id.to_string(), Cursor { seq, epoch: epoch.clone() });
         }
-        // 事件对象 = payload 展开 + 顶层 type/seq/epoch/session_id/timestamp(undefined 的键丢弃)
+        // 事件对象 = payload 展开 + 顶层 type/seq/epoch/session_id/timestamp(undefined 的键丢弃);
+        // volatile 标志必须透传:volatile 帧(assistant.delta 等)的 seq 是当前水位而非自增,
+        // 前端据此只对 durable 事件做 seq 去重,否则流式 delta 会被全部误杀
         let mut evt = payload
             .and_then(|p| p.as_object())
             .cloned()
@@ -267,6 +269,9 @@ impl WsClient {
         }
         if let Some(ep) = &epoch {
             evt.insert("epoch".to_string(), json!(ep));
+        }
+        if let Some(v) = frame.get("volatile") {
+            evt.insert("volatile".to_string(), v.clone());
         }
         evt.insert("session_id".to_string(), json!(session_id));
         if let Some(ts) = frame.get("timestamp") {
