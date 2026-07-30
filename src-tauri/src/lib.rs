@@ -277,6 +277,25 @@ async fn cli_npm_upgrade(app: AppHandle, state: State<'_, Arc<AppState>>) -> Res
     version.ok_or_else(|| "升级后检测 CLI 版本失败".to_string())
 }
 
+/// 手动检查 CLI 更新:对比 npm registry 最新版,返回当前/最新版本与是否有更新。
+/// 网络不可达时返回错误,便于设置页给出明确反馈(启动时的自动检查是静默的)
+#[tauri::command]
+async fn cli_check_update(state: State<'_, Arc<AppState>>) -> Result<Value, String> {
+    let current = cli::detect_installed().await;
+    let latest = cli::fetch_latest_version(&state.http)
+        .await
+        .ok_or_else(|| "无法获取最新版本信息,请检查网络后重试".to_string())?;
+    let has_update = match &current {
+        Some(c) => cli::is_newer(&latest, c),
+        None => false,
+    };
+    Ok(json!({
+        "current": current,
+        "latest": latest,
+        "hasUpdate": has_update,
+    }))
+}
+
 // ---------- kimi 数据目录(工作区) ----------
 
 /// 当前数据目录信息:生效路径 / 来源(custom|env|default|remote)/ 默认路径。
@@ -960,6 +979,7 @@ pub fn run() {
             notify,
             cli_upgrade,
             cli_npm_upgrade,
+            cli_check_update,
             start_backend,
             stop_backend,
             get_auto_start,

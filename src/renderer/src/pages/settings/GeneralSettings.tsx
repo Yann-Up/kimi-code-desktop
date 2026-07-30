@@ -57,6 +57,9 @@ export function GeneralSettings() {
   const [autoStart, setAutoStart] = useState(false)
   const quotaRefreshSecs = useUi((s) => s.quotaRefreshSecs)
   const [npmUpgrading, setNpmUpgrading] = useState(false)
+  // 手动检查更新状态与结果
+  const [cliChecking, setCliChecking] = useState(false)
+  const [cliCheckMsg, setCliCheckMsg] = useState<{ ok: boolean; text: string } | null>(null)
   // 远端(WSL/SSH)CLI 升级中标记
   const [cliUpgrading, setCliUpgrading] = useState(false)
   // 连接目标(本机 / WSL / SSH)
@@ -174,6 +177,24 @@ export function GeneralSettings() {
       setCliError(e instanceof Error ? e.message : String(e))
       setCliSwitching(false)
     }
+  }
+
+  /** 手动检查 CLI 更新(对比 npm registry 最新版;本机/远端目标通用) */
+  const checkCliUpdate = () => {
+    setCliChecking(true)
+    setCliCheckMsg(null)
+    setCliError('')
+    window.kimiApi
+      .cliCheckUpdate()
+      .then((r) => {
+        setCliCheckMsg(
+          r.hasUpdate
+            ? { ok: false, text: `发现新版本 v${r.latest}(当前 v${r.current ?? '未知'}),可点击右侧升级` }
+            : { ok: true, text: `已是最新版本(v${r.latest})` }
+        )
+      })
+      .catch((e) => setCliError(e instanceof Error ? e.message : String(e)))
+      .finally(() => setCliChecking(false))
   }
 
   /** 远端 CLI 升级(Rust 侧按安装方式自动选官方安装脚本或 npm update -g) */
@@ -474,6 +495,13 @@ export function GeneralSettings() {
             </p>
           </div>
           <div className="flex shrink-0 gap-2">
+            <button
+              className="rounded-lg border border-border px-3 py-1.5 text-[13px] text-text-secondary hover:bg-surface-tertiary disabled:opacity-50"
+              disabled={cliChecking || npmUpgrading || cliSwitching}
+              onClick={checkCliUpdate}
+            >
+              {cliChecking ? '检查中…' : '检查更新'}
+            </button>
             {cliInfo && cliInfo.source !== 'home' && (
               <button
                 className="rounded-lg border border-border px-3 py-1.5 text-[13px] text-text-secondary hover:bg-surface-tertiary disabled:opacity-50"
@@ -535,6 +563,11 @@ export function GeneralSettings() {
           </div>
         )}
         {cliError && <p className="mt-2 text-[12px] text-danger">{cliError}</p>}
+        {cliCheckMsg && (
+          <p className={`mt-2 text-[12px] ${cliCheckMsg.ok ? 'text-success' : 'text-warning'}`}>
+            {cliCheckMsg.text}
+          </p>
+        )}
         </>
         ) : (
         <>
@@ -559,6 +592,13 @@ export function GeneralSettings() {
             </p>
           </div>
           <div className="flex shrink-0 gap-2">
+            <button
+              className="rounded-lg border border-border px-3 py-1.5 text-[13px] text-text-secondary hover:bg-surface-tertiary disabled:opacity-50"
+              disabled={cliChecking || cliUpgrading || cliSwitching}
+              onClick={checkCliUpdate}
+            >
+              {cliChecking ? '检查中…' : '检查更新'}
+            </button>
             <button
               className="rounded-lg border border-border px-3 py-1.5 text-[13px] text-text-secondary hover:bg-surface-tertiary disabled:opacity-50"
               disabled={cliUpgrading || cliSwitching}
@@ -608,6 +648,11 @@ export function GeneralSettings() {
           </div>
         )}
         {cliError && <p className="mt-2 text-[12px] text-danger">{cliError}</p>}
+        {cliCheckMsg && (
+          <p className={`mt-2 text-[12px] ${cliCheckMsg.ok ? 'text-success' : 'text-warning'}`}>
+            {cliCheckMsg.text}
+          </p>
+        )}
         </>
         )}
       </Card>

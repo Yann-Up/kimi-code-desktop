@@ -70,6 +70,8 @@ export interface KimiApi {
   /** 指定/清除远端 CLI 路径(仅 WSL/SSH 目标;null 恢复自动探测) */
   remoteBinSet(path: string | null): Promise<any>
   cliNpmUpgrade(): Promise<any>
+  /** 手动检查 CLI 更新:返回当前/最新版本与是否有更新;网络失败时 reject */
+  cliCheckUpdate(): Promise<{ current: string | null; latest: string; hasUpdate: boolean }>
   connectionTargetGet(): Promise<ConnectionTargetInfo>
   connectionTargetSet(
     cfg: ConnectionTargetConfig,

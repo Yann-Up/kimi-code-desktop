@@ -68,6 +68,7 @@ const api: KimiApi = {
   kimiCliSet: (path) => invoke('set_cli_bin', { path }),
   remoteBinSet: (path) => invoke('set_remote_bin', { path }),
   cliNpmUpgrade: () => invoke('cli_npm_upgrade'),
+  cliCheckUpdate: () => invoke('cli_check_update'),
   connectionTargetGet: () => invoke('get_connection_target'),
   connectionTargetSet: (cfg, password) => invoke('set_connection_target', { cfg, password }),
   connectionTargetTest: (cfg, password) => invoke('test_connection_target', { cfg, password }),
