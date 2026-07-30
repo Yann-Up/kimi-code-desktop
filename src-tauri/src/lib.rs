@@ -641,6 +641,70 @@ async fn rest_upload(
         .map_err(|e| e.to_string())
 }
 
+// ---------- providers ----------
+
+/// 拉取自定义提供商的模型列表:GET {base_url}/models(OpenAI 风格),Bearer 认证 + 自定义请求头。
+/// 不走 webview fetch:避开 CORS 与内网自签证书限制。
+#[tauri::command(rename_all = "snake_case")]
+async fn fetch_provider_models(
+    state: State<'_, Arc<AppState>>,
+    base_url: String,
+    api_key: Option<String>,
+    headers: Option<HashMap<String, String>>,
+) -> Result<Vec<String>, String> {
+    let base = base_url.trim().trim_end_matches('/');
+    if base.is_empty() {
+        return Err("base_url 为空".into());
+    }
+    let url = format!("{base}/models");
+    let mut req = state.http.get(&url);
+    if let Some(key) = api_key.as_deref().map(str::trim).filter(|k| !k.is_empty()) {
+        req = req.bearer_auth(key);
+    }
+    if let Some(h) = headers {
+        for (k, v) in h {
+            if !k.trim().is_empty() {
+                req = req.header(k.trim(), v);
+            }
+        }
+    }
+    let resp = req.send().await.map_err(|e| format!("请求失败:{e}"))?;
+    let status = resp.status();
+    let body: Value = resp
+        .json()
+        .await
+        .map_err(|e| format!("响应不是合法 JSON:{e}"))?;
+    if !status.is_success() {
+        let mut s = body.to_string();
+        if s.len() > 200 {
+            s.truncate(200);
+            s.push('…');
+        }
+        return Err(format!("HTTP {status}:{s}"));
+    }
+    // OpenAI 风格 {data:[{id}]};容错 {models:[...]} 或裸数组,元素可为字符串或带 id/name 的对象
+    let list = body.get("data").or_else(|| body.get("models")).unwrap_or(&body);
+    let arr = list.as_array().ok_or("响应中未找到模型列表")?;
+    let mut out: Vec<String> = arr
+        .iter()
+        .filter_map(|m| {
+            m.as_str().or_else(|| {
+                m.get("id")
+                    .or_else(|| m.get("name"))
+                    .and_then(|v| v.as_str())
+            })
+        })
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
+    out.sort();
+    out.dedup();
+    if out.is_empty() {
+        return Err("模型列表为空".into());
+    }
+    Ok(out)
+}
+
 // ---------- ws ----------
 
 #[tauri::command(rename_all = "snake_case")]
@@ -913,6 +977,7 @@ pub fn run() {
             rest_request,
             rest_file,
             rest_upload,
+            fetch_provider_models,
             ws_subscribe,
             ws_unsubscribe,
             git_status,

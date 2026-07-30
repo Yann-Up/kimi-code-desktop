@@ -102,6 +102,12 @@ const api: KimiApi = {
       media_type: args.mediaType
     }),
   getFile: async (fileId) => base64ToBuf(await invoke<string>('rest_file', { file_id: fileId })),
+  fetchProviderModels: (args) =>
+    invoke('fetch_provider_models', {
+      base_url: args.baseUrl,
+      api_key: args.apiKey,
+      headers: args.headers
+    }),
 
   // ws
   wsSubscribe: (sessionId) => invoke('ws_subscribe', { session_id: sessionId }),

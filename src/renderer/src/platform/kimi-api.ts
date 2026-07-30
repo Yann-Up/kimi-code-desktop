@@ -102,6 +102,12 @@ export interface KimiApi {
   rest(opts: RestRequestOptions): Promise<any>
   upload(args: { bytes: ArrayBuffer; name: string; mediaType: string }): Promise<any>
   getFile(fileId: string): Promise<ArrayBuffer>
+  /** 从自定义提供商端点拉取模型列表(GET {baseUrl}/models,OpenAI 风格) */
+  fetchProviderModels(args: {
+    baseUrl: string
+    apiKey?: string
+    headers?: Record<string, string>
+  }): Promise<string[]>
 
   // ws
   wsSubscribe(sessionId: string): Promise<any>

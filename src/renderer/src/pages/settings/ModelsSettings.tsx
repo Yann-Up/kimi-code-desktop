@@ -103,6 +103,9 @@ const btnAddRow =
   'inline-flex items-center gap-1 rounded-lg border border-dashed border-border px-2.5 py-1.5 text-[12px] text-text-secondary transition-colors hover:border-primary hover:text-primary'
 const inputCls =
   'w-full rounded-lg border border-border bg-surface px-2.5 py-1.5 text-[13px] outline-none transition-colors focus:border-primary'
+/* 不含 w-full 的基础款:用于需要固定宽度的输入框,避免 w-full 与 w-xx 同优先级冲突(后者可能被覆盖) */
+const inputBaseCls =
+  'rounded-lg border border-border bg-surface px-2.5 py-1.5 text-[13px] outline-none transition-colors focus:border-primary'
 const inputErrCls =
   'w-full rounded-lg border border-danger bg-surface px-2.5 py-1.5 text-[13px] outline-none transition-colors focus:border-danger'
 
@@ -761,6 +764,13 @@ function ProviderPanel(props: { req: PanelReq | null; onSaved: () => void; onClo
   const [error, setError] = useState('')
   const [idTouched, setIdTouched] = useState(false)
 
+  /* 从 API 拉取模型列表的选择器 */
+  const [fetchingModels, setFetchingModels] = useState(false)
+  const [modelPicker, setModelPicker] = useState<{ list: string[]; selected: Set<string> } | null>(
+    null
+  )
+  const [pickerSearch, setPickerSearch] = useState('')
+
   /* 打开目标变化时,在渲染阶段重置表单,避免上一份数据闪现 */
   const [tracked, setTracked] = useState<PanelReq | null>(null)
   if (req !== tracked) {
@@ -768,6 +778,8 @@ function ProviderPanel(props: { req: PanelReq | null; onSaved: () => void; onClo
     setError('')
     setIdTouched(false)
     setSubmitting(false)
+    setModelPicker(null)
+    setFetchingModels(false)
     if (req?.mode === 'create') {
       setPid('')
       setName('')
@@ -801,7 +813,9 @@ function ProviderPanel(props: { req: PanelReq | null; onSaved: () => void; onClo
         ])
         if (cancelled) return
         const o = isPlainObj(full) ? full : {}
-        setName(typeof o.name === 'string' ? o.name : '')
+        /* 旧数据可能没有 name:回退用提供商 ID,避免提交时被必填校验拦住 */
+        const n = typeof o.name === 'string' ? o.name.trim() : ''
+        setName(n || req.id)
         setType(typeof o.type === 'string' && o.type ? o.type : 'openai')
         setBaseUrl(typeof o.base_url === 'string' ? o.base_url : '')
         setApiKey(typeof o.api_key === 'string' ? o.api_key : '')
@@ -851,6 +865,45 @@ function ProviderPanel(props: { req: PanelReq | null; onSaved: () => void; onClo
 
   const idInvalid = pid.trim() !== '' && !PROVIDER_ID_RE.test(pid.trim())
 
+  /** 从提供商端点拉取模型列表;已在表单里的模型默认不勾选(标记"已添加") */
+  const fetchModels = async () => {
+    const base = baseUrl.trim()
+    if (!base) {
+      setError('请先填写基础 URL')
+      return
+    }
+    setFetchingModels(true)
+    setError('')
+    try {
+      const list = await window.kimiApi.fetchProviderModels({
+        baseUrl: base,
+        apiKey: apiKey.trim() || undefined,
+        headers: headersToBody(headerRows)
+      })
+      const existing = new Set(modelRows.map((r) => r.model.trim()).filter(Boolean))
+      setPickerSearch('')
+      setModelPicker({ list, selected: new Set(list.filter((m) => !existing.has(m))) })
+    } catch (e) {
+      setError(errText(e))
+    } finally {
+      setFetchingModels(false)
+    }
+  }
+
+  /** 勾选的模型并入表单行(跳过已存在;只剩空占位行时直接替换) */
+  const applyModelPicker = () => {
+    if (!modelPicker) return
+    const existing = new Set(modelRows.map((r) => r.model.trim()).filter(Boolean))
+    const additions = [...modelPicker.selected].filter((m) => !existing.has(m))
+    if (additions.length) {
+      setModelRows((rows) => {
+        const base = rows.length === 1 && !rows[0].model.trim() ? [] : rows
+        return [...base, ...additions.map((m) => ({ ...emptyPanelModelRow(), model: m }))]
+      })
+    }
+    setModelPicker(null)
+  }
+
   const submit = async () => {
     if (!req) return
     const idv = pid.trim()
@@ -867,7 +920,7 @@ function ProviderPanel(props: { req: PanelReq | null; onSaved: () => void; onClo
       }
     }
     if (!name.trim()) {
-      setError('请填写显示名称')
+      setError('请填写提供商显示名称(顶部"显示名称"字段)')
       return
     }
     const rows = modelRows
@@ -933,6 +986,12 @@ function ProviderPanel(props: { req: PanelReq | null; onSaved: () => void; onClo
       setSubmitting(false)
     }
   }
+
+  /* 模型选择器:过滤后的可见项 + 表单里已有的模型(勾选禁用并标记) */
+  const pickerExisting = new Set(modelRows.map((r) => r.model.trim()).filter(Boolean))
+  const pickerItems = modelPicker
+    ? modelPicker.list.filter((m) => m.toLowerCase().includes(pickerSearch.trim().toLowerCase()))
+    : []
 
   /* 关闭动画期间保留最后一份内容 */
   const lastReq = useRef<PanelReq | null>(null)
@@ -1024,6 +1083,87 @@ function ProviderPanel(props: { req: PanelReq | null; onSaved: () => void; onClo
 
               <Field label="模型" hint="模型 ID 必填;上下文默认 262144(256K),为必填项;至少保留一行">
                 <div className="space-y-2">
+                  <button
+                    type="button"
+                    className={btnAddRow}
+                    disabled={fetchingModels}
+                    onClick={() => void fetchModels()}
+                  >
+                    {fetchingModels ? (
+                      <Loader2 size={13} className="animate-spin" />
+                    ) : (
+                      <RefreshCw size={13} />
+                    )}
+                    从 API 获取模型列表
+                  </button>
+                  {modelPicker && (
+                    <div className="rounded-lg border border-border-light bg-surface-secondary p-2">
+                      <input
+                        className={inputCls}
+                        placeholder="搜索模型"
+                        value={pickerSearch}
+                        onChange={(e) => setPickerSearch(e.target.value)}
+                      />
+                      <div className="mt-2 max-h-48 space-y-0.5 overflow-y-auto">
+                        {pickerItems.map((m) => {
+                          const existing = pickerExisting.has(m)
+                          return (
+                            <label
+                              key={m}
+                              className={`flex items-center gap-2 rounded px-1.5 py-1 text-[12.5px] ${
+                                existing
+                                  ? 'text-text-tertiary'
+                                  : 'cursor-pointer hover:bg-surface-tertiary'
+                              }`}
+                            >
+                              <input
+                                type="checkbox"
+                                disabled={existing}
+                                checked={existing || modelPicker.selected.has(m)}
+                                onChange={(e) => {
+                                  const next = new Set(modelPicker.selected)
+                                  if (e.target.checked) next.add(m)
+                                  else next.delete(m)
+                                  setModelPicker({ ...modelPicker, selected: next })
+                                }}
+                              />
+                              <span className="min-w-0 flex-1 truncate">{m}</span>
+                              {existing && (
+                                <span className="shrink-0 text-[11px] text-text-tertiary">已添加</span>
+                              )}
+                            </label>
+                          )
+                        })}
+                        {pickerItems.length === 0 && (
+                          <p className="px-1.5 py-2 text-center text-[12px] text-text-tertiary">
+                            无匹配模型
+                          </p>
+                        )}
+                      </div>
+                      <div className="mt-2 flex items-center justify-between">
+                        <span className="text-[11px] text-text-tertiary">
+                          已选 {modelPicker.selected.size} 个
+                        </span>
+                        <div className="flex gap-1.5">
+                          <button
+                            type="button"
+                            className={btnGhost}
+                            onClick={() => setModelPicker(null)}
+                          >
+                            取消
+                          </button>
+                          <button
+                            type="button"
+                            className={btnPrimary}
+                            disabled={modelPicker.selected.size === 0}
+                            onClick={applyModelPicker}
+                          >
+                            添加所选
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
                   {modelRows.map((r, i) => (
                     <div key={i} className="rounded-lg border border-border-light bg-surface-secondary p-2">
                       <div className="flex items-center gap-1.5">
@@ -1061,7 +1201,7 @@ function ProviderPanel(props: { req: PanelReq | null; onSaved: () => void; onClo
                           type="number"
                           min={1}
                           title="最大上下文(max_context_size)"
-                          className={`${inputCls} w-24 shrink-0`}
+                          className={`${inputBaseCls} w-24 shrink-0`}
                           value={r.maxCtx}
                           onChange={(e) =>
                             setModelRows(modelRows.map((x, j) => (j === i ? { ...x, maxCtx: e.target.value } : x)))
