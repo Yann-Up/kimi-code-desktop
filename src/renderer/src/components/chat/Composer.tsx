@@ -24,6 +24,7 @@ import {
 } from 'lucide-react'
 import { useStream } from '@/stores/stream'
 import { useUi } from '@/stores/ui'
+import { useSessions } from '@/stores/sessions'
 import { rest, type ModelItem } from '@/api'
 import { useDelegate } from '@/pages/settings/SubagentsSettings'
 import { StatusBar } from './StatusBar'
@@ -44,6 +45,22 @@ type Attachment =
 interface ComposerModel extends ModelItem {
   support_efforts?: string[]
   default_effort?: string
+}
+
+/** GET /sessions/{id}/skills 返回的技能项 */
+interface SkillInfo {
+  name: string
+  description?: string
+  source?: string
+  type?: string
+}
+
+/** / 面板条目:内置指令(前端执行)或技能(填入 /name 交由后端解析) */
+interface SlashItem {
+  name: string
+  desc: string
+  kind: 'builtin' | 'skill'
+  run?: () => void
 }
 
 interface ThinkingConfig {
@@ -190,6 +207,12 @@ export function Composer({ sessionId }: { sessionId: string }) {
   const [thinkCfg, setThinkCfg] = useState<ThinkingConfig | null>(null)
   const [sessionThinking, setSessionThinking] = useState<string | null>(null)
 
+  // / 指令面板:技能列表 + 键盘导航 + Esc 消隐
+  const [skills, setSkills] = useState<SkillInfo[]>([])
+  const [slashIdx, setSlashIdx] = useState(0)
+  const [slashDismissed, setSlashDismissed] = useState(false)
+  const slashListRef = useRef<HTMLDivElement>(null)
+
   const fileRef = useRef<HTMLInputElement>(null)
   const taRef = useRef<HTMLTextAreaElement>(null)
   const noteTimer = useRef<number | null>(null)
@@ -214,6 +237,14 @@ export function Composer({ sessionId }: { sessionId: string }) {
       .then((r) => setModels(r.items ?? []))
       .catch(() => {})
   }, [])
+
+  // 会话可用技能(/ 面板的技能段);会话未激活等失败场景静默降级为空
+  useEffect(() => {
+    setSkills([])
+    rest<{ skills?: SkillInfo[] }>(`/api/v1/sessions/${sessionId}/skills`)
+      .then((r) => setSkills(Array.isArray(r.skills) ? r.skills : []))
+      .catch(() => {})
+  }, [sessionId])
 
   // 模型回显(用户未手动选择时):会话当前模型 → 全局默认模型 → 列表第一项
   useEffect(() => {
@@ -333,6 +364,95 @@ export function Composer({ sessionId }: { sessionId: string }) {
     setAttachNote(msg)
     if (noteTimer.current) window.clearTimeout(noteTimer.current)
     noteTimer.current = window.setTimeout(() => setAttachNote(''), 2500)
+  }
+
+  // ---------- / 指令面板 ----------
+
+  const BUILTINS: SlashItem[] = [
+    {
+      name: 'new',
+      desc: '创建新会话',
+      kind: 'builtin',
+      run: () => {
+        const st = useSessions.getState()
+        const cwd = st.sessions.find((s) => s.id === sessionId)?.metadata?.cwd
+        if (cwd) void st.createSession(cwd)
+        else flash('未找到当前工作区')
+      }
+    },
+    {
+      name: 'plan',
+      desc: '切换计划模式 开/关',
+      kind: 'builtin',
+      run: () => setMode((m) => (m === 'plan' ? 'default' : 'plan'))
+    },
+    {
+      name: 'swarm',
+      desc: '切换 swarm 模式 开/关',
+      kind: 'builtin',
+      run: () => setMode((m) => (m === 'swarm' ? 'default' : 'swarm'))
+    },
+    {
+      name: 'goal',
+      desc: '切换到目标模式',
+      kind: 'builtin',
+      run: () => setMode('goal')
+    },
+    {
+      name: 'yolo',
+      desc: '自动批准工具操作,Agent 仍可能提问',
+      kind: 'builtin',
+      run: () => setPermission('yolo')
+    },
+    {
+      name: 'auto',
+      desc: '完全自主,Agent 不再提问',
+      kind: 'builtin',
+      run: () => setPermission('auto')
+    },
+    {
+      name: 'manual',
+      desc: '逐条确认工具操作',
+      kind: 'builtin',
+      run: () => setPermission('manual')
+    }
+  ]
+
+  // 仅在输入以 / 开头且还在输指令名(无空格/换行)时弹出
+  const slashQuery = /^\/([^\s/]*)$/.exec(text)?.[1]?.toLowerCase() ?? null
+  const slashItems = useMemo<SlashItem[]>(() => {
+    if (slashQuery === null) return []
+    const hit = (name: string, desc: string) =>
+      !slashQuery ||
+      name.toLowerCase().startsWith(slashQuery) ||
+      desc.toLowerCase().includes(slashQuery)
+    return [
+      ...BUILTINS.filter((b) => hit(b.name, b.desc)),
+      ...skills
+        .filter((s) => hit(s.name, s.description ?? ''))
+        .map((s): SlashItem => ({ name: s.name, desc: s.description ?? '', kind: 'skill' }))
+    ]
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [slashQuery, skills, mode])
+  const slashOpen = slashQuery !== null && !slashDismissed && slashItems.length > 0
+
+  // 查询词变化时重置高亮;高亮项保持可见
+  useEffect(() => setSlashIdx(0), [slashQuery])
+  useEffect(() => {
+    slashListRef.current
+      ?.querySelector(`[data-idx="${slashIdx}"]`)
+      ?.scrollIntoView({ block: 'nearest' })
+  }, [slashIdx])
+
+  const pickSlash = (item: SlashItem) => {
+    if (item.kind === 'skill') {
+      // 技能:/name 交由后端解析执行,填入并留空格方便继续输参数
+      setText(`/${item.name} `)
+      taRef.current?.focus()
+      return
+    }
+    setText('')
+    item.run?.()
   }
 
   // ---------- 附件:选择 / 粘贴 / 拖拽 ----------
@@ -571,7 +691,48 @@ export function Composer({ sessionId }: { sessionId: string }) {
           )}
 
           {/* 输入行:附件按钮 + textarea(选项已下移到工具行) */}
-          <div className="flex items-end gap-1.5 px-3 pb-1 pt-2">
+          <div className="relative flex items-end gap-1.5 px-3 pb-1 pt-2">
+            {/* / 指令面板(kimi web 同款):内置指令 + 会话可用技能 */}
+            {slashOpen && (
+              <div
+                ref={slashListRef}
+                className="absolute bottom-full left-0 right-0 z-30 mb-1 max-h-72 overflow-y-auto rounded-xl border border-border bg-surface p-1.5 shadow-lg"
+              >
+                {slashItems.map((item, i) => {
+                  const prev = slashItems[i - 1]
+                  const showGroup = i === 0 || prev.kind !== item.kind
+                  return (
+                    <div key={`${item.kind}:${item.name}`}>
+                      {showGroup && (
+                        <p className="px-2.5 pb-0.5 pt-1 text-[11px] text-text-tertiary">
+                          {item.kind === 'builtin' ? '指令' : '技能'}
+                        </p>
+                      )}
+                      <button
+                        data-idx={i}
+                        className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left ${
+                          i === slashIdx ? 'bg-primary-soft' : 'hover:bg-surface-secondary'
+                        }`}
+                        onMouseEnter={() => setSlashIdx(i)}
+                        onClick={() => pickSlash(item)}
+                      >
+                        <span className="shrink-0 font-mono text-[12.5px] font-medium text-primary">
+                          /{item.name}
+                        </span>
+                        <span className="min-w-0 flex-1 truncate text-[12px] text-text-tertiary">
+                          {item.desc}
+                        </span>
+                        {item.kind === 'skill' && (
+                          <span className="shrink-0 rounded bg-surface-tertiary px-1 py-px text-[10px] text-text-tertiary">
+                            技能
+                          </span>
+                        )}
+                      </button>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
             <button
               className="mb-0.5 shrink-0 rounded-lg p-1.5 text-text-tertiary hover:bg-surface-tertiary hover:text-text"
               title="添加附件(图片 / 文件,最多 4 个,单个 ≤10MB)"
@@ -597,11 +758,39 @@ export function Composer({ sessionId }: { sessionId: string }) {
                 busy ? '任务进行中,发送将排队 / 可点击右侧停止' : '输入消息,Enter 发送,Shift+Enter 换行'
               }
               value={text}
-              onChange={(e) => setText(e.target.value)}
+              onChange={(e) => {
+                setText(e.target.value)
+                setSlashDismissed(false)
+              }}
               onKeyDown={(e) => {
+                // / 面板打开时优先消费导航键
+                if (slashOpen) {
+                  if (e.key === 'ArrowDown') {
+                    e.preventDefault()
+                    setSlashIdx((i) => (i + 1) % slashItems.length)
+                    return
+                  }
+                  if (e.key === 'ArrowUp') {
+                    e.preventDefault()
+                    setSlashIdx((i) => (i - 1 + slashItems.length) % slashItems.length)
+                    return
+                  }
+                  if (e.key === 'Tab') {
+                    e.preventDefault()
+                    pickSlash(slashItems[Math.min(slashIdx, slashItems.length - 1)])
+                    return
+                  }
+                  if (e.key === 'Escape') {
+                    e.preventDefault()
+                    setSlashDismissed(true)
+                    return
+                  }
+                }
                 if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
                   e.preventDefault()
-                  doSend()
+                  // / 面板打开时 Enter = 选择高亮项,否则正常发送
+                  if (slashOpen) pickSlash(slashItems[Math.min(slashIdx, slashItems.length - 1)])
+                  else doSend()
                 }
               }}
               onPaste={(e) => {

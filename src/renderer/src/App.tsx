@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { Settings2, UploadCloud } from 'lucide-react'
 import { TitleBar } from './components/TitleBar'
-import { QuotaStrip } from './components/chat/QuotaStrip'
 import { HomePage } from './pages/HomePage'
 import { SettingsPage } from './pages/SettingsPage'
 import { OnboardingPage } from './pages/OnboardingPage'
@@ -188,8 +187,7 @@ export default function App() {
   return (
     <div className="flex h-full flex-col">
       <TitleBar />
-      {/* 额度条:入口页(无侧栏)全宽置顶;工作区内由 HomePage 在右侧内容区渲染 */}
-      {started && view === 'home' && <QuotaStrip />}
+      {/* 工作区内的额度条由 HomePage 在右侧内容区渲染;入口/统计页不显示 */}
       {phase === 'onboarding' ? (
         /* 首次启动向导:选择连接目标并测试连通,完成后进入启动流程 */
         <OnboardingPage onDone={startBackend} />

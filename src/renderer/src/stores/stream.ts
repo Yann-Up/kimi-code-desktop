@@ -17,8 +17,17 @@ export interface UserImage {
   name?: string
 }
 
+/** 用户消息里的文件附件(非图片):CLI 存成 "Attached file ..." 文本,桌面解析回结构化 */
+export interface UserFile {
+  name: string
+  mime?: string
+  size?: number
+  /** 服务端文件 id(从附件文件名前缀 f_<uuid> 解析),用于拉字节预览 */
+  fileId?: string
+}
+
 export type ChatItem =
-  | { kind: 'user'; id: string; text: string; time?: string; images?: UserImage[] }
+  | { kind: 'user'; id: string; text: string; time?: string; images?: UserImage[]; files?: UserFile[] }
   | { kind: 'assistant'; id: string; text: string; streaming?: boolean }
   | { kind: 'thinking'; id: string; text: string; streaming?: boolean }
   | {
@@ -111,8 +120,13 @@ interface StreamState {
   error: string | null
   /** 最近一次收到会话事件的时间(ms),用于事件流失联自愈 */
   lastEventAt: number
+  /** snapshot 只带最近 100 条:更早的消息是否还有/正在加载 */
+  hasMore: boolean
+  loadingEarlier: boolean
 
   load: (sessionId: string, opts?: { quiet?: boolean }) => Promise<void>
+  /** 向前翻一页更早的消息(prepend),返回是否实际发起了加载 */
+  loadEarlier: () => Promise<boolean>
   handleEvent: (evt: Record<string, unknown>) => void
   handleResync: () => void
   refreshPending: () => Promise<void>
@@ -130,11 +144,39 @@ interface StreamState {
 let itemSeq = 0
 const nid = () => `local_${++itemSeq}`
 
+/** 当前已加载的最早消息 id(loadEarlier 的分页游标,随 load/loadEarlier 更新) */
+let oldestMessageId = ''
+
+/** CLI 把文件附件转成 "Attached file ..." 说明文本;解析回结构化附件 */
+const ATTACHED_FILE_RE =
+  /^Attached file "([^"]+)" \(([^,)]+), (\d+) bytes\): (.+?) — open it with the Read tool$/
+
+function parseAttachedFile(text: string): UserFile | null {
+  const m = ATTACHED_FILE_RE.exec(text.trim())
+  if (!m) return null
+  const base = m[4].split(/[\\/]/).pop() ?? ''
+  const idm = /^(f_[0-9a-fA-F-]{36})-/.exec(base)
+  return { name: m[1], mime: m[2], size: Number(m[3]), fileId: idm?.[1] }
+}
+
+/** 从消息 content 提取附件说明文本(解析失败的保留原文) */
+function filesOfContent(content: unknown): UserFile[] {
+  if (!Array.isArray(content)) return []
+  const out: UserFile[] = []
+  for (const part of content) {
+    const c = part as Record<string, unknown>
+    if (c?.type !== 'text' || typeof c.text !== 'string') continue
+    const f = parseAttachedFile(c.text)
+    if (f) out.push(f)
+  }
+  return out
+}
+
 function textOfContent(content: unknown): string {
   if (!Array.isArray(content)) return ''
   return content
     .filter((c): c is { type: string; text?: string } => !!c && typeof c === 'object')
-    .filter((c) => c.type === 'text' && typeof c.text === 'string')
+    .filter((c) => c.type === 'text' && typeof c.text === 'string' && !parseAttachedFile(c.text))
     .map((c) => c.text!)
     .join('')
 }
@@ -193,15 +235,18 @@ function hydrateMessages(messages: unknown[]): ChatItem[] {
   for (const msg of messages) {
     const m = msg as { id?: string; role?: string; content?: unknown[]; created_at?: string }
     if (!Array.isArray(m.content)) continue
-    // 用户消息:文本 + 图片一起收
+    // 用户消息:文本 + 图片 + 文件附件一起收
     if (m.role === 'user') {
       const texts: string[] = []
       const images: UserImage[] = []
+      const files: UserFile[] = []
       for (const part of m.content) {
         const c = part as Record<string, unknown>
         if (c.type === 'text' && typeof c.text === 'string' && c.text.trim()) {
           const t = c.text.trim()
-          if (!t.startsWith('<system-reminder>') && !t.startsWith('<notification')) texts.push(c.text)
+          const f = parseAttachedFile(t)
+          if (f) files.push(f)
+          else if (!t.startsWith('<system-reminder>') && !t.startsWith('<notification')) texts.push(c.text)
         } else if (c.type === 'image' && c.source && typeof c.source === 'object') {
           const s = c.source as Record<string, unknown>
           if (s.kind === 'base64' && typeof s.data === 'string') {
@@ -213,13 +258,14 @@ function hydrateMessages(messages: unknown[]): ChatItem[] {
           }
         }
       }
-      if (texts.length || images.length) {
+      if (texts.length || images.length || files.length) {
         items.push({
           kind: 'user',
           id: m.id ?? nid(),
           text: texts.join('\n'),
           time: m.created_at,
-          images: images.length ? images : undefined
+          images: images.length ? images : undefined,
+          files: files.length ? files : undefined
         })
       }
       continue
@@ -273,6 +319,34 @@ export const useStream = create<StreamState>((set, get) => ({
   loading: false,
   error: null,
   lastEventAt: 0,
+  hasMore: false,
+  loadingEarlier: false,
+
+  loadEarlier: async () => {
+    const { sessionId, hasMore, loadingEarlier } = get()
+    if (!sessionId || !hasMore || loadingEarlier) return false
+    const targetId = sessionId
+    set({ loadingEarlier: true })
+    try {
+      // 游标 = 当前最早一条渲染项对应的消息 id(load 时记录)
+      const before = oldestMessageId
+      const page = await rest<{ items: { id: string }[]; has_more: boolean }>(
+        `/api/v1/sessions/${sessionId}/messages`,
+        { query: { before_id: before, page_size: 100 } }
+      )
+      if (get().sessionId !== targetId) return false
+      const raw = Array.isArray(page.items) ? page.items : []
+      // 列表接口按时间倒序返回,翻转为正序后 prepend
+      const older = hydrateMessages([...raw].reverse())
+      if (raw.length) oldestMessageId = String(raw[raw.length - 1].id ?? before)
+      set((s) => ({ items: [...older, ...s.items], hasMore: !!page.has_more }))
+      return true
+    } catch {
+      return false
+    } finally {
+      if (get().sessionId === targetId) set({ loadingEarlier: false })
+    }
+  },
 
   load: async (sessionId, opts?: { quiet?: boolean }) => {
     const quiet = opts?.quiet === true
@@ -286,6 +360,8 @@ export const useStream = create<StreamState>((set, get) => ({
       approvals: [],
       questions: [],
       loading: quiet ? s.loading : true,
+      hasMore: false,
+      loadingEarlier: false,
       error: null
     }))
     try {
@@ -306,6 +382,9 @@ export const useStream = create<StreamState>((set, get) => ({
       if (stale()) return
 
       const items = hydrateMessages(snap.messages?.items ?? [])
+      // snapshot 仅含最近 100 条:记录分页游标(正序首条)与 has_more,供 loadEarlier 翻页
+      const snapFirst = snap.messages?.items?.[0] as { id?: unknown } | undefined
+      oldestMessageId = typeof snapFirst?.id === 'string' ? snapFirst.id : ''
       // 进行中的轮次(静默重载时把 in_flight 内容也渲染出来,WS 断流也能看到过程)
       const flight = (snap as { in_flight_turn?: Record<string, unknown> | null }).in_flight_turn
       if (flight) {
@@ -351,6 +430,7 @@ export const useStream = create<StreamState>((set, get) => ({
       set({
         items,
         loading: false,
+        hasMore: !!(snap.messages as { has_more?: boolean } | undefined)?.has_more,
         status: {
           busy: snap.session.busy,
           currentPromptId: snap.session.current_prompt_id,
@@ -406,7 +486,8 @@ export const useStream = create<StreamState>((set, get) => ({
           const content = (evt as { content?: unknown }).content
           const text = textOfContent(content)
           const images = imagesOfContent(content)
-          if (text || images.length) {
+          const files = filesOfContent(content)
+          if (text || images.length || files.length) {
             const promptId = String(evt.promptId ?? '')
             // 去重:sendPrompt 乐观渲染的本地消息(local_ 前缀 id)与服务端回显是同一条,
             // 命中则只把 id 换成 promptId,避免双条用户消息
@@ -430,7 +511,8 @@ export const useStream = create<StreamState>((set, get) => ({
                 kind: 'user',
                 id: promptId || nid(),
                 text,
-                images: images.length ? images : undefined
+                images: images.length ? images : undefined,
+                files: files.length ? files : undefined
               })
             }
           }
@@ -690,14 +772,23 @@ export const useStream = create<StreamState>((set, get) => ({
       }
     }
     if (text.trim()) content.push({ type: 'text', text })
-    // 乐观渲染用户消息(带图片缩略图)
+    // 乐观渲染用户消息(带图片缩略图与文件附件卡片)
     const optImages: UserImage[] = (attachments ?? [])
       .filter((a) => a.type === 'image' && a.data)
       .map((a) => ({ dataUrl: `data:${a.mimeType ?? 'image/png'};base64,${a.data}` }))
+    const optFiles: UserFile[] = (attachments ?? [])
+      .filter((a) => a.type === 'file')
+      .map((a) => ({ name: a.name ?? '附件', mime: a.mimeType, size: a.size, fileId: a.fileId }))
     set((s) => ({
       items: [
         ...s.items,
-        { kind: 'user', id: nid(), text, images: optImages.length ? optImages : undefined }
+        {
+          kind: 'user',
+          id: nid(),
+          text,
+          images: optImages.length ? optImages : undefined,
+          files: optFiles.length ? optFiles : undefined
+        }
       ],
       status: { ...s.status, busy: true }
     }))
@@ -797,5 +888,14 @@ export const useStream = create<StreamState>((set, get) => ({
   },
 
   reset: () =>
-    set({ sessionId: null, items: [], status: {}, approvals: [], questions: [], error: null })
+    set({
+      sessionId: null,
+      items: [],
+      status: {},
+      approvals: [],
+      questions: [],
+      error: null,
+      hasMore: false,
+      loadingEarlier: false
+    })
 }))

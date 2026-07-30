@@ -131,7 +131,8 @@ export const useSessions = create<SessionsState>((set, get) => ({
   }
 }))
 
-/** 按工作区分组(用 workspace_id,回退 cwd)。 */
+/** 按工作区分组(用 workspace_id,回退 cwd)。
+ *  workspace_id 存在但工作区已注销(移除)的会话不再显示——与官方"移除工作区"行为一致 */
 export function groupSessions(
   sessions: SessionItem[],
   workspaces: WorkspaceItem[],
@@ -149,6 +150,8 @@ export function groupSessions(
   const groups = new Map<string, { key: string; name: string; root: string; items: SessionItem[] }>()
   const wsById = new Map(workspaces.map((w) => [w.id, w]))
   for (const s of filtered) {
+    // 工作区已被移除:其会话在项目树中隐藏(会话文件仍保留在磁盘上)
+    if (s.workspace_id && !wsById.has(s.workspace_id)) continue
     const ws = s.workspace_id ? wsById.get(s.workspace_id) : undefined
     const root = ws?.root ?? s.metadata?.cwd ?? ''
     const key = ws?.id ?? (root || '_unknown')

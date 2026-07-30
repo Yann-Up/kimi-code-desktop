@@ -5,7 +5,6 @@ import {
   ChevronRight,
   Folder,
   FolderPlus,
-  MessageSquare,
   MessageSquarePlus,
   MoreHorizontal,
   PanelLeftClose,
@@ -21,6 +20,22 @@ import { groupSessions, useSessions } from '../stores/sessions'
 import { useUi } from '../stores/ui'
 import { rest, type SessionItem } from '../api'
 import { FolderPickerDialog } from './FolderPickerDialog'
+
+/** 相对时间(kimi web 同款紧凑格式):刚刚 / 5m / 2h / 3d / 12-30 */
+function relTime(iso?: string): string {
+  if (!iso) return ''
+  const t = new Date(iso).getTime()
+  if (!Number.isFinite(t)) return ''
+  const m = Math.floor((Date.now() - t) / 60000)
+  if (m < 1) return '刚刚'
+  if (m < 60) return `${m}m`
+  const h = Math.floor(m / 60)
+  if (h < 24) return `${h}h`
+  const d = Math.floor(h / 24)
+  if (d < 30) return `${d}d`
+  const dt = new Date(t)
+  return `${dt.getMonth() + 1}-${dt.getDate()}`
+}
 
 function SessionRow(props: { session: SessionItem; archived?: boolean }) {
   const { session: s, archived } = props
@@ -58,7 +73,6 @@ function SessionRow(props: { session: SessionItem; archived?: boolean }) {
         setMenu({ x: e.clientX, y: e.clientY })
       }}
     >
-      <MessageSquare size={14} className="shrink-0 opacity-60" />
       {renaming ? (
         <input
           ref={nameRef}
@@ -75,9 +89,9 @@ function SessionRow(props: { session: SessionItem; archived?: boolean }) {
         <span className="min-w-0 flex-1 truncate text-[13px]">{s.title || '未命名会话'}</span>
       )}
       {s.busy && <span className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-primary" />}
-      {typeof s.message_count === 'number' && s.message_count > 0 && (
-        <span className="shrink-0 text-[11px] text-text-tertiary">{s.message_count}</span>
-      )}
+      <span className="shrink-0 text-[11px] tabular-nums text-text-tertiary">
+        {relTime(s.updated_at)}
+      </span>
       {menu && (
         <div
           className="fixed z-50 w-36 rounded-lg border border-border bg-surface py-1 shadow-lg"
@@ -120,7 +134,7 @@ function SessionRow(props: { session: SessionItem; archived?: boolean }) {
   )
 }
 
-/** 工作区分组头:hover 显示 新建对话 / 更多(重命名、注销) */
+/** 工作区分组头:hover 显示 新建对话 / 更多(重命名、移除) */
 function GroupHeader(props: {
   groupKey: string
   name: string
@@ -194,7 +208,7 @@ function GroupHeader(props: {
       <span className="min-w-0 flex-1 cursor-default truncate text-[13px] font-medium">
         {props.name}
       </span>
-      <span className="shrink-0 text-[11px] text-text-tertiary group-hover:hidden">
+      <span className="shrink-0 rounded-full bg-surface-tertiary px-1.5 py-px text-[11px] tabular-nums text-text-tertiary group-hover:hidden">
         {props.count}
       </span>
       <span className="hidden shrink-0 items-center gap-0.5 group-hover:flex">
@@ -250,7 +264,7 @@ function GroupHeader(props: {
               className="flex w-full items-center gap-2 px-3 py-1.5 text-[13px] text-danger hover:bg-danger-soft"
               onClick={() => void unregister()}
             >
-              <Trash2 size={13} /> 确认注销(会话保留)
+              <Trash2 size={13} /> 确认移除(会话保留)
             </button>
           ) : (
             <button
@@ -260,7 +274,7 @@ function GroupHeader(props: {
                 setTimeout(() => setConfirmDelete(false), 3000)
               }}
             >
-              <Trash2 size={13} /> 注销工作区
+              <Trash2 size={13} /> 移除工作区
             </button>
           )}
         </div>
@@ -374,7 +388,7 @@ export function Sidebar(props: { onOpenSettings: () => void }) {
                     onNewSession={(root) => void createSession(root)}
                   />
                   {!isCollapsed && (
-                    <div className="ml-3 border-l border-border-light pl-1.5">
+                    <div className="ml-[26px]">
                       {g.items.map((s) => (
                         <SessionRow key={s.id} session={s} />
                       ))}

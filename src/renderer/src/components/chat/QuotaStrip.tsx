@@ -123,7 +123,7 @@ export function QuotaStrip() {
   const busy = useStream((s) => s.status.busy)
   // 自动刷新间隔(秒,0=关闭;设置页可配,轮次结束仍会立即刷新)
   const refreshSecs = useUi((s) => s.quotaRefreshSecs)
-  // 中断按钮在主面板长显;无活动会话时置灰(有会话即可中断,不限于 chat 视图)
+  // 中断按钮在主面板长显:中断当前会话(如有)并停止 kimi web 服务,回到入口页
   // 注意:Hook 必须无条件调用(短路写法会因 Hook 数量变化触发 React 报错)
   const hasSession = useSessions((s) => !!s.activeSessionId)
 
@@ -199,16 +199,20 @@ export function QuotaStrip() {
         )}
       </div>
       <button
-        className="flex shrink-0 items-center gap-1.5 rounded-md px-2.5 py-1.5 text-[12.5px] text-text-tertiary hover:bg-danger-soft hover:text-danger disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-text-tertiary"
-        title="中断当前会话并返回首页"
-        disabled={!hasSession}
+        className="flex shrink-0 items-center gap-1.5 rounded-md px-2.5 py-1.5 text-[12.5px] text-text-tertiary hover:bg-danger-soft hover:text-danger"
+        title="中断当前任务、停止 Kimi CLI 服务并返回首页"
         onClick={() => {
-          // 有任务在执行时先弹确认框;无任务直接中断(空操作)+ 返回首页
-          if (useStream.getState().status.busy) {
+          // 任何会话有任务在执行都先弹确认框:停服务会杀掉所有会话的任务,不只当前会话
+          const anyBusy =
+            useStream.getState().status.busy ||
+            useSessions.getState().sessions.some((s) => s.busy)
+          if (anyBusy) {
             setConfirming(true)
             return
           }
-          void useStream.getState().abort()
+          // 中断会话(无会话为空操作)并停止 kimi web 服务,由 onServerStopped 带回入口页
+          if (hasSession) void useStream.getState().abort()
+          void window.kimiApi.stopBackend()
           useUi.getState().openHome()
         }}
       >
@@ -219,9 +223,10 @@ export function QuotaStrip() {
       {confirming && (
         <div className="fixed inset-0 z-[85] flex items-center justify-center bg-black/30">
           <div className="w-[380px] rounded-xl bg-surface p-5 shadow-2xl">
-            <p className="text-[15px] font-semibold">中断当前任务?</p>
+            <p className="text-[15px] font-semibold">中断并停止服务?</p>
             <p className="mt-2 text-[13px] text-text-secondary">
-              当前会话有任务正在执行,中断将停止该任务并返回首页。
+              有会话正在执行任务(可能包含其它会话),中断将停止所有任务、停止 Kimi CLI
+              服务并返回首页。
             </p>
             <div className="mt-4 flex justify-end gap-2">
               <button
@@ -236,6 +241,7 @@ export function QuotaStrip() {
                   setConfirming(false)
                   // 与 Composer 停止按钮同路径:current_prompt_id → prompts/:abort,回退 session 级 :abort
                   void useStream.getState().abort()
+                  void window.kimiApi.stopBackend()
                   useUi.getState().openHome()
                 }}
               >
