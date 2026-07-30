@@ -30,13 +30,15 @@ export function HomePage() {
   return (
     <div className="relative flex min-h-0 flex-1">
       {sidebarCollapsed && (
-        <button
-          className="absolute left-2 top-2 z-40 rounded-lg border border-border bg-surface p-1.5 text-text-tertiary shadow-sm hover:bg-surface-tertiary hover:text-text-secondary"
-          title="展开侧栏 (Ctrl+B)"
-          onClick={toggleSidebar}
-        >
-          <PanelLeftOpen size={16} />
-        </button>
+        <div className="flex w-9 shrink-0 flex-col items-center border-r border-border-light bg-surface-secondary py-2">
+          <button
+            className="rounded-lg p-1.5 text-text-tertiary hover:bg-surface-tertiary hover:text-text-secondary"
+            title="展开侧栏 (Ctrl+B)"
+            onClick={toggleSidebar}
+          >
+            <PanelLeftOpen size={16} />
+          </button>
+        </div>
       )}
       {!sidebarCollapsed && <Sidebar onOpenSettings={() => useUi.getState().openSettings()} />}
       <div className="flex min-w-0 flex-1 flex-col bg-surface">

@@ -4,7 +4,7 @@ import {
   ChevronDown,
   ChevronRight,
   Folder,
-  HardDrive,
+  FolderPlus,
   MessageSquare,
   MessageSquarePlus,
   MoreHorizontal,
@@ -279,7 +279,6 @@ export function Sidebar(props: { onOpenSettings: () => void }) {
     refresh,
     search,
     setSearch,
-    activeSessionId,
     createSession
   } = useSessions()
   const toggleSidebar = useUi((s) => s.toggleSidebar)
@@ -310,14 +309,6 @@ export function Sidebar(props: { onOpenSettings: () => void }) {
     [sessions, workspaces, search]
   )
 
-  /** 新建对话:当前/最近工作区直接创建,没有则回退文件夹选择器 */
-  const newConversation = () => {
-    const active = sessions.find((s) => s.id === activeSessionId)
-    const cwd = active?.metadata?.cwd ?? sessions[0]?.metadata?.cwd
-    if (cwd) void createSession(cwd)
-    else setPickerOpen(true)
-  }
-
   const openPicker = (root?: string) => {
     setPickerRoot(root)
     setPickerOpen(true)
@@ -331,14 +322,7 @@ export function Sidebar(props: { onOpenSettings: () => void }) {
             className="flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-primary py-2 text-[13px] font-medium text-white hover:bg-primary-hover"
             onClick={() => openPicker(undefined)}
           >
-            <HardDrive size={14} /> 新建任务
-          </button>
-          <button
-            className="flex items-center justify-center gap-1 rounded-lg border border-primary-border bg-surface px-2.5 py-2 text-[13px] font-medium text-primary hover:bg-primary-soft"
-            title="在当前/最近工作区新建对话"
-            onClick={newConversation}
-          >
-            <Plus size={15} /> 对话
+            <FolderPlus size={14} /> 新建项目
           </button>
           <button
             className="rounded-lg p-2 text-text-tertiary hover:bg-surface-tertiary hover:text-text-secondary"
@@ -352,7 +336,7 @@ export function Sidebar(props: { onOpenSettings: () => void }) {
           <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-text-tertiary" />
           <input
             className="w-full rounded-lg border border-border bg-surface py-1.5 pl-8 pr-7 text-[13px] outline-none focus:border-primary-border"
-            placeholder="搜索会话 (Ctrl+N 新建任务)"
+            placeholder="搜索会话 (Ctrl+N 新建项目)"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
           />
@@ -371,11 +355,12 @@ export function Sidebar(props: { onOpenSettings: () => void }) {
         {!showArchived ? (
           groups.length === 0 ? (
             <p className="px-3 py-8 text-center text-xs text-text-tertiary">
-              暂无会话,点击"新建任务"开始
+              暂无会话,点击"新建项目"开始
             </p>
           ) : (
             groups.map((g) => {
-              const isCollapsed = collapsed[g.key]
+              // 默认折叠:用户点开后显式记录展开状态
+              const isCollapsed = collapsed[g.key] ?? true
               return (
                 <div key={g.key} className="mb-1">
                   <GroupHeader
@@ -383,9 +368,9 @@ export function Sidebar(props: { onOpenSettings: () => void }) {
                     name={g.name}
                     root={g.root}
                     count={g.items.length}
-                    isCollapsed={!!isCollapsed}
+                    isCollapsed={isCollapsed}
                     isRealWorkspace={g.key.startsWith('wd_')}
-                    onToggle={() => setCollapsed((c) => ({ ...c, [g.key]: !c[g.key] }))}
+                    onToggle={() => setCollapsed((c) => ({ ...c, [g.key]: !(c[g.key] ?? true) }))}
                     onNewSession={(root) => void createSession(root)}
                   />
                   {!isCollapsed && (
