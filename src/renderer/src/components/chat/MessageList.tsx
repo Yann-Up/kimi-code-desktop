@@ -5,6 +5,7 @@ import { useStream } from '../../stores/stream'
 import { useUi } from '../../stores/ui'
 import { Markdown } from '../Markdown'
 import { ToolGroup } from './ToolCallCard'
+import logoUrl from '../../assets/logo.png'
 
 /** 图片灯箱:点击消息图片全屏查看,点击遮罩 / Esc 关闭 */
 function ImageLightbox({ url, name, onClose }: { url: string; name?: string; onClose: () => void }) {
@@ -356,6 +357,8 @@ export function MessageList({ items }: { items: ChatItem[] }) {
   const hasMore = useStream((s) => s.hasMore)
   const loadingEarlier = useStream((s) => s.loadingEarlier)
   const loadEarlier = useStream((s) => s.loadEarlier)
+  /* 等待应答:busy 期间底部显示呼吸动画 */
+  const busy = useStream((s) => !!s.status.busy)
   /* prepend 前的 scrollHeight,用于保持视口位置 */
   const prependHeightRef = useRef<number | null>(null)
 
@@ -488,6 +491,13 @@ export function MessageList({ items }: { items: ChatItem[] }) {
                 return null
             }
           })}
+          {/* 等待应答指示:busy 期间 logo 明暗呼吸(官方为月亮动画,此处换应用 logo) */}
+          {busy && (
+            <div className="flex items-center gap-2 py-1 pl-1">
+              <img src={logoUrl} alt="" className="logo-breathe h-5 w-5 rounded-md" />
+              <span className="text-[12px] text-text-tertiary">正在执行…</span>
+            </div>
+          )}
         </div>
       </div>
 

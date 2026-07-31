@@ -119,3 +119,21 @@ body,
   padding: 2px 12px;
   color: var(--color-text-secondary);
 }
+
+/* 等待应答指示:logo 明暗呼吸(对齐 kimi web 月亮动画,换用应用 logo) */
+@keyframes logo-breathe {
+  0%,
+  100% {
+    opacity: 0.35;
+    filter: brightness(0.92) saturate(0.9);
+    transform: scale(0.96);
+  }
+  50% {
+    opacity: 1;
+    filter: brightness(1.08) saturate(1.1);
+    transform: scale(1);
+  }
+}
+.logo-breathe {
+  animation: logo-breathe 1.6s ease-in-out infinite;
+}
