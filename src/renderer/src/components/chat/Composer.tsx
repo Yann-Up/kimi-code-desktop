@@ -189,7 +189,7 @@ function fmtContext(n?: number): string {
 const draftCache = new Map<string, string>()
 
 export function Composer({ sessionId }: { sessionId: string }) {
-  const { sendPrompt, abort, status } = useStream()
+  const { sendPrompt, steer, abort, status } = useStream()
   const { profile: delegateProfile, setProfile: setDelegateProfile } = useDelegate()
 
   const [text, setText] = useState(() => draftCache.get(sessionId) ?? '')
@@ -543,13 +543,14 @@ export function Composer({ sessionId }: { sessionId: string }) {
   // ---------- 发送 ----------
 
   const uploading = attachments.some((a) => a.kind === 'file' && a.uploading)
-  const canSend = !busy && !uploading && (!!text.trim() || attachments.length > 0)
+  const hasContent = !!text.trim() || attachments.length > 0
+  const canSend = !busy && !uploading && hasContent
+  // 流式期间可 Ctrl+S 注入(kimi web 同款 steer):输入框内容立即进入运行中的轮次
+  const canSteer = busy && !uploading && hasContent
 
-  const doSend = () => {
-    if (!canSend) return
+  const buildOpts = () => {
     const ready = attachments.filter((a) => a.kind === 'image' || a.fileId)
-    const sentText = text
-    void sendPrompt({
+    return {
       text,
       attachments: ready.map((a) =>
         a.kind === 'image'
@@ -564,14 +565,28 @@ export function Composer({ sessionId }: { sessionId: string }) {
       planMode: mode === 'plan',
       swarmMode: mode === 'swarm',
       goalObjective: mode === 'goal' && goal.trim() ? goal.trim() : undefined
-    }).then((ok) => {
-      // 发送失败不清空:草稿仍在输入框(且 draftCache 已存),用户可直接重试
-      if (!ok) return
-      // 发送期间用户可能继续输入:仅在文本未变时清空,避免误删新内容
-      setText((cur) => (cur === sentText ? '' : cur))
-      setAttachments([])
-      setDelegateProfile(null)
-    })
+    }
+  }
+
+  // 提交成功后的清理:发送期间用户可能继续输入,仅在文本未变时清空,避免误删新内容;
+  // 失败不清空:草稿仍在输入框(且 draftCache 已存),用户可直接重试
+  const afterSubmit = (sentText: string, ok: boolean) => {
+    if (!ok) return
+    setText((cur) => (cur === sentText ? '' : cur))
+    setAttachments([])
+    setDelegateProfile(null)
+  }
+
+  const doSend = () => {
+    if (!canSend) return
+    const sentText = text
+    void sendPrompt(buildOpts()).then((ok) => afterSubmit(sentText, ok))
+  }
+
+  const doSteer = () => {
+    if (!canSteer) return
+    const sentText = text
+    void steer(buildOpts()).then((ok) => afterSubmit(sentText, ok))
   }
 
   // ---------- 渲染辅助 ----------
@@ -770,7 +785,9 @@ export function Composer({ sessionId }: { sessionId: string }) {
               rows={1}
               className="max-h-[180px] min-w-0 flex-1 resize-none bg-transparent py-1.5 text-[13.5px] outline-none placeholder:text-text-tertiary"
               placeholder={
-                busy ? '任务进行中,发送将排队 / 可点击右侧停止' : '输入消息,Enter 发送,Shift+Enter 换行'
+                busy
+                  ? '任务进行中,Ctrl+S 将内容立即注入当前轮次 / 可点击右侧停止'
+                  : '输入消息,Enter 发送,Shift+Enter 换行'
               }
               value={text}
               onChange={(e) => {
@@ -778,6 +795,12 @@ export function Composer({ sessionId }: { sessionId: string }) {
                 setSlashDismissed(false)
               }}
               onKeyDown={(e) => {
+                // Ctrl+S(流式期间):把输入框内容立即注入运行中的轮次,阻止浏览器默认行为
+                if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
+                  e.preventDefault()
+                  doSteer()
+                  return
+                }
                 // / 面板打开时优先消费导航键
                 if (slashOpen) {
                   if (e.key === 'ArrowDown') {

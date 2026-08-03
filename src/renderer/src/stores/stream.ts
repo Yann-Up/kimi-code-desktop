@@ -131,6 +131,9 @@ interface StreamState {
   handleResync: () => void
   refreshPending: () => Promise<void>
   sendPrompt: (opts: SendPromptOptions) => Promise<boolean>
+  /** 流式期间注入(Ctrl+S):提交后立即 steer 进运行中的轮次;
+   *  轮次刚好结束导致注入失败时消息留在队列按序执行,仍返回 true */
+  steer: (opts: SendPromptOptions) => Promise<boolean>
   abort: () => Promise<void>
   /** 返回是否提交成功,失败时调用方应保留卡片并提示重试 */
   answerApproval: (
@@ -325,7 +328,88 @@ function hydrateMessages(messages: unknown[]): ChatItem[] {
 
 // ---------- store ----------
 
-export const useStream = create<StreamState>((set, get) => ({
+export const useStream = create<StreamState>((set, get) => {
+  /** 提交 prompt(乐观渲染 + 错误提示)。成功返回服务端 prompt_id(可能为空字符串),失败返回 null */
+  const submitPrompt = async (opts: SendPromptOptions): Promise<string | null> => {
+    const { sessionId } = get()
+    const { text, attachments } = opts
+    if (!sessionId || (!text.trim() && !attachments?.length)) return null
+    const content: Record<string, unknown>[] = []
+    for (const att of attachments ?? []) {
+      if (att.type === 'image') {
+        content.push({
+          type: 'image',
+          source: { kind: 'base64', media_type: att.mimeType, data: att.data }
+        })
+      } else {
+        content.push({
+          type: 'file',
+          file_id: att.fileId,
+          name: att.name,
+          media_type: att.mimeType,
+          size: att.size
+        })
+      }
+    }
+    if (text.trim()) content.push({ type: 'text', text })
+    // 乐观渲染用户消息(带图片缩略图与文件附件卡片)
+    const optImages: UserImage[] = (attachments ?? [])
+      .filter((a) => a.type === 'image' && a.data)
+      .map((a) => ({ dataUrl: `data:${a.mimeType ?? 'image/png'};base64,${a.data}` }))
+    const optFiles: UserFile[] = (attachments ?? [])
+      .filter((a) => a.type === 'file')
+      .map((a) => ({ name: a.name ?? '附件', mime: a.mimeType, size: a.size, fileId: a.fileId }))
+    set((s) => ({
+      items: [
+        ...s.items,
+        {
+          kind: 'user',
+          id: nid(),
+          text,
+          images: optImages.length ? optImages : undefined,
+          files: optFiles.length ? optFiles : undefined
+        }
+      ],
+      status: { ...s.status, busy: true }
+    }))
+    try {
+      const res = await rest<{ prompt_id?: string }>(`/api/v1/sessions/${sessionId}/prompts`, {
+        method: 'POST',
+        body: {
+          content,
+          ...(opts.model ? { model: opts.model } : {}),
+          ...(opts.profile ? { profile: opts.profile } : {}),
+          ...(opts.permissionMode ? { permission_mode: opts.permissionMode } : {}),
+          ...(opts.thinking ? { thinking: opts.thinking } : {}),
+          ...(opts.planMode ? { plan_mode: true } : {}),
+          ...(opts.swarmMode ? { swarm_mode: true } : {}),
+          ...(opts.goalObjective ? { goal_objective: opts.goalObjective } : {})
+        }
+      })
+      return res?.prompt_id ?? ''
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e)
+      // 认证错误(WSL/SSH 环境未登录)给出明确引导,而不是甩一串英文
+      const authFail = AUTH_ERROR_RE.test(msg)
+      set((s) => ({
+        items: [
+          ...s.items,
+          {
+            kind: 'error',
+            id: nid(),
+            text: authFail
+              ? '发送失败:当前环境未登录 Kimi 账户(WSL/SSH 环境与本机的登录凭据相互独立)'
+              : `发送失败:${msg}`,
+            ...(authFail ? { action: 'login' as const } : {})
+          }
+        ],
+        status: { ...s.status, busy: false }
+      }))
+      return null
+    }
+  }
+
+  return {
   sessionId: null,
   items: [],
   status: {},
@@ -810,83 +894,23 @@ export const useStream = create<StreamState>((set, get) => ({
     }
   },
 
-  sendPrompt: async (opts) => {
+  sendPrompt: async (opts) => (await submitPrompt(opts)) !== null,
+
+  steer: async (opts) => {
+    const promptId = await submitPrompt(opts)
+    if (promptId === null) return false
+    if (!promptId) return true // 旧版服务端不回 prompt_id,消息已入队,无法注入
     const { sessionId } = get()
-    const { text, attachments } = opts
-    if (!sessionId || (!text.trim() && !attachments?.length)) return false
-    const content: Record<string, unknown>[] = []
-    for (const att of attachments ?? []) {
-      if (att.type === 'image') {
-        content.push({
-          type: 'image',
-          source: { kind: 'base64', media_type: att.mimeType, data: att.data }
-        })
-      } else {
-        content.push({
-          type: 'file',
-          file_id: att.fileId,
-          name: att.name,
-          media_type: att.mimeType,
-          size: att.size
-        })
-      }
-    }
-    if (text.trim()) content.push({ type: 'text', text })
-    // 乐观渲染用户消息(带图片缩略图与文件附件卡片)
-    const optImages: UserImage[] = (attachments ?? [])
-      .filter((a) => a.type === 'image' && a.data)
-      .map((a) => ({ dataUrl: `data:${a.mimeType ?? 'image/png'};base64,${a.data}` }))
-    const optFiles: UserFile[] = (attachments ?? [])
-      .filter((a) => a.type === 'file')
-      .map((a) => ({ name: a.name ?? '附件', mime: a.mimeType, size: a.size, fileId: a.fileId }))
-    set((s) => ({
-      items: [
-        ...s.items,
-        {
-          kind: 'user',
-          id: nid(),
-          text,
-          images: optImages.length ? optImages : undefined,
-          files: optFiles.length ? optFiles : undefined
-        }
-      ],
-      status: { ...s.status, busy: true }
-    }))
     try {
-      await rest(`/api/v1/sessions/${sessionId}/prompts`, {
+      await rest(`/api/v1/sessions/${sessionId}/prompts:steer`, {
         method: 'POST',
-        body: {
-          content,
-          ...(opts.model ? { model: opts.model } : {}),
-          ...(opts.profile ? { profile: opts.profile } : {}),
-          ...(opts.permissionMode ? { permission_mode: opts.permissionMode } : {}),
-          ...(opts.thinking ? { thinking: opts.thinking } : {}),
-          ...(opts.planMode ? { plan_mode: true } : {}),
-          ...(opts.swarmMode ? { swarm_mode: true } : {}),
-          ...(opts.goalObjective ? { goal_objective: opts.goalObjective } : {})
-        }
+        body: { prompt_ids: [promptId] }
       })
-      return true
     } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e)
-      // 认证错误(WSL/SSH 环境未登录)给出明确引导,而不是甩一串英文
-      const authFail = AUTH_ERROR_RE.test(msg)
-      set((s) => ({
-        items: [
-          ...s.items,
-          {
-            kind: 'error',
-            id: nid(),
-            text: authFail
-              ? '发送失败:当前环境未登录 Kimi 账户(WSL/SSH 环境与本机的登录凭据相互独立)'
-              : `发送失败:${msg}`,
-            ...(authFail ? { action: 'login' as const } : {})
-          }
-        ],
-        status: { ...s.status, busy: false }
-      }))
-      return false
+      // 注入失败(如轮次刚好结束):消息已入队会按序执行,不算发送失败
+      console.warn('steer 注入失败,消息将排队执行:', e)
     }
+    return true
   },
 
   abort: async () => {
@@ -984,4 +1008,5 @@ export const useStream = create<StreamState>((set, get) => ({
       loadingEarlier: false
     })
   }
-}))
+  }
+})
