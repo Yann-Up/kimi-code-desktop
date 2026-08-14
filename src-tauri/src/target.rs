@@ -5,11 +5,12 @@
 //! local_store.rs / git.rs 不再感知目标差异。
 
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use serde_json::Value;
+use std::collections::{HashMap, HashSet};
 use std::process::Stdio;
 use std::sync::Arc;
-use std::time::Duration;
-use tokio::io::AsyncWriteExt;
+use std::time::{Duration, SystemTime};
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
 use tokio::process::Command;
 
 use crate::cli::{hidden_command, kimi_bin, kimi_home, remote_bin_override};
@@ -125,11 +126,21 @@ pub struct ShellOut {
     pub stderr: String,
 }
 
-/// 用量扫描结果:每个有 wire.jsonl 的会话一条,lines 为含 "usage.record" 的原始行
-pub struct SessionWire {
-    pub wd: String,
+/// 单条 usage.record 解析结果(usage_record_lines 的解析值,三个聚合口径共用一份)
+#[derive(Clone)]
+pub struct UsageRecord {
+    pub model: String, // 空串在解析时已归一为 "unknown"
+    pub time: i64,     // 毫秒时间戳
+    pub input_other: i64,
+    pub output: i64,
+    pub input_cache_read: i64,
+    pub input_cache_creation: i64,
+}
+
+/// 用量扫描结果:每个有 wire.jsonl 的会话一条,records 为解析后的 usage 记录
+pub struct SessionUsage {
     pub sid: String,
-    pub lines: Vec<String>,
+    pub records: Vec<UsageRecord>,
 }
 
 /// cron 文件扫描结果:每个 *.json 一条(内容原样带回,JSON 解析留在 local_store)
@@ -170,12 +181,119 @@ fn session_parts(home: &str, path: &str) -> Option<(String, String)> {
 }
 
 /// 远端用量扫描脚本:逐 wire.jsonl 打 marker 后 grep 出 usage.record 行
-/// (marker 行存在即代表该会话有 wire 文件,aggregate_usage 的 sessions 计数依赖这一点)
+/// (主代理与 subagent 的 wire 文件都扫,即 agents/*/wire.jsonl;
+/// marker 行存在即代表该会话有 wire 文件,usage_record_lines 的 sessions 计数依赖这一点)
 fn usage_scan_script(home: &str) -> String {
     format!(
-        "for f in {h}/sessions/*/*/agents/main/wire.jsonl; do [ -f \"$f\" ] || continue; printf '\\001%s\\n' \"$f\"; grep -F '\"usage.record\"' -- \"$f\" 2>/dev/null; done",
+        "for f in {h}/sessions/*/*/agents/*/wire.jsonl; do [ -f \"$f\" ] || continue; printf '\\001%s\\n' \"$f\"; grep -F '\"usage.record\"' -- \"$f\" 2>/dev/null; done",
         h = sq(home)
     )
+}
+
+/// 解析单行 wire.jsonl:非 usage.record / 缺 usage / 缺 time / JSON 非法 → None。
+/// 与原 local_store 逐行过滤逻辑逐字一致(先字符串包含,再 JSON.parse,再字段校验)。
+fn parse_usage_line(line: &str) -> Option<UsageRecord> {
+    if !line.contains("\"usage.record\"") {
+        return None;
+    }
+    let rec: Value = serde_json::from_str(line).ok()?;
+    if rec.get("type").and_then(|t| t.as_str()) != Some("usage.record")
+        || rec.get("usage").is_none()
+    {
+        return None;
+    }
+    let time = rec.get("time").and_then(|t| t.as_i64())?;
+    let num = |key: &str| -> i64 {
+        rec.get("usage")
+            .and_then(|u| u.get(key))
+            .and_then(|v| v.as_i64().or_else(|| v.as_f64().map(|f| f as i64)))
+            .unwrap_or(0)
+    };
+    let model = rec
+        .get("model")
+        .and_then(|m| m.as_str())
+        .filter(|s| !s.is_empty())
+        .unwrap_or("unknown")
+        .to_string();
+    Some(UsageRecord {
+        model,
+        time,
+        input_other: num("inputOther"),
+        output: num("output"),
+        input_cache_read: num("inputCacheRead"),
+        input_cache_creation: num("inputCacheCreation"),
+    })
+}
+
+/// 单个 wire.jsonl 的缓存条目:mtime 或 len 任一变化即视为失效(改动文件就地覆盖)
+struct CachedUsage {
+    mtime: Option<SystemTime>,
+    len: u64,
+    records: Vec<UsageRecord>,
+}
+
+/// 进程内 usage 解析缓存(Local 目标专用)。key = (kimi_home 字符串, wire.jsonl 绝对路径),
+/// mtime+len 做有效性校验;每次扫描结束清理未触达的 key(文件被删/目录变化/切换 home 不残留)。
+/// WSL/SSH 远端路径不缓存(远端 grep 已省掉全量回传,且 mtime/len 需额外一条 stat 命令)。
+static USAGE_CACHE: std::sync::LazyLock<std::sync::Mutex<HashMap<(String, String), CachedUsage>>> =
+    std::sync::LazyLock::new(|| std::sync::Mutex::new(HashMap::new()));
+
+/// BufReader 逐行读 wire.jsonl,只解析含 "usage.record" 的行(不整文件载入内存)。
+/// 文件不存在/读取失败返回 None(与原 read_to_string 失败整体跳过该文件一致)。
+async fn read_usage_records(path: &std::path::Path) -> Option<Vec<UsageRecord>> {
+    let file = tokio::fs::File::open(path).await.ok()?;
+    let mut lines = tokio::io::BufReader::new(file).lines();
+    let mut out = Vec::new();
+    loop {
+        match lines.next_line().await {
+            Ok(Some(line)) => {
+                if let Some(rec) = parse_usage_line(&line) {
+                    out.push(rec);
+                }
+            }
+            Ok(None) => break,
+            Err(_) => return None, // 读取中断:整文件视为失败
+        }
+    }
+    Some(out)
+}
+
+/// 带缓存读单个 wire.jsonl:stat 校验 → 命中直接克隆解析结果,未命中才逐行读+解析。
+/// 返回 None 表示文件不存在/非文件/读取失败(此时不加入 touched,旧缓存随扫描结束清理)。
+async fn cached_usage_records(
+    path: &std::path::Path,
+    key: &(String, String),
+    touched: &mut HashSet<(String, String)>,
+) -> Option<Vec<UsageRecord>> {
+    let meta = tokio::fs::metadata(path).await.ok()?;
+    if !meta.is_file() {
+        return None;
+    }
+    touched.insert(key.clone());
+    let mtime = meta.modified().ok();
+    let len = meta.len();
+    {
+        let cache = USAGE_CACHE.lock().unwrap();
+        if let Some(c) = cache.get(key) {
+            if c.mtime == mtime && c.len == len {
+                return Some(c.records.clone());
+            }
+        }
+    }
+    let records = read_usage_records(path).await?;
+    USAGE_CACHE
+        .lock()
+        .unwrap()
+        .insert(key.clone(), CachedUsage { mtime, len, records: records.clone() });
+    Some(records)
+}
+
+/// 清理本次扫描未触达的缓存 key(文件删除/目录变化/切换 kimi_home 后不残留)
+fn prune_usage_cache(touched: &HashSet<(String, String)>) {
+    USAGE_CACHE
+        .lock()
+        .unwrap()
+        .retain(|k, _| touched.contains(k));
 }
 
 /// 远端 cron 扫描脚本:逐 cron/*.json 打 marker 后 cat 内容
@@ -407,20 +525,6 @@ impl ConnectionTarget {
         }
     }
 
-    /// 是否存在的普通文件(远端: test -f)
-    pub async fn is_file(&self, path: &str) -> bool {
-        match self {
-            ConnectionTarget::Local => std::fs::metadata(path)
-                .map(|m| m.is_file())
-                .unwrap_or(false),
-            _ => self
-                .run_shell(&format!("test -f {}", sq(path)), Duration::from_secs(10))
-                .await
-                .map(|o| o.code == 0)
-                .unwrap_or(false),
-        }
-    }
-
     /// 执行 shell 命令:WSL 走 wsl.exe bash -lc;SSH 走共享连接 exec;Local 走系统 shell
     pub async fn run_shell(&self, cmd: &str, timeout: Duration) -> Result<ShellOut, String> {
         match self {
@@ -517,12 +621,14 @@ impl ConnectionTarget {
             .map_err(|_| "wsl 命令超时".to_string())?
     }
 
-    /// 用量扫描:Local 逐文件读;WSL/SSH 一条命令带回全部 wire.jsonl 的 usage 行
-    pub async fn usage_record_lines(&self) -> Vec<SessionWire> {
+    /// 用量扫描:Local 逐文件读(带进程内缓存);WSL/SSH 一条命令带回全部 wire.jsonl 的 usage 行
+    pub async fn usage_record_lines(&self) -> Vec<SessionUsage> {
         match self {
             ConnectionTarget::Local => {
                 let sessions_root = kimi_home().join("sessions");
+                let home_str = kimi_home().to_string_lossy().into_owned();
                 let mut out = Vec::new();
+                let mut touched: HashSet<(String, String)> = HashSet::new();
                 let Ok(wds) = std::fs::read_dir(&sessions_root) else {
                     return out;
                 };
@@ -531,26 +637,35 @@ impl ConnectionTarget {
                         continue;
                     };
                     for sid in sids.flatten() {
-                        let wire = sid.path().join("agents").join("main").join("wire.jsonl");
-                        if !self.is_file(&wire.to_string_lossy()).await {
-                            continue;
-                        }
-                        let Ok(content) = tokio::fs::read_to_string(&wire).await else {
+                        // 主代理与 subagent 各有独立 wire 文件(agents/<agentId>/wire.jsonl),
+                        // 全部扫描后按会话合并,用量统计才不会漏掉 subagent 的消耗
+                        let agents_dir = sid.path().join("agents");
+                        let Ok(agents) = std::fs::read_dir(&agents_dir) else {
                             continue;
                         };
-                        // 先字符串包含过滤(与原 local_store 逐文件逻辑一致),JSON 解析留给上层
-                        let lines = content
-                            .split('\n')
-                            .filter(|l| l.contains("\"usage.record\""))
-                            .map(str::to_string)
-                            .collect();
-                        out.push(SessionWire {
-                            wd: wd.file_name().to_string_lossy().into_owned(),
+                        let mut found = false;
+                        let mut records: Vec<UsageRecord> = Vec::new();
+                        for agent in agents.flatten() {
+                            let wire = agent.path().join("wire.jsonl");
+                            let key = (home_str.clone(), wire.to_string_lossy().into_owned());
+                            // 按文件缓存解析结果(mtime/len 未变直接复用),三个聚合口径共享
+                            if let Some(mut recs) =
+                                cached_usage_records(&wire, &key, &mut touched).await
+                            {
+                                records.append(&mut recs);
+                                found = true;
+                            }
+                        }
+                        if !found {
+                            continue;
+                        }
+                        out.push(SessionUsage {
                             sid: sid.file_name().to_string_lossy().into_owned(),
-                            lines,
+                            records,
                         });
                     }
                 }
+                prune_usage_cache(&touched);
                 out
             }
             _ => {
@@ -563,19 +678,29 @@ impl ConnectionTarget {
                 else {
                     return vec![];
                 };
-                split_marked(&out.stdout)
+                // 同一会话的主代理与 subagent 各有 wire 文件,按 (wd, sid) 合并,
+                // 保证 sessions 计数与 Local 分支一致
+                let mut order: Vec<(String, String)> = Vec::new();
+                let mut map: HashMap<(String, String), Vec<UsageRecord>> = HashMap::new();
+                for (path, body) in split_marked(&out.stdout) {
+                    let Some((wd, sid)) = session_parts(&home, &path) else {
+                        continue;
+                    };
+                    let key = (wd, sid);
+                    if !map.contains_key(&key) {
+                        order.push(key.clone());
+                    }
+                    map.entry(key).or_default().extend(
+                        body.split('\n')
+                            .filter(|l| !l.is_empty())
+                            .filter_map(parse_usage_line),
+                    );
+                }
+                order
                     .into_iter()
-                    .filter_map(|(path, body)| {
-                        let (wd, sid) = session_parts(&home, &path)?;
-                        Some(SessionWire {
-                            wd,
-                            sid,
-                            lines: body
-                                .split('\n')
-                                .filter(|l| !l.is_empty())
-                                .map(str::to_string)
-                                .collect(),
-                        })
+                    .map(|key| SessionUsage {
+                        sid: key.1.clone(),
+                        records: map.remove(&key).unwrap_or_default(),
                     })
                     .collect()
             }

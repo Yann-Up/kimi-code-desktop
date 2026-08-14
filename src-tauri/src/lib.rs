@@ -839,11 +839,6 @@ async fn local_cron() -> Vec<local_store::CronEntry> {
 }
 
 #[tauri::command]
-async fn local_usage() -> Vec<local_store::UsageByWorkdir> {
-    local_store::aggregate_usage().await
-}
-
-#[tauri::command]
 async fn local_usage_daily(days: Option<u32>) -> local_store::UsageDailyResult {
     local_store::aggregate_usage_daily(days.unwrap_or(30)).await
 }
@@ -1053,7 +1048,6 @@ pub fn run() {
             local_skills,
             local_agents,
             local_cron,
-            local_usage,
             local_usage_daily,
             local_usage_today,
             local_mcp_read,

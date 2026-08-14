@@ -127,7 +127,6 @@ const api: KimiApi = {
   localSkills: () => invoke('local_skills'),
   localAgents: () => invoke('local_agents'),
   localCron: () => invoke('local_cron'),
-  localUsage: () => invoke('local_usage'),
   localMcpRead: () => invoke('local_mcp_read'),
   localMcpWrite: (data) => invoke('local_mcp_write', { data }),
   localUsageDaily: (days) => invoke('local_usage_daily', { days }),

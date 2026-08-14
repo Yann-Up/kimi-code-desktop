@@ -129,7 +129,6 @@ export interface KimiApi {
   localSkills(): Promise<any>
   localAgents(): Promise<any>
   localCron(): Promise<any>
-  localUsage(): Promise<any>
   localMcpRead(): Promise<any>
   localMcpWrite(data: Record<string, unknown>): Promise<any>
   localUsageDaily(days: number): Promise<any>

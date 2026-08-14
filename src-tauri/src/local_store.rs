@@ -3,7 +3,7 @@
 //! - 技能:skills 目录扫描
 //! - 子代理 profile:agents 目录扫描(markdown frontmatter)
 //! - 定时任务:sessions 下各会话 cron 目录扫描
-//! - 使用统计:解析 sessions 下各会话 agents/main/wire.jsonl 中的 usage 记录
+//! - 使用统计:解析 sessions 下各会话 agents/*/wire.jsonl(含 subagent)中的 usage 记录
 //! (解析/聚合逻辑与原实现逐字一致;Local 逐文件读,WSL/SSH 一条命令批量带回)
 
 use chrono::{Datelike, Duration as ChronoDuration, Local, TimeZone, Timelike};
@@ -273,84 +273,6 @@ pub async fn list_cron_jobs() -> Vec<CronEntry> {
 }
 
 #[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct UsageByWorkdir {
-    pub workdir: String,
-    pub name: String,
-    pub input_tokens: i64,
-    pub output_tokens: i64,
-    pub cache_tokens: i64,
-    pub sessions: i64,
-}
-
-/// wd_<slug>_<12位hash> → slug 作为显示名(等价 /^wd_(.+?)_[0-9a-f]{12}$/)
-fn workdir_name(wd: &str) -> String {
-    if let Some(rest) = wd.strip_prefix("wd_") {
-        // 非 UTF-8 字符边界 split_at 会 panic(sessions/ 是用户目录,可能有怪目录名)
-        if rest.len() > 13 && rest.is_char_boundary(rest.len() - 13) {
-            let (slug, suffix) = rest.split_at(rest.len() - 13);
-            let suffix_ok = suffix.starts_with('_')
-                && suffix[1..].len() == 12
-                && suffix[1..].chars().all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase());
-            if suffix_ok && !slug.is_empty() {
-                return slug.to_string();
-            }
-        }
-    }
-    wd.to_string()
-}
-
-fn usage_num(rec: &Value, key: &str) -> i64 {
-    rec.get("usage")
-        .and_then(|u| u.get(key))
-        .and_then(|v| v.as_i64().or_else(|| v.as_f64().map(|f| f as i64)))
-        .unwrap_or(0)
-}
-
-/// 解析 wire.jsonl 的 usage.record 记录,按工作区聚合。
-pub async fn aggregate_usage() -> Vec<UsageByWorkdir> {
-    let t = cli::connection_target();
-    let mut order: Vec<String> = Vec::new();
-    let mut map: HashMap<String, UsageByWorkdir> = HashMap::new();
-    for sw in t.usage_record_lines().await {
-        let agg = map.entry(sw.wd.clone()).or_insert_with(|| {
-            order.push(sw.wd.clone());
-            UsageByWorkdir {
-                workdir: sw.wd.clone(),
-                name: workdir_name(&sw.wd),
-                input_tokens: 0,
-                output_tokens: 0,
-                cache_tokens: 0,
-                sessions: 0,
-            }
-        });
-        agg.sessions += 1;
-        for line in &sw.lines {
-            // 先字符串包含过滤再 JSON.parse(性能与 TS 一致)
-            if !line.contains("\"usage.record\"") {
-                continue;
-            }
-            let Ok(rec) = serde_json::from_str::<Value>(line) else {
-                continue;
-            };
-            if rec.get("type").and_then(|t| t.as_str()) != Some("usage.record")
-                || rec.get("usage").is_none()
-            {
-                continue;
-            }
-            agg.input_tokens += usage_num(&rec, "inputOther");
-            agg.output_tokens += usage_num(&rec, "output");
-            agg.cache_tokens += usage_num(&rec, "inputCacheRead");
-        }
-    }
-    order
-        .into_iter()
-        .filter_map(|k| map.remove(&k))
-        .filter(|v| v.sessions > 0)
-        .collect()
-}
-
-#[derive(Serialize)]
 pub struct DailyUsage {
     pub date: String, // YYYY-MM-DD
     pub models: HashMap<String, i64>, // model → tokens(in+out+cache)
@@ -392,47 +314,28 @@ pub async fn aggregate_usage_daily(days: u32) -> UsageDailyResult {
     let mut session_set: HashSet<String> = HashSet::new();
     let mut turns: i64 = 0;
 
+    // records 已在 target.rs 解析并缓存(三个聚合口径共享同一份解析结果)
     for sw in t.usage_record_lines().await {
         let mut has_usage = false;
-        for line in &sw.lines {
-            if !line.contains("\"usage.record\"") {
+        for rec in &sw.records {
+            if rec.time < since_ms {
                 continue;
             }
-            let Ok(rec) = serde_json::from_str::<Value>(line) else {
+            let total = rec.input_other
+                + rec.output
+                + rec.input_cache_read
+                + rec.input_cache_creation;
+            let Some(key) = day_key(rec.time) else {
                 continue;
             };
-            if rec.get("type").and_then(|t| t.as_str()) != Some("usage.record")
-                || rec.get("usage").is_none()
-            {
-                continue;
-            }
-            let Some(time) = rec.get("time").and_then(|t| t.as_i64()) else {
-                continue;
-            };
-            if time < since_ms {
-                continue;
-            }
-            let total = usage_num(&rec, "inputOther")
-                + usage_num(&rec, "output")
-                + usage_num(&rec, "inputCacheRead")
-                + usage_num(&rec, "inputCacheCreation");
-            let Some(key) = day_key(time) else {
-                continue;
-            };
-            let model = rec
-                .get("model")
-                .and_then(|m| m.as_str())
-                .filter(|s| !s.is_empty())
-                .unwrap_or("unknown")
-                .to_string();
             let day = by_day.entry(key.clone()).or_insert_with(|| DailyUsage {
                 date: key,
                 models: HashMap::new(),
                 total: 0,
             });
-            *day.models.entry(model.clone()).or_insert(0) += total;
+            *day.models.entry(rec.model.clone()).or_insert(0) += total;
             day.total += total;
-            *model_totals.entry(model).or_insert(0) += total;
+            *model_totals.entry(rec.model.clone()).or_insert(0) += total;
             turns += 1;
             has_usage = true;
         }
@@ -513,37 +416,24 @@ pub async fn aggregate_usage_today() -> UsageTodayResult {
     }
     let mut slots: Vec<Acc> = (0..48).map(|_| Acc::default()).collect();
 
+    // records 已在 target.rs 解析并缓存(与 daily 共用同一份解析结果)
     for sw in t.usage_record_lines().await {
-        for line in &sw.lines {
-            if !line.contains("\"usage.record\"") {
-                continue;
-            }
-            let Ok(rec) = serde_json::from_str::<Value>(line) else {
-                continue;
-            };
-            if rec.get("type").and_then(|t| t.as_str()) != Some("usage.record")
-                || rec.get("usage").is_none()
-            {
-                continue;
-            }
-            let Some(time) = rec.get("time").and_then(|t| t.as_i64()) else {
-                continue;
-            };
-            if time < since_ms {
+        for rec in &sw.records {
+            if rec.time < since_ms {
                 continue;
             }
             let Some(slot) = Local
-                .timestamp_millis_opt(time)
+                .timestamp_millis_opt(rec.time)
                 .single()
                 .map(|d| ((d.hour() * 60 + d.minute()) / 30) as usize)
             else {
                 continue;
             };
             let acc = &mut slots[slot];
-            acc.input += usage_num(&rec, "inputOther");
-            acc.output += usage_num(&rec, "output");
-            acc.cache_read += usage_num(&rec, "inputCacheRead");
-            acc.cache_creation += usage_num(&rec, "inputCacheCreation");
+            acc.input += rec.input_other;
+            acc.output += rec.output;
+            acc.cache_read += rec.input_cache_read;
+            acc.cache_creation += rec.input_cache_creation;
             acc.turns += 1;
         }
     }

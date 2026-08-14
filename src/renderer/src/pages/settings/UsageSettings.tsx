@@ -404,6 +404,8 @@ function LiveTrend() {
   useEffect(() => {
     let cancelled = false
     const load = () => {
+      // 页面在后台时跳过轮询(不产生无意义的全量扫描);恢复可见时由 onVisible 立即补一次
+      if (document.hidden) return
       window.kimiApi
         .localUsageToday()
         .then((r) => {
@@ -418,9 +420,14 @@ function LiveTrend() {
     }
     load()
     const timer = window.setInterval(load, 15_000)
+    const onVisible = () => {
+      if (!document.hidden) load()
+    }
+    document.addEventListener('visibilitychange', onVisible)
     return () => {
       cancelled = true
       window.clearInterval(timer)
+      document.removeEventListener('visibilitychange', onVisible)
     }
   }, [])
 
@@ -641,13 +648,25 @@ function LiveTrend() {
 
 export function UsageSettings() {
   const [range, setRange] = useState<RangeDays>(30)
+  // 364 天全量(仅请求一次):热力图 + 统计卡中可从 days 推导的字段(tokens/models/activeDays/streak)
   const [data, setData] = useState<UsageDailyReport | null>(null)
   const [err, setErr] = useState('')
   const [loading, setLoading] = useState(true)
-  // 热力图固定展示最近 ~15 周,独立于时间范围切换
-  const [heatDays, setHeatDays] = useState<DailyUsage[] | null>(null)
   const [heatErr, setHeatErr] = useState('')
+  // turns/sessions 无法从 days 切片推导:按范围保留原请求(命中 Rust 缓存,开销可忽略)
+  const [rangeUsage, setRangeUsage] = useState<
+    Pick<UsageDailyReport, 'turns' | 'sessions'> | null
+  >(null)
 
+  // 全量数据一次拉取:热力图 + 统计卡推导共用,不随 range 切换重扫
+  useEffect(() => {
+    window.kimiApi
+      .localUsageDaily(HEATMAP_DAYS)
+      .then((r) => setData(r as UsageDailyReport))
+      .catch((e: unknown) => setHeatErr(e instanceof Error ? e.message : '读取热力图数据失败'))
+  }, [])
+
+  // 仅 turns/sessions 需要按范围单独取
   useEffect(() => {
     let cancelled = false
     setLoading(true)
@@ -655,7 +674,7 @@ export function UsageSettings() {
       .localUsageDaily(range)
       .then((r) => {
         if (cancelled) return
-        setData(r as UsageDailyReport)
+        setRangeUsage(r as UsageDailyReport)
         setErr('')
       })
       .catch((e: unknown) => {
@@ -669,17 +688,35 @@ export function UsageSettings() {
     }
   }, [range])
 
-  useEffect(() => {
-    window.kimiApi
-      .localUsageDaily(HEATMAP_DAYS)
-      .then((r) => setHeatDays(((r as UsageDailyReport).days) ?? []))
-      .catch((e: unknown) => setHeatErr(e instanceof Error ? e.message : '读取热力图数据失败'))
-  }, [])
+  /** 当前 range 窗口内的活跃日(从 364 天 days 按日期切片,窗口口径与后端 since 计算一致) */
+  const rangeDays = useMemo(() => {
+    const start = todayZero()
+    start.setDate(start.getDate() - (range - 1))
+    const startKey = toKey(start)
+    return (data?.days ?? []).filter((d) => d.date >= startKey)
+  }, [data, range])
 
-  const modelEntries = useMemo(
-    () => Object.entries(data?.modelTotals ?? {}).sort((a, b) => b[1] - a[1]),
-    [data]
-  )
+  /** 连续活跃天数:从今天(或昨天)往回数,与后端 streak 口径一致 */
+  const streak = useMemo(() => {
+    const active = new Set(rangeDays.map((d) => d.date))
+    const cursor = todayZero()
+    if (!active.has(toKey(cursor))) cursor.setDate(cursor.getDate() - 1)
+    let n = 0
+    while (active.has(toKey(cursor))) {
+      n += 1
+      cursor.setDate(cursor.getDate() - 1)
+    }
+    return n
+  }, [rangeDays])
+
+  /** 当前 range 的模型汇总(由 rangeDays 的逐日 models 累加,等价后端 model_totals) */
+  const modelEntries = useMemo(() => {
+    const m: Record<string, number> = {}
+    for (const d of rangeDays) {
+      for (const [k, v] of Object.entries(d.models)) m[k] = (m[k] ?? 0) + v
+    }
+    return Object.entries(m).sort((a, b) => b[1] - a[1])
+  }, [rangeDays])
   const totalTokens = useMemo(() => modelEntries.reduce((a, [, v]) => a + v, 0), [modelEntries])
 
   /** 图表模型:Top5 + 其他,按用量降序 */
@@ -693,7 +730,7 @@ export function UsageSettings() {
 
   /** 按天补零的堆叠序列(后端只返回活跃日) */
   const stackedDays = useMemo<StackDay[]>(() => {
-    const map = new Map((data?.days ?? []).map((d) => [d.date, d]))
+    const map = new Map(rangeDays.map((d) => [d.date, d]))
     const topNames = new Set(chartModels.map((m) => m.name).filter((n) => n !== '其他'))
     const out: StackDay[] = []
     const cur = todayZero()
@@ -716,7 +753,7 @@ export function UsageSettings() {
       cur.setDate(cur.getDate() + 1)
     }
     return out
-  }, [data, range, chartModels])
+  }, [rangeDays, range, chartModels])
 
   const topModel = modelEntries[0]
   const hasRangeData = totalTokens > 0
@@ -732,29 +769,29 @@ export function UsageSettings() {
     {
       icon: Layers,
       label: '会话数量',
-      value: data ? fmtCount(data.sessions) : '—',
+      value: rangeUsage ? fmtCount(rangeUsage.sessions) : '—',
       sub: `最近 ${range} 天`,
       color: '#16a34a'
     },
     {
       icon: MessagesSquare,
       label: '消息数量',
-      value: data ? fmtCount(data.turns) : '—',
+      value: rangeUsage ? fmtCount(rangeUsage.turns) : '—',
       sub: `最近 ${range} 天`,
       color: '#ea580c'
     },
     {
       icon: CalendarDays,
       label: '活跃天数',
-      value: data ? fmtCount(data.activeDays) : '—',
+      value: data ? fmtCount(rangeDays.length) : '—',
       sub: `/ ${range} 天`,
       color: '#7c3aed'
     },
     {
       icon: Flame,
       label: '当前连续天数',
-      value: data ? fmtCount(data.streak) : '—',
-      sub: data && data.streak > 0 ? '连续保持中' : '今天还未活跃',
+      value: data ? fmtCount(streak) : '—',
+      sub: data && streak > 0 ? '连续保持中' : '今天还未活跃',
       color: '#e11d48'
     },
     {
@@ -804,13 +841,13 @@ export function UsageSettings() {
         <GroupLabel>活跃热力图</GroupLabel>
         {heatErr ? (
           <p className="text-[12px] text-danger">{heatErr}</p>
-        ) : heatDays === null ? (
+        ) : data === null ? (
           <Empty text="加载中…" />
-        ) : heatDays.length === 0 ? (
+        ) : data.days.length === 0 ? (
           <Empty text="暂无使用记录" />
         ) : (
           <Card>
-            <Heatmap days={heatDays} />
+            <Heatmap days={data.days} />
             <div className="mt-3 flex items-center justify-end gap-1 text-[11px] text-text-tertiary">
               较少
               {HEAT_COLORS.map((c) => (
