@@ -9,11 +9,11 @@ import tailwindcss from '@tailwindcss/vite'
 import { resolve } from 'path'
 
 export default defineConfig({
-  root: 'src/renderer',
+  root: 'src',
   base: './',
   resolve: {
     alias: {
-      '@': resolve('src/renderer/src')
+      '@': resolve('src')
     }
   },
   plugins: [react(), tailwindcss()],

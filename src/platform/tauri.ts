@@ -5,7 +5,7 @@
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { getCurrentWindow } from '@tauri-apps/api/window'
-import type { KimiApi } from './kimi-api'
+import type { KimiApi, ServerReadyInfo, TurnEndedInfo } from './kimi-api'
 
 type Unsubscribe = () => void
 
@@ -15,24 +15,6 @@ function on<T>(channel: string, cb: (payload: T) => void): Unsubscribe {
   return () => {
     void pending.then((un) => un())
   }
-}
-
-/** ArrayBuffer → base64(分块避免栈溢出) */
-function bufToBase64(buf: ArrayBuffer): string {
-  const bytes = new Uint8Array(buf)
-  let bin = ''
-  const CHUNK = 0x8000
-  for (let i = 0; i < bytes.length; i += CHUNK) {
-    bin += String.fromCharCode(...bytes.subarray(i, i + CHUNK))
-  }
-  return btoa(bin)
-}
-
-function base64ToBuf(b64: string): ArrayBuffer {
-  const bin = atob(b64)
-  const bytes = new Uint8Array(bin.length)
-  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i)
-  return bytes.buffer
 }
 
 /** query 值统一转字符串,跳过 undefined/null/空串 */
@@ -57,11 +39,8 @@ const api: KimiApi = {
     else if (await win.isMaximized()) await win.unmaximize()
     else await win.maximize()
   },
-  notify: (title, body) => invoke('notify', { title, body }),
-  isFocused: () => getCurrentWindow().isFocused(),
   cliUpgrade: () => invoke('cli_upgrade'),
   openLogs: () => invoke('app_open_logs'),
-  openExternal: (target) => invoke('open_external', { target }),
   kimiHomeGet: () => invoke('get_kimi_home'),
   kimiHomeSet: (path) => invoke('set_kimi_home', { path }),
   kimiCliGet: () => invoke('get_cli_bin'),
@@ -83,10 +62,14 @@ const api: KimiApi = {
   onCliInstalling: (cb) => on('cli:installing', cb),
   onCliUpdateAvailable: (cb) => on('cli:update-available', cb),
   onCliUpgraded: (cb) => on('cli:upgraded', cb),
-  onServerReady: (cb) => on('server:ready', cb),
+  onServerReady: (cb) => on<ServerReadyInfo>('server:ready', cb),
   onServerError: (cb) => on('server:error', cb),
   onCloseRequested: (cb) => on('app:close-requested', cb),
   confirmClose: () => invoke('confirm_close'),
+
+  // web ui
+  webUiUrl: () => invoke<string>('web_ui_url'),
+  onTurnEnded: (cb) => on<TurnEndedInfo>('session:turn-ended', cb),
 
   // rest
   rest: (opts) =>
@@ -96,34 +79,8 @@ const api: KimiApi = {
       body: opts.body,
       query: sanitizeQuery(opts.query)
     }),
-  upload: (args) =>
-    invoke('rest_upload', {
-      bytes_base64: bufToBase64(args.bytes),
-      name: args.name,
-      media_type: args.mediaType
-    }),
-  getFile: async (fileId) => base64ToBuf(await invoke<string>('rest_file', { file_id: fileId })),
-  fetchProviderModels: (args) =>
-    invoke('fetch_provider_models', {
-      base_url: args.baseUrl,
-      api_key: args.apiKey,
-      headers: args.headers
-    }),
-
-  // ws
-  wsSubscribe: (sessionId, cursor) => invoke('ws_subscribe', { session_id: sessionId, cursor }),
-  wsUnsubscribe: (sessionId) => invoke('ws_unsubscribe', { session_id: sessionId }),
-  onSessionEvent: (cb) => on('ws:session-event', cb),
-  onResync: (cb) => on('ws:resync', cb),
-  onWsState: (cb) => on('ws:state', cb),
-
-  // git
-  gitStatus: (cwd) => invoke('git_status', { cwd }),
-  gitLog: (cwd, limit) => invoke('git_log', { cwd, limit }),
-  gitDiff: (cwd, path, staged) => invoke('git_diff', { cwd, path, staged }),
 
   // local
-  localPlugins: () => invoke('local_plugins'),
   localSkills: () => invoke('local_skills'),
   localAgents: () => invoke('local_agents'),
   localCron: () => invoke('local_cron'),

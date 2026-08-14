@@ -10,19 +10,6 @@
     "frontendDist": "../out/renderer"
   },
   "app": {
-    "windows": [
-      {
-        "label": "main",
-        "title": "Kimi Code Desktop",
-        "width": 1440,
-        "height": 900,
-        "minWidth": 1024,
-        "minHeight": 640,
-        "decorations": false,
-        "dragDropEnabled": false,
-        "backgroundColor": "#ffffff"
-      }
-    ],
     "security": {
       "csp": null
     }

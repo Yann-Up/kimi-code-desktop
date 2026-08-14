@@ -3,7 +3,7 @@ import { create } from 'zustand'
 import { Bot, Check } from 'lucide-react'
 import { Section, Card, GroupLabel, Empty } from '../../components/settings/common'
 import { useUi } from '../../stores/ui'
-import { useSessions } from '../../stores/sessions'
+import { useActiveSessionId } from '../../hooks/useActiveSessionId'
 import { rest } from '@/api'
 
 /** 委派 store:记录用户选中的子智能体 profile,供 Composer 后续消费。 */
@@ -84,7 +84,8 @@ function StatusBadge({ status }: { status: string }) {
 
 export function SubagentsSettings() {
   const closeSettings = useUi((s) => s.closeSettings)
-  const activeSessionId = useSessions((s) => s.activeSessionId)
+  // 会话由官方 web UI(iframe)管理,壳侧轮询服务端会话列表取当前活跃会话
+  const activeSessionId = useActiveSessionId()
   const selected = useDelegate((s) => s.profile)
   const setProfile = useDelegate((s) => s.setProfile)
 

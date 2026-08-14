@@ -800,7 +800,9 @@ impl ConnectionTarget {
         }
     }
 
-    /// 读取 server.token:本机读文件;WSL/SSH 反复执行 cat 命令(每次 ~10s 超时防挂死)。
+    /// 读取 server.token 的兜底途径:CLI 0.29.2+ 只打印 banner 不写文件,
+    /// 正常流程应由 server.rs 先等 banner token;此处是旧 CLI 的回退
+    /// (本机读文件;WSL/SSH 反复执行 cat 命令,每次 ~10s 超时防挂死)。
     /// token 文件在服务首次启动时可能尚未生成,轮询等待(25 × 400ms)
     pub async fn read_token(&self) -> Result<String, String> {
         let mut last_err = String::new();
@@ -821,18 +823,20 @@ impl ConnectionTarget {
         }
         match self {
             ConnectionTarget::Local => Err(format!(
-                "读取 server.token 失败: {}",
+                "获取 kimi web token 失败:启动横幅未输出 Token 行,且未能在 {} 读取 server.token 文件(该文件仅旧版 CLI 写入)",
                 kimi_home().join("server.token").display()
             )),
             ConnectionTarget::Wsl { .. } => {
-                Err("读取 WSL 内 server.token 失败,请确认 kimi web 已在 WSL 中正常启动".to_string())
+                Err("获取 WSL 内 kimi web token 失败:启动横幅未输出 Token 行,且读取 WSL 内 server.token 失败,请确认 kimi web 已在 WSL 中正常启动".to_string())
             }
             ConnectionTarget::Ssh { host, .. } => {
                 // 认证类错误直接透出(文案已在 ssh.rs 友好化)
                 if last_err.contains("SSH 认证") || last_err.contains("SSH 连接") {
                     Err(last_err)
                 } else {
-                    Err(format!("读取远端 server.token 失败({host}): {last_err}"))
+                    Err(format!(
+                        "获取远端 kimi web token 失败({host}):启动横幅未输出 Token 行,且读取 server.token 失败({last_err})"
+                    ))
                 }
             }
         }

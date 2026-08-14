@@ -1,12 +1,10 @@
-import { useEffect, useRef, useState } from 'react'
-import { Settings2, UploadCloud } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import { Settings2 } from 'lucide-react'
 import { TitleBar } from './components/TitleBar'
-import { HomePage } from './pages/HomePage'
+import { ShellHome } from './components/ShellHome'
 import { SettingsPage } from './pages/SettingsPage'
 import { OnboardingPage } from './pages/OnboardingPage'
-import { UsageSettings } from './pages/settings/UsageSettings'
 import { useUi } from './stores/ui'
-import { useSessions } from './stores/sessions'
 
 export default function App() {
   // 后端服务阶段:onboarding=首次启动向导(未配置过连接目标) idle=未启动(手动启动页)
@@ -24,13 +22,9 @@ export default function App() {
   const [updateInfo, setUpdateInfo] = useState<{ current: string; latest: string } | null>(null)
   const [upgrading, setUpgrading] = useState(false)
   const [upgradeMsg, setUpgradeMsg] = useState('')
-  const [dragActive, setDragActive] = useState(false)
-  const [noSessionHint, setNoSessionHint] = useState(false)
   const [closeConfirm, setCloseConfirm] = useState(false)
-  const dragDepth = useRef(0)
-  const view = useUi((s) => s.view)
   const onboardingOpen = useUi((s) => s.onboardingOpen)
-  // 服务已连接(入口页按钮变为"进入 Kimi Code")
+  // 服务已连接(入口页"进入"按钮仅在已连接时可用;入口页本身只会在未连接时出现)
   const started = phase === 'ready'
 
   useEffect(() => {
@@ -139,55 +133,9 @@ export default function App() {
     window.kimiApi.setAutoStart(v).catch(() => {})
   }
 
-  // 全窗口拖拽上传:任何角落松开都交给当前会话的 Composer
-  useEffect(() => {
-    const hasFiles = (e: DragEvent) => [...(e.dataTransfer?.types ?? [])].includes('Files')
-    const onDragEnter = (e: DragEvent) => {
-      if (!hasFiles(e)) return
-      e.preventDefault()
-      dragDepth.current++
-      setDragActive(true)
-    }
-    const onDragOver = (e: DragEvent) => {
-      if (!hasFiles(e)) return
-      e.preventDefault()
-    }
-    const onDragLeave = (e: DragEvent) => {
-      if (!hasFiles(e)) return
-      dragDepth.current = Math.max(0, dragDepth.current - 1)
-      if (dragDepth.current === 0) setDragActive(false)
-    }
-    const onDrop = (e: DragEvent) => {
-      if (!hasFiles(e)) return
-      e.preventDefault()
-      dragDepth.current = 0
-      setDragActive(false)
-      const files = [...(e.dataTransfer?.files ?? [])]
-      if (!files.length) return
-      const hasSession = !!useSessions.getState().activeSessionId
-      if (!hasSession) {
-        setNoSessionHint(true)
-        setTimeout(() => setNoSessionHint(false), 2000)
-        return
-      }
-      useUi.getState().setDroppedFiles(files)
-    }
-    document.addEventListener('dragenter', onDragEnter)
-    document.addEventListener('dragover', onDragOver)
-    document.addEventListener('dragleave', onDragLeave)
-    document.addEventListener('drop', onDrop)
-    return () => {
-      document.removeEventListener('dragenter', onDragEnter)
-      document.removeEventListener('dragover', onDragOver)
-      document.removeEventListener('dragleave', onDragLeave)
-      document.removeEventListener('drop', onDrop)
-    }
-  }, [])
-
   return (
     <div className="flex h-full flex-col">
       <TitleBar />
-      {/* 工作区内的额度条由 HomePage 在右侧内容区渲染;入口/统计页不显示 */}
       {phase === 'onboarding' ? (
         /* 首次启动向导:选择连接目标并测试连通,完成后进入启动流程 */
         <OnboardingPage onDone={startBackend} />
@@ -215,8 +163,8 @@ export default function App() {
             </div>
           </div>
         </div>
-      ) : phase === 'ready' && view !== 'home' ? (
-        <HomePage />
+      ) : phase === 'ready' ? (
+        <ShellHome onBackToStart={() => setPhase('idle')} />
       ) : phase === 'starting' ? (
         <div className="flex flex-1 items-center justify-center">
           <div className="text-center">
@@ -256,8 +204,7 @@ export default function App() {
           <SettingsPage />
         </div>
       ) : (
-        /* 入口页(idle 未启动 / ready 时用户主动返回首页):
-           使用统计仪表盘(local 数据,与服务状态无关)+ 右上角启动/进入入口 */
+        /* 启动页(服务未运行;默认 auto_start 开启,仅在手动停止服务或关闭自动连接后出现) */
         <div className="flex min-h-0 flex-1 flex-col">
           <div className="flex shrink-0 items-center justify-between border-b border-border-light bg-surface px-5 py-3">
             <div className="min-w-0">
@@ -301,10 +248,6 @@ export default function App() {
                 启动应用时自动连接
               </label>
             </div>
-          </div>
-          <div className="min-h-0 flex-1 overflow-y-auto">
-            {/* 使用统计仪表盘(连接目标工厂化后三种目标均可用) */}
-            <UsageSettings />
           </div>
         </div>
       )}
@@ -374,20 +317,6 @@ export default function App() {
               </button>
             </div>
           </div>
-        </div>
-      )}
-
-      {dragActive && (
-        <div className="pointer-events-none fixed inset-0 z-[90] flex items-center justify-center bg-primary/10">
-          <div className="flex h-[70%] w-[70%] flex-col items-center justify-center rounded-2xl border-2 border-dashed border-primary bg-white/70">
-            <UploadCloud size={48} className="text-primary" />
-            <p className="mt-3 text-[15px] font-medium text-primary">松开鼠标,将文件添加为附件</p>
-          </div>
-        </div>
-      )}
-      {noSessionHint && (
-        <div className="fixed left-1/2 top-16 z-[91] -translate-x-1/2 rounded-lg bg-text px-4 py-2 text-[13px] text-white shadow-lg">
-          请先打开或新建一个会话
         </div>
       )}
 

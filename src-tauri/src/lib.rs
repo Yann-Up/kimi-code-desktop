@@ -10,7 +10,6 @@
 
 mod cli;
 mod config;
-mod git;
 mod local_store;
 mod rest;
 mod server;
@@ -28,6 +27,7 @@ use base64::Engine as _;
 use serde_json::{json, Value};
 use tauri::menu::{MenuBuilder, MenuItemBuilder, PredefinedMenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
+use tauri::webview::NewWindowResponse;
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_notification::NotificationExt;
 use tauri_plugin_opener::OpenerExt;
@@ -48,7 +48,7 @@ pub struct AppState {
     /// 退出清理标记:防止 ExitRequested 二次进入
     pub exit_cleaned: AtomicBool,
     /// 服务代次:每次 init_backend(服务就绪)递增;WsClient 记录创建时的代次,
-    /// 与当前代次不一致即为绑定旧 port/token 的僵尸连接,ws_subscribe 据此关闭重建
+    /// 与当前代次不一致即为绑定旧 port/token 的僵尸连接,重建订阅器时据此区分
     pub generation: AtomicU64,
     /// bootstrap 进行中的停止请求:stop_backend 置位,run_bootstrap 启动成功后检查,
     /// 避免"安装/启动途中点停止"被随后完成的 bootstrap 静默撤销
@@ -85,20 +85,30 @@ fn log_dir(app: &AppHandle) -> PathBuf {
         .join("logs")
 }
 
-/// 服务就绪后初始化 REST 单例与 server_info(对应 ipc.ts initBackend)
-async fn init_backend(state: &AppState, info: &ServerInfo) {
+/// 服务就绪后初始化 REST 单例 / server_info / WS 通知订阅器(对应 ipc.ts initBackend)
+async fn init_backend(app: &AppHandle, state: &AppState, info: &ServerInfo) {
     *state.server_info.lock().await = Some(info.clone());
-    *state.rest.lock().await = Some(RestClient::new(info.clone(), state.http.clone()));
+    let rest = RestClient::new(info.clone(), state.http.clone());
+    *state.rest.lock().await = Some(rest.clone());
     state.backend_running.store(true, Ordering::SeqCst);
-    // 代次最后递增:读到新代次的 ws_subscribe 必能看到新 server_info
+    // 代次最后递增:读到新代次的订阅器必能看到新 server_info
     state.generation.fetch_add(1, Ordering::SeqCst);
+    // 清理可能残留的旧 WS(理论不该有,防御),按新代次重建通知订阅器
+    if let Some(old) = state.ws.lock().await.take() {
+        old.close().await;
+    }
+    let generation = state.generation.load(Ordering::SeqCst);
+    let client = WsClient::new(info.clone(), app.clone(), log_dir(app), generation, rest);
+    client.start();
+    *state.ws.lock().await = Some(client);
 }
 
 /// kimi web 意外退出时的清理(server.rs 退出监控回调):
-/// 先清 REST/ServerInfo(否则清理窗口内 ws_subscribe 会拿旧 port/token 建僵尸连接)
+/// 先清 REST/ServerInfo(否则清理窗口内重建订阅器会拿旧 port/token 建僵尸连接)
 /// → 关 WS → 复位 backend_running → 广播 server:exited。
 /// 不做的话崩溃后 start_backend 会因 server_info.is_some() 永久 no-op,卡死在假"运行中"状态
 pub(crate) async fn handle_unexpected_exit(app: &AppHandle, detail: &str) {
+    eprintln!("[handle_unexpected_exit] {detail}");
     let state = app.state::<Arc<AppState>>();
     *state.rest.lock().await = None;
     *state.server_info.lock().await = None;
@@ -120,6 +130,19 @@ async fn app_info(app: AppHandle, state: State<'_, Arc<AppState>>) -> Result<Val
         "port": info.as_ref().map(|i| i.port),
         "meta": info.as_ref().and_then(|i| i.meta.clone()),
     }))
+}
+
+/// 官方 web UI 地址(对话 tab iframe src 用):http://127.0.0.1:<port>/#token=<token>;
+/// 服务未运行返回 Err,前端据此显示手动启动页
+#[tauri::command]
+async fn web_ui_url(state: State<'_, Arc<AppState>>) -> Result<String, String> {
+    let info = state
+        .server_info
+        .lock()
+        .await
+        .clone()
+        .ok_or_else(|| "server not ready".to_string())?;
+    Ok(format!("{}#token={}", info.base_url, info.token))
 }
 
 #[tauri::command]
@@ -184,7 +207,7 @@ async fn cli_upgrade(app: AppHandle, state: State<'_, Arc<AppState>>) -> Result<
     ServerManager::stop(&state.server, &state.http).await;
     match ServerManager::start(&state.server, &state.http, &app).await {
         Ok(info) => {
-            init_backend(&state, &info).await;
+            init_backend(&app, &state, &info).await;
             let _ = app.emit(
                 "cli:upgraded",
                 json!({ "version": info.cli_version, "restartOk": true }),
@@ -248,8 +271,9 @@ async fn start_backend(app: AppHandle, state: State<'_, Arc<AppState>>) -> Resul
     Ok(())
 }
 
-/// 停止后端:先清 REST/ServerInfo(停服窗口内 ws_subscribe 报 server not ready,
-/// 不会拿旧 port/token 建僵尸连接)→ 关 WS → 停 kimi web → 复位 backend_running
+/// 停止后端:先清 REST/ServerInfo(停服窗口内 web_ui_url/rest 报 server not ready,
+/// 不会拿旧 port/token 建僵尸连接)→ 关 WS(通知订阅器随之退出)→ 停 kimi web →
+/// 复位 backend_running
 #[tauri::command]
 async fn stop_backend(app: AppHandle, state: State<'_, Arc<AppState>>) -> Result<(), String> {
     // 记录停止请求:bootstrap 进行中时 stop 对空 proc 空转,由 bootstrap 启动成功后自查
@@ -265,10 +289,10 @@ async fn stop_backend(app: AppHandle, state: State<'_, Arc<AppState>>) -> Result
     Ok(())
 }
 
-/// 启动应用时是否自动连接服务(默认 false:进入手动启动页)
+/// 启动应用时是否自动连接服务(默认 true:启动即进主页面;用户可显式关闭回到手动启动页)
 #[tauri::command]
 fn get_auto_start(app: AppHandle) -> bool {
-    config::load(&app).auto_start.unwrap_or(false)
+    config::load(&app).auto_start.unwrap_or(true)
 }
 
 #[tauri::command]
@@ -344,8 +368,8 @@ async fn get_kimi_home() -> Value {
 }
 
 /// 重启后端:先清 REST/ServerInfo(理由同 stop_backend,杜绝僵尸 WS 窗口)→
-/// 关 WS(下次 subscribe 时按新 ServerInfo 重建)→ 停服务 → 按新配置重新启动
-/// 并广播 server:ready / server:error
+/// 关 WS(通知订阅器随之退出,init_backend 按新 ServerInfo 重建)→ 停服务 →
+/// 按新配置重新启动并广播 server:ready / server:error
 async fn restart_backend(app: &AppHandle, state: &AppState) -> Result<(), String> {
     *state.rest.lock().await = None;
     *state.server_info.lock().await = None;
@@ -357,10 +381,15 @@ async fn restart_backend(app: &AppHandle, state: &AppState) -> Result<(), String
 
     match ServerManager::start(&state.server, &state.http, app).await {
         Ok(info) => {
-            init_backend(state, &info).await;
+            init_backend(app, state, &info).await;
             let _ = app.emit(
                 "server:ready",
-                json!({ "cliVersion": info.cli_version, "port": info.port, "meta": info.meta }),
+                json!({
+                    "cliVersion": info.cli_version,
+                    "port": info.port,
+                    "token": info.token,
+                    "meta": info.meta,
+                }),
             );
             Ok(())
         }
@@ -747,75 +776,6 @@ async fn fetch_provider_models(
     Ok(out)
 }
 
-// ---------- ws ----------
-
-/// cursor 为前端快照水位(as_of_seq/epoch):seed 订阅游标,服务端从水位之后回放,
-/// 避免与快照内容重复(切页往返消息翻倍的根因修复)
-#[tauri::command(rename_all = "snake_case")]
-async fn ws_subscribe(
-    app: AppHandle,
-    state: State<'_, Arc<AppState>>,
-    session_id: String,
-    cursor: Option<ws::Cursor>,
-) -> Result<(), String> {
-    // ensureWs:首次订阅时创建并连接;代次不符说明绑定的是旧 port/token(僵尸连接),关闭重建
-    {
-        let mut ws_guard = state.ws.lock().await;
-        let generation = state.generation.load(Ordering::SeqCst);
-        if let Some(old) = ws_guard.as_ref() {
-            if old.generation() != generation {
-                old.close().await;
-                *ws_guard = None;
-            }
-        }
-        if ws_guard.is_none() {
-            let info = state
-                .server_info
-                .lock()
-                .await
-                .clone()
-                .ok_or("server not ready")?;
-            let client = WsClient::new(info, app.clone(), log_dir(&app), generation);
-            client.start();
-            *ws_guard = Some(client);
-        }
-    }
-    let ws = state.ws.lock().await.clone();
-    if let Some(ws) = ws {
-        ws.subscribe(&session_id, cursor).await;
-    }
-    Ok(())
-}
-
-#[tauri::command(rename_all = "snake_case")]
-async fn ws_unsubscribe(
-    state: State<'_, Arc<AppState>>,
-    session_id: String,
-) -> Result<(), String> {
-    let ws = state.ws.lock().await.clone();
-    if let Some(ws) = ws {
-        ws.unsubscribe(&session_id).await;
-    }
-    Ok(())
-}
-
-// ---------- git ----------
-
-#[tauri::command]
-async fn git_status(cwd: String) -> git::GitStatus {
-    git::git_status(&cwd).await
-}
-
-#[tauri::command]
-async fn git_log(cwd: String, limit: Option<u32>) -> Vec<git::GitCommit> {
-    git::git_log(&cwd, limit).await
-}
-
-#[tauri::command]
-async fn git_diff(cwd: String, path: String, staged: bool) -> String {
-    git::git_diff_file(&cwd, &path, staged).await
-}
-
 // ---------- local ----------
 
 #[tauri::command]
@@ -980,10 +940,15 @@ async fn run_bootstrap(app: AppHandle, state: Arc<AppState>) {
             ServerManager::stop(&state.server, &state.http).await;
             return Ok::<(), String>(());
         }
-        init_backend(&state, &info).await;
+        init_backend(&app, &state, &info).await;
         let _ = app.emit(
             "server:ready",
-            json!({ "cliVersion": info.cli_version, "port": info.port, "meta": info.meta }),
+            json!({
+                "cliVersion": info.cli_version,
+                "port": info.port,
+                "token": info.token,
+                "meta": info.meta,
+            }),
         );
         Ok::<(), String>(())
     };
@@ -1014,6 +979,7 @@ pub fn run() {
         .manage(state)
         .invoke_handler(tauri::generate_handler![
             app_info,
+            web_ui_url,
             app_open_logs,
             open_external,
             confirm_close,
@@ -1039,11 +1005,6 @@ pub fn run() {
             rest_file,
             rest_upload,
             fetch_provider_models,
-            ws_subscribe,
-            ws_unsubscribe,
-            git_status,
-            git_log,
-            git_diff,
             local_plugins,
             local_skills,
             local_agents,
@@ -1078,6 +1039,27 @@ pub fn run() {
                 );
                 cli::set_connection_target(conn.into());
             }
+            // 程序化建窗(参数与原 config app.windows 一致):config 声明的窗口挂不上
+            // on_new_window(builder 级钩子),iframe 内 window.open/target=_blank 必须接管
+            // 转系统浏览器,否则官方 UI 外链会被 WebView2 静默吞掉
+            tauri::WebviewWindowBuilder::new(app.handle(), "main", tauri::WebviewUrl::default())
+                .title("Kimi Code Desktop")
+                .inner_size(1440.0, 900.0)
+                .min_inner_size(1024.0, 640.0)
+                .decorations(false)
+                // config 的 dragDropEnabled:false 对应此方法(默认开启拖拽处理)
+                .disable_drag_drop_handler()
+                .background_color(tauri::window::Color(255, 255, 255, 255))
+                .on_new_window(|url, _| {
+                    // 拦截 iframe 内的 window.open / target=_blank:
+                    // http/https 一律转系统浏览器打开,并拒绝新窗口(官方 UI 外链全走这)
+                    let lower = url.as_str().to_lowercase();
+                    if lower.starts_with("http://") || lower.starts_with("https://") {
+                        let _ = tauri_plugin_opener::open_url(url.as_str(), None::<&str>);
+                    }
+                    NewWindowResponse::Deny
+                })
+                .build()?;
             create_tray(app.handle())?;
             // 关闭拦截:后端运行中时不直接关窗,通知前端弹退出确认框(确认后走 confirm_close);
             // 覆盖标题栏关闭按钮、Alt+F4、任务栏关闭等所有关窗路径
@@ -1093,8 +1075,8 @@ pub fn run() {
                     }
                 });
             }
-            // 默认不自动连接:仅在用户开启 auto_start 时启动后端,否则进入手动启动页
-            if cfg.auto_start.unwrap_or(false) {
+            // 默认自动连接(启动即进主页面);用户显式关闭 auto_start 时才进手动启动页
+            if cfg.auto_start.unwrap_or(true) {
                 let app2 = app.handle().clone();
                 let st = state_for_setup.clone();
                 tauri::async_runtime::spawn(async move {

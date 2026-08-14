@@ -1,42 +1,29 @@
 import {
   ArrowLeft,
-  Code2,
+  Bot,
+  CalendarClock,
   Command,
   Database,
-  Gauge,
-  Puzzle,
-  Rocket,
   Settings2,
-  Sparkles,
   Wand2
 } from 'lucide-react'
 import { useUi } from '../stores/ui'
 import { GeneralSettings } from './settings/GeneralSettings'
-import { CodePreviewSettings } from './settings/CodePreviewSettings'
-import { ModelsSettings } from './settings/ModelsSettings'
 import { SubagentsSettings } from './settings/SubagentsSettings'
-import { PluginsSettings } from './settings/PluginsSettings'
 import { SkillsSettings } from './settings/SkillsSettings'
 import { McpSettings } from './settings/McpSettings'
-import { MemorySettings } from './settings/MemorySettings'
 import { CronSettings } from './settings/CronSettings'
 import { CommandsSettings } from './settings/CommandsSettings'
-import { IndexSettings } from './settings/IndexSettings'
-import { UsageSettings } from './settings/UsageSettings'
-import { GuideSettings } from './settings/GuideSettings'
 
+// 模型/供应商/OAuth/权限/主题等设置交给官方 web UI;这里只保留官方 UI 没有的壳设置页
+// (使用统计已提升为顶部导航 tab,不在此处)
 const SECTIONS: { id: string; label: string; icon: typeof Settings2 }[] = [
   { id: 'general', label: '常规', icon: Settings2 },
-  { id: 'code-preview', label: '代码预览', icon: Code2 },
-  { id: 'models', label: '模型设置', icon: Sparkles },
-  // 子智能体/记忆/定时任务/索引库:CLI 0.29.2 无服务端接口,暂时隐藏
-  { id: 'plugins', label: '插件管理', icon: Puzzle },
-  { id: 'skills', label: '技能', icon: Wand2 },
   { id: 'mcp', label: 'MCP', icon: Database },
-  // 记忆/定时任务/索引库:CLI 0.29.2 无服务端接口,暂时隐藏
-  { id: 'commands', label: '命令', icon: Command },
-  { id: 'usage', label: '使用统计', icon: Gauge },
-  { id: 'guide', label: '引导', icon: Rocket }
+  { id: 'skills', label: '技能', icon: Wand2 },
+  { id: 'subagents', label: '子智能体', icon: Bot },
+  { id: 'cron', label: '定时', icon: CalendarClock },
+  { id: 'commands', label: '命令', icon: Command }
 ]
 
 export function SettingsPage() {
@@ -46,30 +33,16 @@ export function SettingsPage() {
     switch (settingsSection) {
       case 'general':
         return <GeneralSettings />
-      case 'code-preview':
-        return <CodePreviewSettings />
-      case 'models':
-        return <ModelsSettings />
-      case 'subagents':
-        return <SubagentsSettings />
-      case 'plugins':
-        return <PluginsSettings />
-      case 'skills':
-        return <SkillsSettings />
       case 'mcp':
         return <McpSettings />
-      case 'memory':
-        return <MemorySettings />
+      case 'skills':
+        return <SkillsSettings />
+      case 'subagents':
+        return <SubagentsSettings />
       case 'cron':
         return <CronSettings />
       case 'commands':
         return <CommandsSettings />
-      case 'index':
-        return <IndexSettings />
-      case 'usage':
-        return <UsageSettings />
-      case 'guide':
-        return <GuideSettings />
       default:
         return <GeneralSettings />
     }
@@ -82,7 +55,7 @@ export function SettingsPage() {
           className="flex items-center gap-2 px-4 py-3 text-[13px] text-text-secondary hover:bg-surface-tertiary"
           onClick={closeSettings}
         >
-          <ArrowLeft size={14} /> 返回工作区
+          <ArrowLeft size={14} /> 返回对话
         </button>
         <div className="mt-1 flex-1 overflow-y-auto px-2 pb-2">
           {SECTIONS.map((s) => {

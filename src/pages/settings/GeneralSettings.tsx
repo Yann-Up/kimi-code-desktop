@@ -712,7 +712,7 @@ export function GeneralSettings() {
               window.kimiApi.setAutoStart(e.target.checked).catch(() => {})
             }}
           />
-          启动应用时自动连接服务(默认关闭,手动启动)
+          启动应用时自动连接服务(默认开启)
         </label>
       </Card>
 

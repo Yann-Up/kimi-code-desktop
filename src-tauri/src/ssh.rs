@@ -285,9 +285,12 @@ impl SshClient {
 
         let (mut read, write) = channel.split();
         let alive = Arc::new(AtomicBool::new(true));
+        // banner token 槽位:pty 输出里捕获(CLI 0.29.2+ 只打印、不写 server.token)
+        let token_slot = crate::server::TokenSlot::new();
         // 持续排空通道输出(避免窗口耗尽),日志按 server.rs 同款规则脱敏截断
         let drain = {
             let alive = alive.clone();
+            let slot = token_slot.clone();
             tokio::spawn(async move {
                 let mut line = String::new();
                 while let Some(msg) = read.wait().await {
@@ -295,6 +298,10 @@ impl SshClient {
                         line.push_str(&String::from_utf8_lossy(&data));
                         while let Some(pos) = line.find('\n') {
                             let l: String = line.drain(..=pos).collect();
+                            // 启动 banner 的 token 捕获,两路 drain 复用同一解析规则
+                            if let Some(tok) = crate::server::parse_banner_token(&l) {
+                                slot.store(tok).await;
+                            }
                             // 启动横幅是 "Token: <value>",旧过滤只挡 "token=" 会漏;
                             // 任何含 token 字样的行都不落日志
                             if !l.to_lowercase().contains("token") {
@@ -315,6 +322,7 @@ impl SshClient {
             drain,
             write: Some(write),
             forward: None,
+            token: token_slot,
         })
     }
 
@@ -375,12 +383,19 @@ pub struct SshProcess {
     drain: tokio::task::JoinHandle<()>,
     write: Option<russh::ChannelWriteHalf<client::Msg>>,
     forward: Option<ForwardGuard>,
+    /// pty drain 捕获到的 banner token 槽位(供 server.rs 等待)
+    token: crate::server::TokenSlot,
 }
 
 impl SshProcess {
     /// 活性标记(通道被远端关闭/连接断开时翻 false,server.rs 退出监控据此判定)
     pub fn alive_flag(&self) -> Arc<AtomicBool> {
         self.alive.clone()
+    }
+
+    /// banner token 槽位:启动流程 await_token 等待远端打印的 Token 行
+    pub fn token_slot(&self) -> crate::server::TokenSlot {
+        self.token.clone()
     }
 
     pub fn attach_forward(&mut self, guard: ForwardGuard) {

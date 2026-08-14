@@ -1,8 +1,10 @@
 //! ws-client: kimi web WebSocket 通道(必须在主进程:Bearer 头认证)。
+//! 已从"前端事件转发"精简为"内部通知订阅器":
 //! - server_hello 心跳(ping→pong)
-//! - client_hello / subscribe / unsubscribe(不走 subscribe_v2:它会抑制 v1 会话事件)
+//! - client_hello / subscribe(不走 subscribe_v2:它会抑制 v1 会话事件)
 //! - seq/epoch 游标跟踪,断线指数退避重连,重连后带游标恢复
-//! - resync_required 事件上抛给前端处理
+//! - 周期枚举会话并逐个订阅(协议无通配符);turn.ended / event.session.work_changed
+//!   转为桌面通知与 session:turn-ended 事件,不再向前端转发全量事件
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -13,15 +15,20 @@ use std::time::Duration;
 use futures_util::{SinkExt, StreamExt};
 use serde::Serialize;
 use serde_json::{json, Value};
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 use tokio::sync::mpsc;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::Message;
 
+use crate::rest::RestClient;
 use crate::server::ServerInfo;
 
-/// 订阅游标(事件水位):断线重连 client_hello / subscribe 帧携带;
-/// 也是 ws_subscribe 的可选入参(前端传入权威快照水位)
+/// 会话枚举周期:新会话最迟一个周期内被订阅(协议无通配符订阅,只能逐会话)
+const ENUMERATE_INTERVAL: Duration = Duration::from_secs(30);
+/// 通知去重集合容量上限,超出即整体清空(有界,防长期运行无界增长)
+const NOTIFY_DEDUP_CAP: usize = 256;
+
+/// 订阅游标(事件水位):断线重连 client_hello / subscribe 帧携带
 #[derive(Clone, Serialize, serde::Deserialize)]
 pub struct Cursor {
     #[serde(default)]
@@ -34,6 +41,8 @@ pub struct WsClient {
     info: ServerInfo,
     app: AppHandle,
     log_dir: PathBuf,
+    /// 会话枚举(周期 GET /api/v1/sessions)用;服务代次与 info 绑定,随 client 一起重建
+    rest: RestClient,
     /// 创建时的服务代次:与 AppState::generation 不一致即为绑定旧 port/token 的僵尸连接
     generation: u64,
     subscriptions: tokio::sync::Mutex<HashSet<String>>,
@@ -42,20 +51,30 @@ pub struct WsClient {
     closed: AtomicBool,
     /// 出站帧通道:连接存活期间由 run 循环持有接收端
     tx: tokio::sync::Mutex<Option<mpsc::UnboundedSender<String>>>,
+    /// 审批/提问通知去重:(session_id, pending_interaction),容量有界
+    notified: tokio::sync::Mutex<HashSet<(String, String)>>,
 }
 
 impl WsClient {
-    pub fn new(info: ServerInfo, app: AppHandle, log_dir: PathBuf, generation: u64) -> Arc<Self> {
+    pub fn new(
+        info: ServerInfo,
+        app: AppHandle,
+        log_dir: PathBuf,
+        generation: u64,
+        rest: RestClient,
+    ) -> Arc<Self> {
         Arc::new(Self {
             info,
             app,
             log_dir,
+            rest,
             generation,
             subscriptions: tokio::sync::Mutex::new(HashSet::new()),
             cursors: tokio::sync::Mutex::new(HashMap::new()),
             next_id: AtomicU64::new(1),
             closed: AtomicBool::new(false),
             tx: tokio::sync::Mutex::new(None),
+            notified: tokio::sync::Mutex::new(HashSet::new()),
         })
     }
 
@@ -64,11 +83,22 @@ impl WsClient {
         self.generation
     }
 
-    /// 启动连接主循环(含断线重连),对应 TS 的 ws.connect()
+    /// 启动连接主循环(含断线重连)与会话枚举循环
     pub fn start(self: &Arc<Self>) {
         let this = Arc::clone(self);
         tokio::spawn(async move {
             this.run().await;
+        });
+        // 会话枚举:启动立即跑一次,之后每 30s;服务停止(close 置 closed)后退出
+        let this = Arc::clone(self);
+        tokio::spawn(async move {
+            loop {
+                if this.closed.load(Ordering::SeqCst) {
+                    return;
+                }
+                this.enumerate_sessions().await;
+                tokio::time::sleep(ENUMERATE_INTERVAL).await;
+            }
         });
     }
 
@@ -78,7 +108,7 @@ impl WsClient {
             if self.closed.load(Ordering::SeqCst) {
                 return;
             }
-            self.emit_state("connecting");
+            self.dbg("WS CONNECTING");
             let url = format!("ws://127.0.0.1:{}/api/v1/ws", self.info.port);
             let connect = async {
                 let mut req = url.into_client_request().map_err(|e| e.to_string())?;
@@ -101,7 +131,6 @@ impl WsClient {
                         drop(stream);
                         return;
                     }
-                    self.emit_state("open");
                     self.dbg("WS OPEN");
                     let (mut write, mut read) = stream.split();
                     let (tx, mut rx) = mpsc::unbounded_channel::<String>();
@@ -154,17 +183,13 @@ impl WsClient {
                         }
                     }
                     *self.tx.lock().await = None;
-                    // 用户主动 close 时不发状态(TS 用 generation 防串代,close 事件被忽略)
+                    // 用户主动 close 时不发状态(代次防串代逻辑已随命令层删除,仅留日志)
                     if !self.closed.load(Ordering::SeqCst) {
-                        self.emit_state("closed");
                         self.dbg("WS CLOSE");
                     }
                 }
                 Err(e) => {
                     self.dbg(&format!("WS ERR {e}"));
-                    if !self.closed.load(Ordering::SeqCst) {
-                        self.emit_state("closed");
-                    }
                 }
             }
             if self.closed.load(Ordering::SeqCst) {
@@ -222,14 +247,12 @@ impl WsClient {
                             .await
                             .insert(session_id.to_string(), Cursor { seq: cs, epoch });
                     }
-                    let mut info = json!({ "session_id": session_id, "reason": reason });
-                    if let Some(cs) = p.get("current_seq") {
-                        info["current_seq"] = cs.clone();
-                    }
-                    if let Some(ep) = p.get("epoch") {
-                        info["epoch"] = ep.clone();
-                    }
-                    let _ = self.app.emit("ws:resync", info);
+                    self.dbg(&format!(
+                        "RESYNC {session_id} {reason} seq={}",
+                        p.get("current_seq")
+                            .and_then(|v| v.as_f64())
+                            .unwrap_or_default()
+                    ));
                 }
                 return;
             }
@@ -257,8 +280,7 @@ impl WsClient {
                 .insert(session_id.to_string(), Cursor { seq, epoch: epoch.clone() });
         }
         // 事件对象 = payload 展开 + 顶层 type/seq/epoch/session_id/timestamp(undefined 的键丢弃);
-        // volatile 标志必须透传:volatile 帧(assistant.delta 等)的 seq 是当前水位而非自增,
-        // 前端据此只对 durable 事件做 seq 去重,否则流式 delta 会被全部误杀
+        // volatile 标志必须透传:volatile 帧(assistant.delta 等)的 seq 是当前水位而非自增
         let mut evt = payload
             .and_then(|p| p.as_object())
             .cloned()
@@ -278,7 +300,96 @@ impl WsClient {
             evt.insert("timestamp".to_string(), ts.clone());
         }
         self.dbg(&format!("EVT {ftype} {session_id}"));
-        let _ = self.app.emit("ws:session-event", Value::Object(evt));
+        // 不再向前端转发全量事件,只做内部通知拦截
+        self.handle_notify(ftype, &evt, session_id).await;
+    }
+
+    /// 内部通知拦截:
+    /// - turn.ended:主窗口失焦时发桌面通知「任务已完成」;无论是否聚焦都
+    ///   emit session:turn-ended(供 Git 面板刷新)
+    /// - event.session.work_changed 且 pending_interaction 为 approval/question:
+    ///   发通知(该事件服务端只在事实变化时触发,去重仅防重连重放等边缘重复)
+    async fn handle_notify(&self, ftype: &str, evt: &serde_json::Map<String, Value>, session_id: &str) {
+        // 主窗口聚焦时不打扰(用户在看着),与旧前端行为一致
+        let focused = self
+            .app
+            .get_webview_window("main")
+            .map(|w| w.is_focused().unwrap_or(false))
+            .unwrap_or(true);
+        match ftype {
+            "turn.ended" => {
+                if !focused {
+                    self.notify("Kimi Code Desktop", "任务已完成");
+                }
+                let _ = self
+                    .app
+                    .emit("session:turn-ended", json!({ "session_id": session_id }));
+            }
+            "event.session.work_changed" => {
+                if focused {
+                    return;
+                }
+                let interaction = evt
+                    .get("pending_interaction")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                if interaction == "approval" || interaction == "question" {
+                    // 事件载荷无 prompt_id/turn 标识,以 (session_id, interaction) 去重
+                    let key = (session_id.to_string(), interaction.to_string());
+                    let mut seen = self.notified.lock().await;
+                    if !seen.contains(&key) {
+                        if seen.len() >= NOTIFY_DEDUP_CAP {
+                            seen.clear();
+                        }
+                        seen.insert(key);
+                        let body = if interaction == "approval" {
+                            "有一个工具调用等待你的审批"
+                        } else {
+                            "Kimi 想问你几个问题"
+                        };
+                        self.notify("Kimi Code Desktop", body);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// 桌面通知(窗口失焦等前置判断由调用方完成)
+    fn notify(&self, title: &str, body: &str) {
+        use tauri_plugin_notification::NotificationExt;
+        let _ = self.app.notification().builder().title(title).body(body).show();
+    }
+
+    /// 周期枚举会话并逐个订阅(幂等:subscribe 内部对已订阅会话去重);
+    /// 服务端对无游标订阅只从当前水位开始推新事件,不回放历史
+    async fn enumerate_sessions(&self) {
+        let data = match self
+            .rest
+            .request(Some("GET"), "/api/v1/sessions", None, None)
+            .await
+        {
+            Ok(data) => data,
+            Err(e) => {
+                self.dbg(&format!("LIST sessions {e}"));
+                return;
+            }
+        };
+        // 列表信封 {items:[...]};容错裸数组
+        let items = data
+            .get("items")
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_else(|| data.as_array().cloned().unwrap_or_default());
+        for item in items {
+            let sid = item
+                .get("id")
+                .and_then(|v| v.as_str())
+                .or_else(|| item.as_str());
+            if let Some(sid) = sid {
+                self.subscribe(sid, None).await;
+            }
+        }
     }
 
     /// 发送帧:连接未 OPEN 时静默丢弃(与 TS 的 readyState 检查一致)
@@ -341,14 +452,10 @@ impl WsClient {
             .await;
     }
 
-    /// 用户主动关闭:置位 closed,断开出站通道,run 循环随之退出
+    /// 用户主动关闭:置位 closed,断开出站通道,run/枚举循环随之退出
     pub async fn close(&self) {
         self.closed.store(true, Ordering::SeqCst);
         self.tx.lock().await.take();
-    }
-
-    fn emit_state(&self, state: &str) {
-        let _ = self.app.emit("ws:state", state);
     }
 
     /// WS 诊断日志:默认开启,写 <app_data_dir>/logs/ws.log,超过 1MB 滚动为 ws.1.log

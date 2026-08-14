@@ -53,16 +53,25 @@ export interface ConnectionTestResult {
   describe: string
 }
 
+/** server:ready 事件载荷:cliVersion/port/meta 之外新增 token(拼 iframe src 用) */
+export interface ServerReadyInfo {
+  cliVersion: string
+  port: number
+  meta: unknown
+  token: string
+}
+
+/** session:turn-ended 事件载荷 */
+export interface TurnEndedInfo {
+  session_id: string
+}
+
 export interface KimiApi {
   // app
   appInfo(): Promise<any>
   windowControl(action: 'minimize' | 'maximize' | 'close'): Promise<void>
-  notify(title: string, body: string): Promise<any>
-  isFocused(): Promise<boolean>
   cliUpgrade(): Promise<any>
   openLogs(): Promise<any>
-  /** 在系统默认浏览器打开外部链接(webview 内禁止直接导航) */
-  openExternal(target: string): Promise<void>
   kimiHomeGet(): Promise<any>
   kimiHomeSet(path: string | null): Promise<any>
   kimiCliGet(): Promise<any>
@@ -93,39 +102,23 @@ export interface KimiApi {
   onCliInstalling(cb: () => void): Unsubscribe
   onCliUpdateAvailable(cb: (info: { current: string; latest: string }) => void): Unsubscribe
   onCliUpgraded(cb: (info: { version: string | null; restartOk: boolean }) => void): Unsubscribe
-  onServerReady(cb: (info: { cliVersion: string; port: number; meta: unknown }) => void): Unsubscribe
+  onServerReady(cb: (info: ServerReadyInfo) => void): Unsubscribe
   onServerError(cb: (msg: string) => void): Unsubscribe
   /** 后端运行中用户请求关窗(标题栏/Alt+F4 等)时触发,前端应弹退出确认框 */
   onCloseRequested(cb: () => void): Unsubscribe
   /** 确认退出:真正关闭应用(后端会被优雅关停) */
   confirmClose(): Promise<any>
 
+  // web ui(官方 web 界面 iframe 内嵌)
+  /** 官方 web UI 地址(http://127.0.0.1:<port>/#token=<token>);服务未运行时 reject */
+  webUiUrl(): Promise<string>
+  /** 会话轮次结束(turn.ended)通知,供额度条等自动刷新 */
+  onTurnEnded(cb: (info: TurnEndedInfo) => void): Unsubscribe
+
   // rest
   rest(opts: RestRequestOptions): Promise<any>
-  upload(args: { bytes: ArrayBuffer; name: string; mediaType: string }): Promise<any>
-  getFile(fileId: string): Promise<ArrayBuffer>
-  /** 从自定义提供商端点拉取模型列表(GET {baseUrl}/models,OpenAI 风格) */
-  fetchProviderModels(args: {
-    baseUrl: string
-    apiKey?: string
-    headers?: Record<string, string>
-  }): Promise<string[]>
-
-  // ws
-  /** 订阅会话事件;cursor 为权威快照水位(as_of_seq/epoch),服务端从水位之后回放,避免与快照重复 */
-  wsSubscribe(sessionId: string, cursor?: { seq: number; epoch?: string }): Promise<any>
-  wsUnsubscribe(sessionId: string): Promise<any>
-  onSessionEvent(cb: (evt: unknown) => void): Unsubscribe
-  onResync(cb: (info: { session_id: string; reason: string }) => void): Unsubscribe
-  onWsState(cb: (state: 'connecting' | 'open' | 'closed') => void): Unsubscribe
-
-  // git
-  gitStatus(cwd: string): Promise<any>
-  gitLog(cwd: string, limit?: number): Promise<any>
-  gitDiff(cwd: string, path: string, staged: boolean): Promise<any>
 
   // local
-  localPlugins(): Promise<any>
   localSkills(): Promise<any>
   localAgents(): Promise<any>
   localCron(): Promise<any>

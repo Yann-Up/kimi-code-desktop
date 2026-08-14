@@ -1,15 +1,14 @@
 /**
- * QuotaStrip: 会话窗体上方的额度条 + 中断返回入口。
+ * QuotaStrip: 主壳顶部导航行右侧的额度条 + 停止服务返回入口。
  * 数据:GET /api/v1/oauth/usage(kind=ok 时 summary/limits 各窗口额度);
  * 窗口驱动渲染(5 小时/1 周/月度,服务端返回什么显示什么)。
- * 每 60s 轮询 + 轮次结束(busy true→false)自动刷新;未登录/无数据时只显示按钮。
+ * 每 N 秒轮询(设置页可配)+ 轮次结束(session:turn-ended)自动刷新。
+ * 未登录/无数据时只显示按钮。
  */
 import { useEffect, useState } from 'react'
 import { OctagonX } from 'lucide-react'
-import { rest } from '../../api'
-import { useStream } from '../../stores/stream'
-import { useSessions } from '../../stores/sessions'
-import { useUi } from '../../stores/ui'
+import { rest } from '../api'
+import { useUi } from '../stores/ui'
 
 interface QuotaWindow {
   window?: { duration?: number; unit?: string }
@@ -118,14 +117,10 @@ function QuotaMeter({ w }: { w: QuotaWindow }) {
 export function QuotaStrip() {
   const [windows, setWindows] = useState<QuotaWindow[]>([])
   const [wallet, setWallet] = useState<BoosterWallet | null>(null)
-  // 中断确认:仅在有任务执行时弹出(busy 驱动)
+  // 停止服务确认:停止会杀掉 iframe 内官方 UI 的所有进行中会话,统一弹确认
   const [confirming, setConfirming] = useState(false)
-  const busy = useStream((s) => s.status.busy)
   // 自动刷新间隔(秒,0=关闭;设置页可配,轮次结束仍会立即刷新)
   const refreshSecs = useUi((s) => s.quotaRefreshSecs)
-  // 中断按钮在主面板长显:中断当前会话(如有)并停止 kimi web 服务,回到入口页
-  // 注意:Hook 必须无条件调用(短路写法会因 Hook 数量变化触发 React 报错)
-  const hasSession = useSessions((s) => !!s.activeSessionId)
 
   useEffect(() => {
     let cancelled = false
@@ -142,14 +137,16 @@ export function QuotaStrip() {
         .catch(() => {})
     }
     load()
-    // refreshSecs=0 时不挂定时器(仅 busy 变化触发刷新)
+    // refreshSecs=0 时不挂定时器(仅 turn.ended 触发刷新)
     const timer = refreshSecs > 0 ? window.setInterval(load, refreshSecs * 1000) : null
+    // 轮次结束(替代旧版 busy 驱动刷新)
+    const offTurn = window.kimiApi.onTurnEnded(() => load())
     return () => {
       cancelled = true
       if (timer !== null) window.clearInterval(timer)
+      offTurn()
     }
-    // busy 变化(轮次结束)时也刷新
-  }, [busy, refreshSecs])
+  }, [refreshSecs])
 
   const currency = wallet?.currency ?? 'USD'
   const monthlyPct =
@@ -158,7 +155,7 @@ export function QuotaStrip() {
       : null
 
   return (
-    <div className="flex min-h-12 shrink-0 items-center justify-between gap-4 border-b border-border-light bg-surface-secondary px-4 py-1.5">
+    <div className="flex min-h-12 shrink-0 items-center justify-between gap-4 px-4 py-1.5">
       <div className="flex min-w-0 items-center gap-6">
         {windows.map((w, i) => (
           <QuotaMeter key={i} w={w} />
@@ -200,33 +197,19 @@ export function QuotaStrip() {
       </div>
       <button
         className="flex shrink-0 items-center gap-1.5 rounded-md px-2.5 py-1.5 text-[12.5px] text-text-tertiary hover:bg-danger-soft hover:text-danger"
-        title="中断当前任务、停止 Kimi CLI 服务并返回首页"
-        onClick={() => {
-          // 任何会话有任务在执行都先弹确认框:停服务会杀掉所有会话的任务,不只当前会话
-          const anyBusy =
-            useStream.getState().status.busy ||
-            useSessions.getState().sessions.some((s) => s.busy)
-          if (anyBusy) {
-            setConfirming(true)
-            return
-          }
-          // 中断会话(无会话为空操作)并停止 kimi web 服务,由 onServerStopped 带回入口页
-          if (hasSession) void useStream.getState().abort()
-          void window.kimiApi.stopBackend()
-          useUi.getState().openHome()
-        }}
+        title="停止 Kimi CLI 服务并返回启动页"
+        onClick={() => setConfirming(true)}
       >
-        <OctagonX size={14} /> 中断并返回首页
+        <OctagonX size={14} /> 停止服务
       </button>
 
-      {/* 中断确认:任务执行中点击中断时弹出 */}
+      {/* 停止服务确认:停服务会杀掉所有进行中的会话,统一弹确认 */}
       {confirming && (
         <div className="fixed inset-0 z-[85] flex items-center justify-center bg-black/30">
           <div className="w-[380px] rounded-xl bg-surface p-5 shadow-2xl">
-            <p className="text-[15px] font-semibold">中断并停止服务?</p>
+            <p className="text-[15px] font-semibold">停止 Kimi Code 服务?</p>
             <p className="mt-2 text-[13px] text-text-secondary">
-              有会话正在执行任务(可能包含其它会话),中断将停止所有任务、停止 Kimi CLI
-              服务并返回首页。
+              停止服务将中断所有进行中的会话并返回启动页,之后可随时重新启动。
             </p>
             <div className="mt-4 flex justify-end gap-2">
               <button
@@ -239,13 +222,11 @@ export function QuotaStrip() {
                 className="rounded-lg bg-danger px-4 py-1.5 text-[13px] font-medium text-white hover:opacity-90"
                 onClick={() => {
                   setConfirming(false)
-                  // 与 Composer 停止按钮同路径:current_prompt_id → prompts/:abort,回退 session 级 :abort
-                  void useStream.getState().abort()
+                  // 由 onServerStopped 带回启动页(idle)
                   void window.kimiApi.stopBackend()
-                  useUi.getState().openHome()
                 }}
               >
-                中断并返回首页
+                停止服务
               </button>
             </div>
           </div>

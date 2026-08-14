@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Check, Wand2 } from 'lucide-react'
 import { Section, Card, GroupLabel, Empty } from '../../components/settings/common'
-import { useSessions } from '../../stores/sessions'
+import { useActiveSessionId } from '../../hooks/useActiveSessionId'
 import { rest } from '@/api'
 
 interface LocalSkill {
@@ -42,7 +42,8 @@ function pathSummary(p: string): string {
 type ActivateState = 'busy' | 'done' | 'error'
 
 export function SkillsSettings() {
-  const activeSessionId = useSessions((s) => s.activeSessionId)
+  // 会话由官方 web UI(iframe)管理,壳侧轮询服务端会话列表取当前活跃会话
+  const activeSessionId = useActiveSessionId()
 
   const [local, setLocal] = useState<LocalSkill[]>([])
   const [localError, setLocalError] = useState('')

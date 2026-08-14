@@ -2,7 +2,8 @@
 //! - 检测 kimi CLI 是否存在及版本
 //! - 选择空闲端口,按连接目标启动 `kimi web --no-open --port <p>`
 //!   (Local/WSL 为本地子进程;SSH 为 russh exec_keepalive + 进程内端口转发)
-//! - 读取 server.token(本机读文件,WSL/SSH 经各自通道 cat)
+//! - 读取 token:先解析启动 banner(CLI 0.29.2+ 只在 banner 打印 Token 行),
+//!   超时回退 server.token 文件读取(本机读文件,WSL/SSH 经各自通道 cat,兼容旧 CLI)
 //! - 轮询 /api/v1/healthz 直到就绪(三种目标下都连 127.0.0.1:<本地端口>)
 //! - 优雅关停(POST /api/v1/shutdown → 等待退出 → 强杀/断连兜底)
 
@@ -20,8 +21,89 @@ use crate::target::ConnectionTarget;
 
 pub const START_PORT: u16 = 58627;
 const HEALTH_TIMEOUT: Duration = Duration::from_secs(45);
+/// 等待启动 banner 打印 token 的超时(CLI 0.29.2+ 只打印、不写 server.token);
+/// 超时后回退旧 CLI 的 server.token 文件轮询
+const BANNER_TOKEN_TIMEOUT: Duration = Duration::from_secs(12);
 
 pub type SharedServer = Arc<tokio::sync::Mutex<ServerManager>>;
+
+/// banner token 共享槽位:启动输出 drain(本地 stdout/stderr、SSH pty 两路)
+/// 捕获到 token 行后写入,启动流程 await_token 等待;store 幂等(只保留第一个),
+/// 通知用 notify_one(无等待者时存一个 permit,不会丢通知)
+#[derive(Clone)]
+pub struct TokenSlot {
+    inner: Arc<tokio::sync::Mutex<Option<String>>>,
+    notify: Arc<tokio::sync::Notify>,
+}
+
+impl Default for TokenSlot {
+    fn default() -> Self {
+        Self {
+            inner: Arc::new(tokio::sync::Mutex::new(None)),
+            notify: Arc::new(tokio::sync::Notify::new()),
+        }
+    }
+}
+
+impl TokenSlot {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// 写入 token(幂等:只接受第一个),唤醒等待者
+    pub async fn store(&self, token: String) {
+        let mut guard = self.inner.lock().await;
+        if guard.is_none() {
+            *guard = Some(token);
+            self.notify.notify_one();
+        }
+    }
+
+    /// 等待 token,超时返回 None(调用方据此回退 server.token 文件轮询)
+    pub async fn await_token(&self, timeout: Duration) -> Option<String> {
+        tokio::time::timeout(timeout, async {
+            loop {
+                if let Some(t) = self.inner.lock().await.clone() {
+                    return t;
+                }
+                self.notify.notified().await;
+            }
+        })
+        .await
+        .ok()
+    }
+}
+
+/// 从启动 banner 行提取 token,两种形态(CLI 0.29.2+ 只在 banner 打印):
+/// - `Token: <value>` 独立行
+/// - URL hash `...#token=<value>`(Local URL 行)
+/// token 字符集为 [A-Za-z0-9_-=],命中即返回,未命中 None
+pub(crate) fn parse_banner_token(line: &str) -> Option<String> {
+    // URL hash 形态
+    if let Some(pos) = line.find("#token=") {
+        let rest = &line[pos + "#token=".len()..];
+        let end = rest
+            .find(|c: char| !(c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '='))
+            .unwrap_or(rest.len());
+        let tok = &rest[..end];
+        if !tok.is_empty() {
+            return Some(tok.to_string());
+        }
+    }
+    // 独立 Token 行形态(大小写不敏感)
+    let lower = line.to_lowercase();
+    if let Some(pos) = lower.find("token:") {
+        let rest = line[pos + "token:".len()..].trim_start();
+        let end = rest
+            .find(|c: char| !(c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '='))
+            .unwrap_or(rest.len());
+        let tok = &rest[..end];
+        if !tok.is_empty() {
+            return Some(tok.to_string());
+        }
+    }
+    None
+}
 
 #[derive(Clone)]
 pub struct ServerInfo {
@@ -130,7 +212,7 @@ impl ServerManager {
         // stderr 尾部缓冲:启动失败时随错误返回,帮助定位(仅本机/WSL 子进程写入)
         let stderr_tail = Arc::new(std::sync::Mutex::new(String::new()));
 
-        let (handle, probe) = match &target {
+        let (handle, probe, token_slot) = match &target {
             ConnectionTarget::Ssh { .. } => {
                 // 单连接方案:共享连接上 exec_keepalive 跑 kimi web,再做进程内 -L 等价转发;
                 // 关停时关闭通道,远端进程随 pty 断开收 SIGHUP,生命周期干净。
@@ -146,27 +228,49 @@ impl ServerManager {
                         crate::target::sq(&bin)
                     ))
                     .await?;
+                // pty drain 内部捕获启动 banner 的 token,此处取出槽位供等待
+                let token_slot = proc.token_slot();
                 let fwd = client.forward(port, port).await?;
                 proc.attach_forward(fwd);
                 let probe = ExitProbe::Ssh(proc.alive_flag());
-                (ServiceHandle::Ssh(proc), probe)
+                (ServiceHandle::Ssh(proc), probe, token_slot)
             }
             _ => {
+                let token_slot = TokenSlot::new();
                 let mut cmd = target.web_command(port).await?;
                 cmd.stdin(std::process::Stdio::null())
-                    // stdout 无人读取,必须丢弃:piped 写满(64KB)后 kimi web 会阻塞死锁
-                    .stdout(std::process::Stdio::null())
+                    // stdout 改 piped 由 drain 逐行读:直接 null 会丢 banner 的 token
+                    // (CLI 0.29.2+ 只在 banner 打印),且必须持续排空避免 64KB 管道写满阻塞
+                    .stdout(std::process::Stdio::piped())
                     .stderr(std::process::Stdio::piped());
                 let mut child = cmd
                     .spawn()
                     .map_err(|e| format!("spawn kimi web 失败({}): {e}", target.describe()))?;
 
-                // stderr 日志脱敏:不打印含 token 的内容,单行截断 500 字符
+                // stdout drain:读即丢弃(不落日志),仅解析 banner token
+                if let Some(stdout) = child.stdout.take() {
+                    let slot = token_slot.clone();
+                    tokio::spawn(async move {
+                        let mut lines = BufReader::new(stdout).lines();
+                        while let Ok(Some(line)) = lines.next_line().await {
+                            if let Some(tok) = parse_banner_token(&line) {
+                                slot.store(tok).await;
+                            }
+                        }
+                    });
+                }
+
+                // stderr 日志脱敏:不打印含 token 的内容,单行截断 500 字符;
+                // 同时解析 banner token(Token 行与 Local URL 行都可能走 stderr)
                 if let Some(stderr) = child.stderr.take() {
                     let tail = stderr_tail.clone();
+                    let slot = token_slot.clone();
                     tokio::spawn(async move {
                         let mut lines = BufReader::new(stderr).lines();
                         while let Ok(Some(line)) = lines.next_line().await {
+                            if let Some(tok) = parse_banner_token(&line) {
+                                slot.store(tok).await;
+                            }
                             // 启动横幅是 "Token: <value>",旧过滤只挡 "token=" 会漏;
                             // 任何含 token 字样的行都不落日志
                             if !line.to_lowercase().contains("token") {
@@ -188,7 +292,11 @@ impl ServerManager {
                 }
 
                 let child_arc = Arc::new(tokio::sync::Mutex::new(child));
-                (ServiceHandle::Process(child_arc.clone()), ExitProbe::Process(child_arc))
+                (
+                    ServiceHandle::Process(child_arc.clone()),
+                    ExitProbe::Process(child_arc),
+                    token_slot,
+                )
             }
         };
 
@@ -240,15 +348,21 @@ impl ServerManager {
 
         // spawn 之后的所有错误返回路径都要先杀子进程,否则 kimi web 泄漏成孤儿进程;
         // 杀前置 stopping=true,让退出监控把这次退出视为主动停止、不重复清理/通知
-        let token = match target.read_token().await {
-            Ok(token) => token,
-            Err(e) => {
-                mgr.stopping.store(true, Ordering::SeqCst);
-                if let Some(handle) = mgr.proc.take() {
-                    kill_handle(handle).await;
+        // 先等启动 banner 打印 token(CLI 0.29.2+ 只打印、不写 server.token);
+        // 超时回退旧 CLI 的 server.token 文件轮询(target.rs read_token,兼容旧版本)
+        // 两条途径都失败时,照旧杀子进程清理,避免 kimi web 泄漏成孤儿进程
+        let token = match token_slot.await_token(BANNER_TOKEN_TIMEOUT).await {
+            Some(token) => token,
+            None => match target.read_token().await {
+                Ok(token) => token,
+                Err(e) => {
+                    mgr.stopping.store(true, Ordering::SeqCst);
+                    if let Some(handle) = mgr.proc.take() {
+                        kill_handle(handle).await;
+                    }
+                    return Err(e);
                 }
-                return Err(e);
-            }
+            },
         };
         let base_url = format!("http://127.0.0.1:{port}");
 
@@ -305,6 +419,27 @@ impl ServerManager {
                 return Err("kimi web failed to become healthy within timeout".to_string());
             }
             tokio::time::sleep(Duration::from_millis(400)).await;
+        }
+
+        // 保险:官方未来若对 loopback 也下发 frame 拒绝头,iframe 内嵌会失效。
+        // 一次性 HEAD / 检查响应头,命中则 warn 预警(不阻断启动)
+        if let Ok(res) = http
+            .head(format!("{base_url}/"))
+            .bearer_auth(&token)
+            .send()
+            .await
+        {
+            let csp = res
+                .headers()
+                .get("content-security-policy")
+                .and_then(|v| v.to_str().ok())
+                .map(|s| s.to_ascii_lowercase())
+                .unwrap_or_default();
+            if csp.contains("frame-ancestors") || res.headers().contains_key("x-frame-options") {
+                eprintln!(
+                    "[kimi-web] 警告:官方 kimi web 已返回 frame-ancestors/x-frame-options 头,未来版本可能禁止 iframe 嵌入,请留意升级"
+                );
+            }
         }
 
         // meta 非关键,失败忽略
