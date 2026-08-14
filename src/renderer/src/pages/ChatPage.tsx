@@ -8,6 +8,7 @@ import { MessageList } from '../components/chat/MessageList'
 import { Composer } from '../components/chat/Composer'
 import { ApprovalCard } from '../components/chat/ApprovalCard'
 import { QuestionCard } from '../components/chat/QuestionCard'
+import { TrustBanner } from '../components/chat/TrustBanner'
 import { GitPanel } from '../components/git/GitPanel'
 import { CodePreviewPanel } from '../components/git/CodePreviewPanel'
 
@@ -214,6 +215,8 @@ export function ChatPage({ sessionId }: { sessionId: string }) {
             </button>
           </div>
         </div>
+        {/* 工作区信任提示(0.31.1+):未信任时项目级 MCP 配置不加载 */}
+        <TrustBanner sessionId={sessionId} />
         <MessageList items={items} />
         {(approvals.length > 0 || questions.length > 0) && (
           <div className="shrink-0 px-6 pb-2">

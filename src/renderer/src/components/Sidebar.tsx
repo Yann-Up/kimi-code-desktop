@@ -13,6 +13,8 @@ import {
   RotateCcw,
   Search,
   Settings,
+  ShieldCheck,
+  ShieldPlus,
   Trash2,
   X
 } from 'lucide-react'
@@ -149,6 +151,8 @@ function GroupHeader(props: {
   const [menuOpen, setMenuOpen] = useState(false)
   const [renaming, setRenaming] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
+  // 信任状态(0.31.1+):null=查询中/端点不存在(旧 CLI),菜单打开时才查询
+  const [trusted, setTrusted] = useState<boolean | null>(null)
   const nameRef = useRef<HTMLInputElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
 
@@ -160,6 +164,35 @@ function GroupHeader(props: {
     window.addEventListener('mousedown', close)
     return () => window.removeEventListener('mousedown', close)
   }, [menuOpen])
+
+  useEffect(() => {
+    if (!menuOpen || !props.isRealWorkspace) return
+    let cancelled = false
+    rest<{ trusted?: boolean }>(`/api/v1/workspaces/${props.groupKey}/trust`)
+      .then((d) => {
+        if (!cancelled) setTrusted(!!d?.trusted)
+      })
+      .catch(() => {
+        if (!cancelled) setTrusted(null)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [menuOpen, props.isRealWorkspace, props.groupKey])
+
+  const toggleTrust = async () => {
+    const next = !trusted
+    // 失败(断连/旧 CLI)不改变 UI 状态,避免出现与服务端不符的假开关
+    const ok = await rest(`/api/v1/workspaces/${props.groupKey}/${next ? 'trust' : 'untrust'}`, {
+      method: 'POST'
+    })
+      .then(() => true)
+      .catch(() => false)
+    if (!ok) return
+    setTrusted(next)
+    // 信任状态变化后清掉对应工作区的"不再提示"标记,未信任时横幅可再次出现
+    if (!next) localStorage.removeItem(`kimi.trust.dismissed.${props.groupKey}`)
+  }
 
   const commitRename = async () => {
     const v = nameRef.current?.value.trim()
@@ -259,6 +292,33 @@ function GroupHeader(props: {
           >
             <Pencil size={13} /> 重命名工作区
           </button>
+          {/* 信任状态(0.31.1+):trusted 为 null(旧 CLI 无端点)时不显示 */}
+          {trusted !== null && (
+            <button
+              className="flex w-full items-center gap-2 px-3 py-1.5 text-[13px] hover:bg-surface-secondary"
+              title={
+                trusted
+                  ? '已信任:项目级 MCP 配置会加载,点击取消信任'
+                  : '未信任:项目级 MCP 配置(.mcp.json)不会加载,点击信任'
+              }
+              onClick={() => void toggleTrust()}
+            >
+              {trusted ? (
+                <ShieldCheck size={13} className="shrink-0 text-success" />
+              ) : (
+                <ShieldPlus size={13} className="shrink-0 text-warning" />
+              )}
+              <span className="flex-1 text-left">工作区信任</span>
+              {/* 开关态:已信任=绿底右滑,未信任=灰底左滑 */}
+              <span
+                className={`flex h-4 w-7 shrink-0 items-center rounded-full px-0.5 transition-colors ${
+                  trusted ? 'justify-end bg-success' : 'justify-start bg-surface-tertiary'
+                }`}
+              >
+                <span className="h-3 w-3 rounded-full bg-white shadow-sm" />
+              </span>
+            </button>
+          )}
           {confirmDelete ? (
             <button
               className="flex w-full items-center gap-2 px-3 py-1.5 text-[13px] text-danger hover:bg-danger-soft"
