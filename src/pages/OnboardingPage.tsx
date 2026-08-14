@@ -12,13 +12,22 @@ const inputCls =
   'w-full rounded-lg border border-border bg-surface px-2.5 py-1.5 font-mono text-[12px] outline-none placeholder:text-text-tertiary'
 
 /**
- * 首次启动向导:选择 kimi web 服务的运行目标(本机 / WSL / SSH),
+ * 连接目标向导:选择 kimi web 服务的运行目标(本机 / WSL / SSH),
  * WSL/SSH 需先测试连接通过,完成后保存配置并启动后端。
- * onCancel 存在时(设置页重进入)显示"取消"按钮,仅关闭向导不做改动。
+ * onCancel 存在时(设置页/占位页触发的覆盖层)显示"取消"按钮,仅关闭向导不做改动。
+ * initialTarget:打开时预选的目标(占位页点 WSL/SSH 带入),直接进入对应配置步骤。
  */
-export function OnboardingPage({ onDone, onCancel }: { onDone: () => void; onCancel?: () => void }) {
+export function OnboardingPage({
+  onDone,
+  onCancel,
+  initialTarget
+}: {
+  onDone: () => void
+  onCancel?: () => void
+  initialTarget?: Target | null
+}) {
   // 步骤:目标选择 → 配置(wsl/ssh);local 在选择页直接完成
-  const [target, setTarget] = useState<Target | null>(null)
+  const [target, setTarget] = useState<Target | null>(initialTarget ?? null)
   const [wslDistro, setWslDistro] = useState('')
   const [sshHost, setSshHost] = useState('')
   const [sshUser, setSshUser] = useState('')

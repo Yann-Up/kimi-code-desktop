@@ -174,8 +174,6 @@ function CliSourceCard(props: {
 
 export function GeneralSettings() {
   const [info, setInfo] = useState<AppInfo | null>(null)
-  const [permission, setPermission] = useState<string>('')
-  const [saved, setSaved] = useState(false)
   const [homeInfo, setHomeInfo] = useState<KimiHomeInfo | null>(null)
   const [pickingHome, setPickingHome] = useState(false)
   const [switching, setSwitching] = useState(false)
@@ -187,7 +185,6 @@ export function GeneralSettings() {
   const [cliError, setCliError] = useState('')
   const [svcRunning, setSvcRunning] = useState<boolean | null>(null)
   const [svcBusy, setSvcBusy] = useState(false)
-  const [autoStart, setAutoStart] = useState(false)
   const quotaRefreshSecs = useUi((s) => s.quotaRefreshSecs)
   const [npmUpgrading, setNpmUpgrading] = useState(false)
   // 手动检查更新状态与结果
@@ -212,10 +209,6 @@ export function GeneralSettings() {
   useEffect(() => {
     window.kimiApi.appInfo().then(setInfo).catch(() => {})
     window.kimiApi
-      .rest({ path: '/api/v1/config' })
-      .then((c) => setPermission((c as { default_permission_mode?: string }).default_permission_mode ?? ''))
-      .catch(() => {})
-    window.kimiApi
       .kimiHomeGet()
       .then((h) => setHomeInfo(h as KimiHomeInfo))
       .catch(() => {})
@@ -226,10 +219,6 @@ export function GeneralSettings() {
     window.kimiApi
       .appInfo()
       .then((i: AppInfo) => setSvcRunning(i.cliVersion !== null))
-      .catch(() => {})
-    window.kimiApi
-      .getAutoStart()
-      .then((v) => setAutoStart(!!v))
       .catch(() => {})
     window.kimiApi
       .connectionTargetGet()
@@ -244,14 +233,25 @@ export function GeneralSettings() {
         setSshIdentity(t.config.sshIdentity ?? '')
       })
       .catch(() => {})
+    const refreshInfo = () => {
+      window.kimiApi
+        .appInfo()
+        .then((i: AppInfo) => {
+          setInfo(i)
+          setSvcRunning(i.cliVersion !== null)
+        })
+        .catch(() => {})
+    }
     const offs = [
-      window.kimiApi.onServerReady(() => setSvcRunning(true)),
-      window.kimiApi.onServerStopped(() => setSvcRunning(false))
+      // 服务启停后端口/版本信息会变化,重新拉 appInfo
+      window.kimiApi.onServerReady(refreshInfo),
+      window.kimiApi.onServerStopped(refreshInfo),
+      window.kimiApi.onServerExited(refreshInfo)
     ]
     return () => offs.forEach((off) => off())
   }, [])
 
-  /** 启动/停止本地服务(Tauri 壳专属;停止后回到手动启动页) */
+  /** 启动/停止本地服务(停止后对话页不可用,统计/设置等本地页面不受影响) */
   const toggleService = async () => {
     setSvcBusy(true)
     try {
@@ -262,15 +262,6 @@ export function GeneralSettings() {
     } finally {
       setSvcBusy(false)
     }
-  }
-
-  const savePermission = async (mode: string) => {
-    setPermission(mode)
-    await window.kimiApi
-      .rest({ path: '/api/v1/config', method: 'POST', body: { default_permission_mode: mode } })
-      .catch(() => {})
-    setSaved(true)
-    setTimeout(() => setSaved(false), 1500)
   }
 
   /** 切换数据目录:后端会重启 kimi web 服务,完成后整页重载以重取全部状态 */
@@ -401,11 +392,8 @@ export function GeneralSettings() {
           </div>
           <div className="flex justify-between">
             <span className="text-text-secondary">Kimi Code CLI</span>
-            <span className="font-mono">{info?.cliVersion ?? '—'}</span>
-          </div>
-          <div className="flex justify-between">
-            <span className="text-text-secondary">本地服务端口</span>
-            <span className="font-mono">{info?.port ?? '—'}</span>
+            {/* cliInfo 来自本地探测(kimi --version),不依赖服务运行 */}
+            <span className="font-mono">{cliInfo?.version ?? '—'}</span>
           </div>
         </div>
       </Card>
@@ -691,8 +679,14 @@ export function GeneralSettings() {
               )}
             </p>
             <p className="text-[12px] text-text-tertiary">
-              停止后应用回到手动启动页;会话状态由 CLI 持久化,重连后恢复
+              停止后对话页不可用;会话状态由 CLI 持久化,重连后恢复
             </p>
+            {/* 端口只有服务运行时才存在(server_info),故放在本卡片而不是版本卡片 */}
+            {svcRunning && info?.port && (
+              <p className="mt-1 text-[12px] text-text-tertiary">
+                本地服务端口 <span className="font-mono text-text-secondary">{info.port}</span>
+              </p>
+            )}
           </div>
           <button
             className="rounded-lg border border-border px-3 py-1.5 text-[13px] text-text-secondary hover:bg-surface-tertiary disabled:opacity-50"
@@ -702,39 +696,12 @@ export function GeneralSettings() {
             {svcBusy ? '处理中…' : svcRunning ? '停止服务' : '启动服务'}
           </button>
         </div>
-        <label className="mt-3 flex cursor-pointer items-center gap-2 border-t border-border-light pt-3 text-[12px] text-text-secondary">
-          <input
-            type="checkbox"
-            className="h-3.5 w-3.5 accent-primary"
-            checked={autoStart}
-            onChange={(e) => {
-              setAutoStart(e.target.checked)
-              window.kimiApi.setAutoStart(e.target.checked).catch(() => {})
-            }}
-          />
-          启动应用时自动连接服务(默认开启)
-        </label>
       </Card>
 
-      <GroupLabel>默认行为</GroupLabel>
+      <GroupLabel>其他</GroupLabel>
       <Card>
-        <div className="flex items-center justify-between">
-          <div>
-            <p className="text-[13.5px] font-medium">默认权限模式</p>
-            <p className="text-[12px] text-text-tertiary">新会话的工具调用审批策略</p>
-          </div>
-          <select
-            className="rounded-lg border border-border bg-surface px-2.5 py-1.5 text-[13px] outline-none"
-            value={permission}
-            onChange={(e) => void savePermission(e.target.value)}
-          >
-            <option value="manual">逐条确认</option>
-            <option value="yolo">自动通过</option>
-            <option value="auto">完全自主</option>
-          </select>
-        </div>
         {/* 额度条刷新间隔:存 localStorage,QuotaStrip 响应式生效 */}
-        <div className="mt-3 flex items-center justify-between border-t border-border-light pt-3">
+        <div className="flex items-center justify-between">
           <div>
             <p className="text-[13.5px] font-medium">额度条刷新间隔</p>
             <p className="text-[12px] text-text-tertiary">顶部额度/余额的自动刷新频率(每轮对话结束也会立即刷新)</p>
@@ -751,7 +718,6 @@ export function GeneralSettings() {
             <option value={0}>关闭自动刷新</option>
           </select>
         </div>
-        {saved && <p className="mt-2 text-[12px] text-success">已保存</p>}
       </Card>
 
       <GroupLabel>诊断</GroupLabel>

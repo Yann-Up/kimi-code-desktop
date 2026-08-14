@@ -94,8 +94,6 @@ export interface KimiApi {
   setupStateReset(): Promise<void>
   startBackend(): Promise<any>
   stopBackend(): Promise<any>
-  getAutoStart(): Promise<any>
-  setAutoStart(enabled: boolean): Promise<any>
   onServerStopped(cb: () => void): Unsubscribe
   /** kimi web 意外退出(非用户主动停止)时触发,前端应提示并允许重新启动 */
   onServerExited(cb: (detail: string) => void): Unsubscribe
@@ -124,6 +122,10 @@ export interface KimiApi {
   localCron(): Promise<any>
   localMcpRead(): Promise<any>
   localMcpWrite(data: Record<string, unknown>): Promise<any>
+  /** 读 <kimi_home>/config.toml 原文(经目标通道,本机/WSL/SSH 通用);文件不存在返回 null */
+  cliConfigRead(): Promise<string | null>
+  /** 写 <kimi_home>/config.toml 原文(自动备份 .kimi-desktop-bak,原子写);返回备份路径 */
+  cliConfigWrite(content: string): Promise<string>
   localUsageDaily(days: number): Promise<any>
   localUsageToday(): Promise<any>
   localDrives(): Promise<any>

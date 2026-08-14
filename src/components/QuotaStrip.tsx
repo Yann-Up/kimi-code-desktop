@@ -1,9 +1,9 @@
 /**
- * QuotaStrip: 主壳顶部导航行右侧的额度条 + 停止服务返回入口。
+ * QuotaStrip: 主壳顶部导航行右侧的额度条 + 停止服务入口。
  * 数据:GET /api/v1/oauth/usage(kind=ok 时 summary/limits 各窗口额度);
  * 窗口驱动渲染(5 小时/1 周/月度,服务端返回什么显示什么)。
  * 每 N 秒轮询(设置页可配)+ 轮次结束(session:turn-ended)自动刷新。
- * 未登录/无数据时只显示按钮。
+ * 服务未运行时不显示"停止服务"按钮,并清空额度显示。
  */
 import { useEffect, useState } from 'react'
 import { OctagonX } from 'lucide-react'
@@ -119,8 +119,33 @@ export function QuotaStrip() {
   const [wallet, setWallet] = useState<BoosterWallet | null>(null)
   // 停止服务确认:停止会杀掉 iframe 内官方 UI 的所有进行中会话,统一弹确认
   const [confirming, setConfirming] = useState(false)
+  // 停止服务进行中(stop_backend 要等 kimi web 优雅退出,需要数秒,期间给进度反馈)
+  const [stopping, setStopping] = useState(false)
+  // 服务运行状态:未运行时不显示"停止服务"按钮(与对话页占位图状态互斥)
+  const [svcRunning, setSvcRunning] = useState(false)
   // 自动刷新间隔(秒,0=关闭;设置页可配,轮次结束仍会立即刷新)
   const refreshSecs = useUi((s) => s.quotaRefreshSecs)
+
+  useEffect(() => {
+    window.kimiApi
+      .appInfo()
+      .then((i: { cliVersion: string | null }) => setSvcRunning(i.cliVersion !== null))
+      .catch(() => {})
+    const offs = [
+      window.kimiApi.onServerReady(() => setSvcRunning(true)),
+      window.kimiApi.onServerStopped(() => {
+        setSvcRunning(false)
+        setWindows([])
+        setWallet(null)
+      }),
+      window.kimiApi.onServerExited(() => {
+        setSvcRunning(false)
+        setWindows([])
+        setWallet(null)
+      })
+    ]
+    return () => offs.forEach((off) => off())
+  }, [])
 
   useEffect(() => {
     let cancelled = false
@@ -195,13 +220,15 @@ export function QuotaStrip() {
           </div>
         )}
       </div>
-      <button
-        className="flex shrink-0 items-center gap-1.5 rounded-md px-2.5 py-1.5 text-[12.5px] text-text-tertiary hover:bg-danger-soft hover:text-danger"
-        title="停止 Kimi CLI 服务并返回启动页"
-        onClick={() => setConfirming(true)}
-      >
-        <OctagonX size={14} /> 停止服务
-      </button>
+      {svcRunning && (
+        <button
+          className="flex shrink-0 items-center gap-1.5 rounded-md px-2.5 py-1.5 text-[12.5px] text-text-tertiary hover:bg-danger-soft hover:text-danger"
+          title="停止 Kimi CLI 服务"
+          onClick={() => setConfirming(true)}
+        >
+          <OctagonX size={14} /> 停止服务
+        </button>
+      )}
 
       {/* 停止服务确认:停服务会杀掉所有进行中的会话,统一弹确认 */}
       {confirming && (
@@ -209,24 +236,35 @@ export function QuotaStrip() {
           <div className="w-[380px] rounded-xl bg-surface p-5 shadow-2xl">
             <p className="text-[15px] font-semibold">停止 Kimi Code 服务?</p>
             <p className="mt-2 text-[13px] text-text-secondary">
-              停止服务将中断所有进行中的会话并返回启动页,之后可随时重新启动。
+              停止服务将中断所有进行中的会话,对话页不可用;之后可随时在设置 → 常规重新启动。
             </p>
             <div className="mt-4 flex justify-end gap-2">
               <button
-                className="rounded-lg border border-border px-4 py-1.5 text-[13px] text-text-secondary hover:bg-surface-tertiary"
+                className="rounded-lg border border-border px-4 py-1.5 text-[13px] text-text-secondary hover:bg-surface-tertiary disabled:opacity-50"
+                disabled={stopping}
                 onClick={() => setConfirming(false)}
               >
                 取消
               </button>
               <button
-                className="rounded-lg bg-danger px-4 py-1.5 text-[13px] font-medium text-white hover:opacity-90"
+                className="flex items-center gap-2 rounded-lg bg-danger px-4 py-1.5 text-[13px] font-medium text-white hover:opacity-90 disabled:opacity-70"
+                disabled={stopping}
                 onClick={() => {
-                  setConfirming(false)
-                  // 由 onServerStopped 带回启动页(idle)
-                  void window.kimiApi.stopBackend()
+                  setStopping(true)
+                  // stop_backend resolve 即服务端已停妥(server:stopped 随后更新各页面)
+                  void window.kimiApi
+                    .stopBackend()
+                    .catch(() => {})
+                    .finally(() => {
+                      setStopping(false)
+                      setConfirming(false)
+                    })
                 }}
               >
-                停止服务
+                {stopping && (
+                  <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/60 border-t-white" />
+                )}
+                {stopping ? '正在停止…' : '停止服务'}
               </button>
             </div>
           </div>

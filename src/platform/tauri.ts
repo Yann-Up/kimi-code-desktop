@@ -55,8 +55,6 @@ const api: KimiApi = {
   setupStateReset: () => invoke('reset_setup'),
   startBackend: () => invoke('start_backend'),
   stopBackend: () => invoke('stop_backend'),
-  getAutoStart: () => invoke('get_auto_start'),
-  setAutoStart: (enabled) => invoke('set_auto_start', { enabled }),
   onServerStopped: (cb) => on('server:stopped', cb),
   onServerExited: (cb) => on('server:exited', (p: { detail: string }) => cb(p?.detail ?? '')),
   onCliInstalling: (cb) => on('cli:installing', cb),
@@ -86,6 +84,8 @@ const api: KimiApi = {
   localCron: () => invoke('local_cron'),
   localMcpRead: () => invoke('local_mcp_read'),
   localMcpWrite: (data) => invoke('local_mcp_write', { data }),
+  cliConfigRead: () => invoke<string | null>('local_cli_config_read'),
+  cliConfigWrite: (content) => invoke<string>('local_cli_config_write', { content }),
   localUsageDaily: (days) => invoke('local_usage_daily', { days }),
   localUsageToday: () => invoke('local_usage_today'),
   localDrives: () => invoke('local_drives')

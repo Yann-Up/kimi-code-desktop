@@ -133,7 +133,7 @@ async fn app_info(app: AppHandle, state: State<'_, Arc<AppState>>) -> Result<Val
 }
 
 /// 官方 web UI 地址(对话 tab iframe src 用):http://127.0.0.1:<port>/#token=<token>;
-/// 服务未运行返回 Err,前端据此显示手动启动页
+/// 服务未运行返回 Err,前端据此显示未启动占位页
 #[tauri::command]
 async fn web_ui_url(state: State<'_, Arc<AppState>>) -> Result<String, String> {
     let info = state
@@ -287,19 +287,6 @@ async fn stop_backend(app: AppHandle, state: State<'_, Arc<AppState>>) -> Result
     state.backend_running.store(false, Ordering::SeqCst);
     let _ = app.emit("server:stopped", ());
     Ok(())
-}
-
-/// 启动应用时是否自动连接服务(默认 true:启动即进主页面;用户可显式关闭回到手动启动页)
-#[tauri::command]
-fn get_auto_start(app: AppHandle) -> bool {
-    config::load(&app).auto_start.unwrap_or(true)
-}
-
-#[tauri::command]
-fn set_auto_start(app: AppHandle, enabled: bool) -> Result<(), String> {
-    let mut cfg = config::load(&app);
-    cfg.auto_start = Some(enabled);
-    config::save(&app, &cfg)
 }
 
 /// npm 快捷升级(npm 全局/自定义路径安装时可用):npm update -g → 重启后端 → 广播 cli:upgraded
@@ -820,6 +807,16 @@ async fn local_mcp_write(data: Value) -> Result<String, String> {
 }
 
 #[tauri::command]
+async fn local_cli_config_read() -> Option<String> {
+    local_store::read_config_toml().await
+}
+
+#[tauri::command]
+async fn local_cli_config_write(content: String) -> Result<String, String> {
+    local_store::write_config_toml(content).await
+}
+
+#[tauri::command]
 fn local_drives() -> Vec<String> {
     local_store::list_drives()
 }
@@ -888,7 +885,7 @@ fn create_tray(app: &AppHandle) -> tauri::Result<()> {
 // ---------- bootstrap ----------
 
 /// 启动流程:CLI 自检测(缺则自动装)→ 查更新(不阻塞)→ 启动 kimi web。
-/// 由 setup(auto_start 开启时)和 start_backend 命令(手动启动)共用。
+/// 由 start_backend 命令触发(对话页占位图"启动服务"、错误页"重试"等入口)。
 async fn run_bootstrap(app: AppHandle, state: Arc<AppState>) {
     let run = async {
         let target = cli::connection_target();
@@ -961,7 +958,6 @@ async fn run_bootstrap(app: AppHandle, state: Arc<AppState>) {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let state = Arc::new(AppState::new());
-    let state_for_setup = state.clone();
 
     let app = tauri::Builder::default()
         // 单实例:第二实例 show + focus 主窗口
@@ -989,8 +985,6 @@ pub fn run() {
             cli_check_update,
             start_backend,
             stop_backend,
-            get_auto_start,
-            set_auto_start,
             get_kimi_home,
             set_kimi_home,
             get_setup_state,
@@ -1013,6 +1007,8 @@ pub fn run() {
             local_usage_today,
             local_mcp_read,
             local_mcp_write,
+            local_cli_config_read,
+            local_cli_config_write,
             local_drives,
         ])
         .setup(move |app| {
@@ -1075,14 +1071,7 @@ pub fn run() {
                     }
                 });
             }
-            // 默认自动连接(启动即进主页面);用户显式关闭 auto_start 时才进手动启动页
-            if cfg.auto_start.unwrap_or(true) {
-                let app2 = app.handle().clone();
-                let st = state_for_setup.clone();
-                tauri::async_runtime::spawn(async move {
-                    run_bootstrap(app2, st).await;
-                });
-            }
+            // 启动即进主页面,但不自动拉起 kimi web:由对话页占位图上的"启动服务"触发
             Ok(())
         })
         .build(tauri::generate_context!())

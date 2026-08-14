@@ -9,8 +9,10 @@ interface UiState {
   settingsSection: string
   /** 连接目标(App 启动时由 connectionTargetGet 填充;非 local 时隐藏读本机的功能入口) */
   connectionTarget: ConnectionTargetConfig['target']
-  /** 重进入向导的覆盖层开关(设置页"重新运行初始向导"触发) */
+  /** 重进入向导的覆盖层开关(设置页"重新运行初始向导"/占位页目标选择触发) */
   onboardingOpen: boolean
+  /** 打开向导时预选的目标(占位页点 WSL/SSH 时带入),null=从选择步骤开始 */
+  onboardingTarget: ConnectionTargetConfig['target'] | null
   /** 额度条自动刷新间隔(秒,0=关闭;持久化 localStorage,默认 60) */
   quotaRefreshSecs: number
   /** 切换顶部导航 tab */
@@ -20,7 +22,7 @@ interface UiState {
   setSettingsSection: (s: string) => void
   setQuotaRefreshSecs: (secs: number) => void
   setConnectionTarget: (t: ConnectionTargetConfig['target']) => void
-  openOnboarding: () => void
+  openOnboarding: (t?: ConnectionTargetConfig['target']) => void
   closeOnboarding: () => void
 }
 
@@ -29,6 +31,7 @@ export const useUi = create<UiState>((set) => ({
   settingsSection: 'general',
   connectionTarget: 'local',
   onboardingOpen: false,
+  onboardingTarget: null,
   quotaRefreshSecs: (() => {
     const raw = localStorage.getItem('kimi.quotaRefreshSecs')
     if (raw === null) return 60 // 未设置过:默认 60s
@@ -45,6 +48,6 @@ export const useUi = create<UiState>((set) => ({
     set({ quotaRefreshSecs: secs })
   },
   setConnectionTarget: (t) => set({ connectionTarget: t }),
-  openOnboarding: () => set({ onboardingOpen: true }),
-  closeOnboarding: () => set({ onboardingOpen: false })
+  openOnboarding: (t) => set({ onboardingOpen: true, onboardingTarget: t ?? null }),
+  closeOnboarding: () => set({ onboardingOpen: false, onboardingTarget: null })
 }))

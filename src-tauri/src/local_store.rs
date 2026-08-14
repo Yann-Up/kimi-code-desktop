@@ -94,6 +94,25 @@ pub async fn write_mcp_config(data: Value) -> Result<String, String> {
     Ok(backup)
 }
 
+/// 读 config.toml 原文(高级设置页直接编辑源文件用)。
+/// 目标路由与 mcp.json 一致:本机直接读文件,WSL/SSH 经目标通道读取;
+/// 文件不存在返回 None(CLI 首次运行后才自动创建)。
+pub async fn read_config_toml() -> Option<String> {
+    let (t, home) = target_and_home().await?;
+    t.read_text(&t.join(&home, "config.toml")).await.ok()
+}
+
+/// 写 config.toml:备份 → 原子写入(同 mcp.json 模式)。返回备份路径。
+pub async fn write_config_toml(content: String) -> Result<String, String> {
+    let t = cli::connection_target();
+    let home = t.kimi_home_str().await?;
+    let file = t.join(&home, "config.toml");
+    let backup = format!("{file}.kimi-desktop-bak");
+    t.copy(&file, &backup).await; // 原文件不存在则无需备份
+    t.write_text(&file, &content).await?;
+    Ok(backup)
+}
+
 pub async fn list_plugins() -> Vec<PluginEntry> {
     let Some((t, home)) = target_and_home().await else {
         return vec![];

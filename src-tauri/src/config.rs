@@ -1,5 +1,5 @@
 //! desktop-config: 桌面端自身配置的持久化(<app_data_dir>/desktop-config.json)。
-//! 含 kimi_home / cli_bin / auto_start / connection / setup_done(SSH 密码不落此文件,只存 keyring)。
+//! 含 kimi_home / cli_bin / connection / setup_done(SSH 密码不落此文件,只存 keyring)。
 
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -11,8 +11,6 @@ use crate::target::ConnectionConfig;
 pub struct DesktopConfig {
     pub kimi_home: Option<String>,
     pub cli_bin: Option<String>,
-    /// 启动应用时自动启动并连接 kimi web 服务(默认 false:手动启动)
-    pub auto_start: Option<bool>,
     /// 连接目标(本机 / WSL / SSH),None = 本机
     pub connection: Option<ConnectionConfig>,
     /// 首次启动向导是否已完成(默认 false:进入向导)
