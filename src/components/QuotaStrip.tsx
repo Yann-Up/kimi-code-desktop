@@ -125,27 +125,34 @@ export function QuotaStrip() {
   const [svcRunning, setSvcRunning] = useState(false)
   // 自动刷新间隔(秒,0=关闭;设置页可配,轮次结束仍会立即刷新)
   const refreshSecs = useUi((s) => s.quotaRefreshSecs)
+  // 额度条跟随激活通道:切换通道后重新探测并监听该通道事件
+  const activeChannel = useUi((s) => s.activeChannel)
 
   useEffect(() => {
     window.kimiApi
-      .appInfo()
+      .appInfo(activeChannel)
       .then((i: { cliVersion: string | null }) => setSvcRunning(i.cliVersion !== null))
       .catch(() => {})
     const offs = [
-      window.kimiApi.onServerReady(() => setSvcRunning(true)),
-      window.kimiApi.onServerStopped(() => {
+      window.kimiApi.onServerReady((info) => {
+        if (info.channel !== activeChannel) return
+        setSvcRunning(true)
+      }),
+      window.kimiApi.onServerStopped((info) => {
+        if (info.channel !== activeChannel) return
         setSvcRunning(false)
         setWindows([])
         setWallet(null)
       }),
-      window.kimiApi.onServerExited(() => {
+      window.kimiApi.onServerExited((info) => {
+        if (info.channel !== activeChannel) return
         setSvcRunning(false)
         setWindows([])
         setWallet(null)
       })
     ]
     return () => offs.forEach((off) => off())
-  }, [])
+  }, [activeChannel])
 
   useEffect(() => {
     let cancelled = false
@@ -171,7 +178,7 @@ export function QuotaStrip() {
       if (timer !== null) window.clearInterval(timer)
       offTurn()
     }
-  }, [refreshSecs])
+  }, [refreshSecs, activeChannel])
 
   const currency = wallet?.currency ?? 'USD'
   const monthlyPct =
@@ -253,7 +260,7 @@ export function QuotaStrip() {
                   setStopping(true)
                   // stop_backend resolve 即服务端已停妥(server:stopped 随后更新各页面)
                   void window.kimiApi
-                    .stopBackend()
+                    .stopBackend(activeChannel)
                     .catch(() => {})
                     .finally(() => {
                       setStopping(false)

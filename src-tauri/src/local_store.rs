@@ -58,9 +58,9 @@ pub struct CronEntry {
     pub data: Value,
 }
 
-/// 当前连接目标 + 其 kimi 数据目录(失败返回 None,调用方按空数据处理)
-async fn target_and_home() -> Option<(ConnectionTarget, String)> {
-    let t = cli::connection_target();
+/// 指定通道的连接目标 + 其 kimi 数据目录(失败返回 None,调用方按空数据处理)
+async fn target_and_home(channel: &str) -> Option<(ConnectionTarget, String)> {
+    let t = cli::connection_target_for(channel);
     t.kimi_home_str().await.ok().map(|h| (t, h))
 }
 
@@ -70,8 +70,8 @@ async fn safe_read_json(t: &ConnectionTarget, path: &str) -> Option<Value> {
 }
 
 /// 读 mcp.json(用户级 MCP 配置)
-pub async fn read_mcp_config() -> Value {
-    let Some((t, home)) = target_and_home().await else {
+pub async fn read_mcp_config(channel: &str) -> Value {
+    let Some((t, home)) = target_and_home(channel).await else {
         return json!({});
     };
     let raw = safe_read_json(&t, &t.join(&home, "mcp.json")).await;
@@ -82,8 +82,8 @@ pub async fn read_mcp_config() -> Value {
 }
 
 /// 写 mcp.json:备份 → 写入。返回备份路径。
-pub async fn write_mcp_config(data: Value) -> Result<String, String> {
-    let t = cli::connection_target();
+pub async fn write_mcp_config(channel: &str, data: Value) -> Result<String, String> {
+    let t = cli::connection_target_for(channel);
     let home = t.kimi_home_str().await?;
     let file = t.join(&home, "mcp.json");
     // 与 TS 一致:file + '.kimi-desktop-bak'
@@ -97,14 +97,14 @@ pub async fn write_mcp_config(data: Value) -> Result<String, String> {
 /// 读 config.toml 原文(高级设置页直接编辑源文件用)。
 /// 目标路由与 mcp.json 一致:本机直接读文件,WSL/SSH 经目标通道读取;
 /// 文件不存在返回 None(CLI 首次运行后才自动创建)。
-pub async fn read_config_toml() -> Option<String> {
-    let (t, home) = target_and_home().await?;
+pub async fn read_config_toml(channel: &str) -> Option<String> {
+    let (t, home) = target_and_home(channel).await?;
     t.read_text(&t.join(&home, "config.toml")).await.ok()
 }
 
 /// 写 config.toml:备份 → 原子写入(同 mcp.json 模式)。返回备份路径。
-pub async fn write_config_toml(content: String) -> Result<String, String> {
-    let t = cli::connection_target();
+pub async fn write_config_toml(channel: &str, content: String) -> Result<String, String> {
+    let t = cli::connection_target_for(channel);
     let home = t.kimi_home_str().await?;
     let file = t.join(&home, "config.toml");
     let backup = format!("{file}.kimi-desktop-bak");
@@ -113,8 +113,8 @@ pub async fn write_config_toml(content: String) -> Result<String, String> {
     Ok(backup)
 }
 
-pub async fn list_plugins() -> Vec<PluginEntry> {
-    let Some((t, home)) = target_and_home().await else {
+pub async fn list_plugins(channel: &str) -> Vec<PluginEntry> {
+    let Some((t, home)) = target_and_home(channel).await else {
         return vec![];
     };
     let Some(raw) = safe_read_json(&t, &t.join(&t.join(&home, "plugins"), "installed.json")).await
@@ -207,8 +207,8 @@ fn parse_frontmatter(content: &str) -> HashMap<String, String> {
     out
 }
 
-pub async fn list_skills() -> Vec<SkillEntry> {
-    let Some((t, home)) = target_and_home().await else {
+pub async fn list_skills(channel: &str) -> Vec<SkillEntry> {
+    let Some((t, home)) = target_and_home(channel).await else {
         return vec![];
     };
     let mut out = Vec::new();
@@ -245,9 +245,9 @@ fn builtin_agents() -> Vec<AgentProfile> {
     ]
 }
 
-pub async fn list_agent_profiles() -> Vec<AgentProfile> {
+pub async fn list_agent_profiles(channel: &str) -> Vec<AgentProfile> {
     let mut out = builtin_agents();
-    let Some((t, home)) = target_and_home().await else {
+    let Some((t, home)) = target_and_home(channel).await else {
         return out;
     };
     let dir = t.join(&home, "agents");
@@ -273,8 +273,8 @@ pub async fn list_agent_profiles() -> Vec<AgentProfile> {
     out
 }
 
-pub async fn list_cron_jobs() -> Vec<CronEntry> {
-    let t = cli::connection_target();
+pub async fn list_cron_jobs(channel: &str) -> Vec<CronEntry> {
+    let t = cli::connection_target_for(channel);
     let mut out = Vec::new();
     for f in t.cron_files().await {
         let Ok(data) = serde_json::from_str::<Value>(&f.content) else {
@@ -317,9 +317,9 @@ fn day_key(ms: i64) -> Option<String> {
 }
 
 /// 按天+按模型的用量聚合(使用统计页热力图/趋势/donut 用)
-pub async fn aggregate_usage_daily(days: u32) -> UsageDailyResult {
+pub async fn aggregate_usage_daily(channel: &str, days: u32) -> UsageDailyResult {
     let days = days.max(1) as i64;
-    let t = cli::connection_target();
+    let t = cli::connection_target_for(channel);
     let today = Local::now().date_naive();
     let since_date = today - ChronoDuration::days(days - 1);
     let since_ms = since_date
@@ -416,8 +416,8 @@ pub struct UsageTodayResult {
 }
 
 /// 今日 0 点(本地)起的 30 分钟粒度用量聚合(按输入/输出/缓存命中/缓存创建分系列)
-pub async fn aggregate_usage_today() -> UsageTodayResult {
-    let t = cli::connection_target();
+pub async fn aggregate_usage_today(channel: &str) -> UsageTodayResult {
+    let t = cli::connection_target_for(channel);
     let today = Local::now().date_naive();
     let since_ms = today
         .and_hms_opt(0, 0, 0)

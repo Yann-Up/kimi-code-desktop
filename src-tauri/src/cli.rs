@@ -2,12 +2,14 @@
 //! - 未安装:首次启动时执行官方安装脚本自动下载
 //! - 已安装:对比 npm registry 最新版,有新版本时交给 UI 询问用户,确认后 `kimi upgrade`
 
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::RwLock;
 use std::time::Duration;
 use tokio::process::Command;
 
-use crate::target::ConnectionTarget;
+use crate::config::Channel;
+use crate::target::{ConnectionConfig, ConnectionTarget};
 
 const NPM_REGISTRY: &str = "https://registry.npmjs.org/@moonshot-ai/kimi-code/latest";
 const NPM_REGISTRY_MIRROR: &str = "https://registry.npmmirror.com/@moonshot-ai/kimi-code/latest";
@@ -18,11 +20,69 @@ static KIMI_HOME_OVERRIDE: RwLock<Option<PathBuf>> = RwLock::new(None);
 /// 用户在设置里指定的 CLI 二进制路径(优先级最高,持久化在 desktop-config.json)
 static CLI_BIN_OVERRIDE: RwLock<Option<String>> = RwLock::new(None);
 
-/// 用户在设置里指定的远端 CLI 二进制路径(仅 WSL/SSH 目标生效,持久化在 connection.remoteBin)
+/// 用户指定的远端 CLI 二进制路径(仅 WSL/SSH 目标生效);
+/// 多通道下表示"当前激活通道"的远端覆盖,随激活通道切换刷新
 static REMOTE_BIN_OVERRIDE: RwLock<Option<String>> = RwLock::new(None);
 
-/// 当前连接目标(本机 / WSL / SSH,持久化在 desktop-config.json,启动时加载)
-static CONNECTION_TARGET: RwLock<ConnectionTarget> = RwLock::new(ConnectionTarget::Local);
+/// 通道 id → 连接目标(含 "local"),启动加载与配置变更后刷新
+static CHANNEL_TARGETS: std::sync::LazyLock<RwLock<HashMap<String, ConnectionTarget>>> =
+    std::sync::LazyLock::new(|| RwLock::new(HashMap::new()));
+
+/// 当前激活通道 id(None = "local")
+static ACTIVE_CHANNEL: std::sync::LazyLock<RwLock<Option<String>>> =
+    std::sync::LazyLock::new(|| RwLock::new(None));
+
+/// 刷新通道映射与激活通道(Rust 侧配置变更后调用;远端 CLI 覆盖由调用方另行设置)
+pub fn refresh_channels(channels: &[Channel], active: String) {
+    let mut map = HashMap::new();
+    map.insert("local".to_string(), ConnectionTarget::Local);
+    for c in channels {
+        map.insert(c.id.clone(), ConnectionTarget::from(c.config.clone()));
+    }
+    *CHANNEL_TARGETS.write().unwrap() = map;
+    *ACTIVE_CHANNEL.write().unwrap() = if active == "local" {
+        None
+    } else {
+        Some(active)
+    };
+}
+
+/// 当前激活通道 id
+pub fn active_channel() -> String {
+    ACTIVE_CHANNEL
+        .read()
+        .unwrap()
+        .clone()
+        .unwrap_or_else(|| "local".to_string())
+}
+
+/// 当前激活通道的连接目标(默认本机)
+pub fn connection_target() -> ConnectionTarget {
+    connection_target_for(&active_channel())
+}
+
+/// 指定通道的连接目标(未登记通道按本机)
+pub fn connection_target_for(channel: &str) -> ConnectionTarget {
+    CHANNEL_TARGETS
+        .read()
+        .unwrap()
+        .get(channel)
+        .cloned()
+        .unwrap_or(ConnectionTarget::Local)
+}
+
+/// 立即替换某通道的连接目标(旧 set_connection_target 语义:本机通道切换目标,不落 channels)
+pub fn set_channel_target(id: &str, target: ConnectionTarget) {
+    CHANNEL_TARGETS
+        .write()
+        .unwrap()
+        .insert(id.to_string(), target);
+}
+
+/// 由 ConnectionConfig 生成通道 id(与 ConnectionTarget::channel_id 一致)
+pub fn channel_id_for(conn: &ConnectionConfig) -> String {
+    ConnectionTarget::from(conn.clone()).channel_id()
+}
 
 /// 设置/读取自定义目录覆盖(设置页 set_kimi_home 用)
 pub fn set_kimi_home_override(path: Option<PathBuf>) {
@@ -48,15 +108,6 @@ pub fn set_remote_bin_override(bin: Option<String>) {
 
 pub fn remote_bin_override() -> Option<String> {
     REMOTE_BIN_OVERRIDE.read().unwrap().clone()
-}
-
-/// 设置/读取连接目标(设置页 set_connection_target 与启动加载用)
-pub fn set_connection_target(target: ConnectionTarget) {
-    *CONNECTION_TARGET.write().unwrap() = target;
-}
-
-pub fn connection_target() -> ConnectionTarget {
-    CONNECTION_TARGET.read().unwrap().clone()
 }
 
 /// 用户 home 目录(优先 USERPROFILE,避免引入 dirs 依赖)

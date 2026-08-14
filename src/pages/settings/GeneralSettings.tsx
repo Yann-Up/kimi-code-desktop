@@ -205,9 +205,11 @@ export function GeneralSettings() {
   const [connSaving, setConnSaving] = useState(false)
   const [connError, setConnError] = useState('')
   const [connWarn, setConnWarn] = useState('')
+  // 本页所有服务信息/事件跟随激活通道:切换通道后重探
+  const activeChannel = useUi((s) => s.activeChannel)
 
   useEffect(() => {
-    window.kimiApi.appInfo().then(setInfo).catch(() => {})
+    window.kimiApi.appInfo(activeChannel).then(setInfo).catch(() => {})
     window.kimiApi
       .kimiHomeGet()
       .then((h) => setHomeInfo(h as KimiHomeInfo))
@@ -217,7 +219,7 @@ export function GeneralSettings() {
       .then((c) => setCliInfo(c as KimiCliInfo))
       .catch(() => {})
     window.kimiApi
-      .appInfo()
+      .appInfo(activeChannel)
       .then((i: AppInfo) => setSvcRunning(i.cliVersion !== null))
       .catch(() => {})
     window.kimiApi
@@ -235,7 +237,7 @@ export function GeneralSettings() {
       .catch(() => {})
     const refreshInfo = () => {
       window.kimiApi
-        .appInfo()
+        .appInfo(activeChannel)
         .then((i: AppInfo) => {
           setInfo(i)
           setSvcRunning(i.cliVersion !== null)
@@ -243,20 +245,26 @@ export function GeneralSettings() {
         .catch(() => {})
     }
     const offs = [
-      // 服务启停后端口/版本信息会变化,重新拉 appInfo
-      window.kimiApi.onServerReady(refreshInfo),
-      window.kimiApi.onServerStopped(refreshInfo),
-      window.kimiApi.onServerExited(refreshInfo)
+      // 服务启停后端口/版本信息会变化,重新拉 appInfo(只关心激活通道的事件)
+      window.kimiApi.onServerReady((info) => {
+        if (info.channel === activeChannel) refreshInfo()
+      }),
+      window.kimiApi.onServerStopped((info) => {
+        if (info.channel === activeChannel) refreshInfo()
+      }),
+      window.kimiApi.onServerExited((info) => {
+        if (info.channel === activeChannel) refreshInfo()
+      })
     ]
     return () => offs.forEach((off) => off())
-  }, [])
+  }, [activeChannel])
 
-  /** 启动/停止本地服务(停止后对话页不可用,统计/设置等本地页面不受影响) */
+  /** 启动/停止激活通道服务(停止后对话页不可用,统计/设置等本地页面不受影响) */
   const toggleService = async () => {
     setSvcBusy(true)
     try {
-      if (svcRunning) await window.kimiApi.stopBackend()
-      else await window.kimiApi.startBackend()
+      if (svcRunning) await window.kimiApi.stopBackend(activeChannel)
+      else await window.kimiApi.startBackend(activeChannel)
     } catch {
       /* 状态由事件兜底 */
     } finally {

@@ -16,7 +16,7 @@ use tokio::process::Command;
 use crate::cli::{hidden_command, kimi_bin, kimi_home, remote_bin_override};
 use crate::ssh::{self, SshClient};
 
-/// 连接目标(运行时全局存放在 cli::CONNECTION_TARGET,持久化经 ConnectionConfig)
+/// 连接目标(运行时按通道存放在 cli::CHANNEL_TARGETS,持久化经 ConnectionConfig)
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ConnectionTarget {
     /// 本机:直接 spawn 本地 kimi CLI
@@ -322,6 +322,25 @@ impl ConnectionTarget {
                 None => "WSL(默认发行版)".to_string(),
             },
             ConnectionTarget::Ssh { host, .. } => host.clone(),
+        }
+    }
+
+    /// 通道 id:"local" / "wsl:<distro|default>" / "ssh:<user@>host"
+    pub fn channel_id(&self) -> String {
+        match self {
+            ConnectionTarget::Local => "local".to_string(),
+            ConnectionTarget::Wsl { distro } => format!(
+                "wsl:{}",
+                distro.clone().unwrap_or_else(|| "default".to_string())
+            ),
+            ConnectionTarget::Ssh { host, user, .. } => {
+                let host = host.trim().to_string();
+                let (embedded, pure) = Self::split_user_host(&host);
+                match user.clone().or(embedded) {
+                    Some(u) => format!("ssh:{u}@{pure}"),
+                    None => format!("ssh:{pure}"),
+                }
+            }
         }
     }
 

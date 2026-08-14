@@ -36,32 +36,50 @@ use rest::RestClient;
 use server::{ServerInfo, ServerManager, SharedServer};
 use ws::WsClient;
 
-/// 全局状态:ServerManager / RestClient / WsClient 均以 tokio Mutex 管理
-pub struct AppState {
+/// 单个通道的后端运行时状态:server / REST / server_info / WS 均按通道隔离,
+/// 各通道可独立启停、同时在线。key 为通道 id("local" 为本机)。
+pub struct BackendState {
     pub server: SharedServer,
     pub rest: tokio::sync::Mutex<Option<RestClient>>,
     pub server_info: tokio::sync::Mutex<Option<ServerInfo>>,
     pub ws: tokio::sync::Mutex<Option<Arc<WsClient>>>,
-    pub http: reqwest::Client,
-    /// 后端(kimi web)是否在运行:供窗口关闭拦截判断,无锁读取
+    /// 该通道后端(kimi web)是否在运行:供窗口关闭拦截判断,无锁读取
     pub backend_running: AtomicBool,
-    /// 退出清理标记:防止 ExitRequested 二次进入
-    pub exit_cleaned: AtomicBool,
-    /// 服务代次:每次 init_backend(服务就绪)递增;WsClient 记录创建时的代次,
+    /// 该通道服务代次:每次 init_backend(服务就绪)递增;WsClient 记录创建时的代次,
     /// 与当前代次不一致即为绑定旧 port/token 的僵尸连接,重建订阅器时据此区分
     pub generation: AtomicU64,
-    /// bootstrap 进行中的停止请求:stop_backend 置位,run_bootstrap 启动成功后检查,
+    /// 该通道 bootstrap 进行中的停止请求:stop_backend 置位,run_bootstrap 启动成功后检查,
     /// 避免"安装/启动途中点停止"被随后完成的 bootstrap 静默撤销
     pub manual_stop: AtomicBool,
 }
 
-impl AppState {
-    fn new() -> Self {
+impl Default for BackendState {
+    fn default() -> Self {
         Self {
             server: Arc::new(tokio::sync::Mutex::new(ServerManager::default())),
             rest: tokio::sync::Mutex::new(None),
             server_info: tokio::sync::Mutex::new(None),
             ws: tokio::sync::Mutex::new(None),
+            backend_running: AtomicBool::new(false),
+            generation: AtomicU64::new(0),
+            manual_stop: AtomicBool::new(false),
+        }
+    }
+}
+
+/// 全局状态:各通道 BackendState 以 HashMap 隔离管理(http / exit_cleaned 为全局)
+pub struct AppState {
+    /// 各通道后端状态:key = 通道 id,get-or-insert 访问
+    pub backends: tokio::sync::Mutex<HashMap<String, BackendState>>,
+    pub http: reqwest::Client,
+    /// 退出清理标记:防止 ExitRequested 二次进入
+    pub exit_cleaned: AtomicBool,
+}
+
+impl AppState {
+    fn new() -> Self {
+        Self {
+            backends: tokio::sync::Mutex::new(HashMap::new()),
             // 显式超时:默认无超时的 Client 在连接 stall(SSH 转发断流/对端休眠)时
             // 会永久挂起,卡死 start/stop/退出整条生命周期链路
             http: reqwest::Client::builder()
@@ -69,12 +87,51 @@ impl AppState {
                 .timeout(Duration::from_secs(30))
                 .build()
                 .unwrap_or_else(|_| reqwest::Client::new()),
-            backend_running: AtomicBool::new(false),
             exit_cleaned: AtomicBool::new(false),
-            generation: AtomicU64::new(0),
-            manual_stop: AtomicBool::new(false),
         }
     }
+
+    /// get-or-insert 并克隆某通道的 SharedServer(不持 map 锁返回,供长 await 使用)
+    async fn channel_server(&self, channel: &str) -> SharedServer {
+        self.backends
+            .lock()
+            .await
+            .entry(channel.to_string())
+            .or_default()
+            .server
+            .clone()
+    }
+
+    /// get-or-insert 并对该通道 BackendState 做同步短操作(原子读写;内部锁的 await 由调用方直接持 map 锁完成)
+    async fn with_backend<F, R>(&self, channel: &str, f: F) -> R
+    where
+        F: FnOnce(&BackendState) -> R,
+    {
+        let mut map = self.backends.lock().await;
+        f(map.entry(channel.to_string()).or_default())
+    }
+
+    /// 任一通道后端运行中(关窗拦截用;锁被占时保守按运行中处理)
+    fn any_backend_running(&self) -> bool {
+        match self.backends.try_lock() {
+            Ok(map) => map
+                .values()
+                .any(|b| b.backend_running.load(Ordering::SeqCst)),
+            Err(_) => true,
+        }
+    }
+}
+
+/// 全局远端 CLI 覆盖跟随激活通道:remoteBin 存在且非空时应用,否则清除
+fn apply_active_remote_bin(cfg: &config::DesktopConfig) {
+    let bin = cfg
+        .extra_channels()
+        .iter()
+        .find(|c| c.id == cfg.active())
+        .and_then(|c| c.config.remote_bin.clone())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+    cli::set_remote_bin_override(bin);
 }
 
 /// <app_data_dir>/logs(等价 Electron 的 userData/logs)
@@ -85,45 +142,64 @@ fn log_dir(app: &AppHandle) -> PathBuf {
         .join("logs")
 }
 
-/// 服务就绪后初始化 REST 单例 / server_info / WS 通知订阅器(对应 ipc.ts initBackend)
-async fn init_backend(app: &AppHandle, state: &AppState, info: &ServerInfo) {
-    *state.server_info.lock().await = Some(info.clone());
+/// 服务就绪后初始化该通道的 REST 单例 / server_info / WS 通知订阅器(对应 ipc.ts initBackend)
+async fn init_backend(app: &AppHandle, state: &AppState, channel: &str, info: &ServerInfo) {
+    let map = state.backends.lock().await;
+    let bs = &map[channel];
+    *bs.server_info.lock().await = Some(info.clone());
     let rest = RestClient::new(info.clone(), state.http.clone());
-    *state.rest.lock().await = Some(rest.clone());
-    state.backend_running.store(true, Ordering::SeqCst);
+    *bs.rest.lock().await = Some(rest.clone());
+    bs.backend_running.store(true, Ordering::SeqCst);
     // 代次最后递增:读到新代次的订阅器必能看到新 server_info
-    state.generation.fetch_add(1, Ordering::SeqCst);
+    bs.generation.fetch_add(1, Ordering::SeqCst);
     // 清理可能残留的旧 WS(理论不该有,防御),按新代次重建通知订阅器
-    if let Some(old) = state.ws.lock().await.take() {
+    if let Some(old) = bs.ws.lock().await.take() {
         old.close().await;
     }
-    let generation = state.generation.load(Ordering::SeqCst);
+    let generation = bs.generation.load(Ordering::SeqCst);
     let client = WsClient::new(info.clone(), app.clone(), log_dir(app), generation, rest);
     client.start();
-    *state.ws.lock().await = Some(client);
+    *bs.ws.lock().await = Some(client);
 }
 
 /// kimi web 意外退出时的清理(server.rs 退出监控回调):
-/// 先清 REST/ServerInfo(否则清理窗口内重建订阅器会拿旧 port/token 建僵尸连接)
-/// → 关 WS → 复位 backend_running → 广播 server:exited。
+/// 先清该通道 REST/ServerInfo(否则清理窗口内重建订阅器会拿旧 port/token 建僵尸连接)
+/// → 关 WS → 复位 backend_running → 广播 server:exited(带 channel)。
 /// 不做的话崩溃后 start_backend 会因 server_info.is_some() 永久 no-op,卡死在假"运行中"状态
-pub(crate) async fn handle_unexpected_exit(app: &AppHandle, detail: &str) {
-    eprintln!("[handle_unexpected_exit] {detail}");
+pub(crate) async fn handle_unexpected_exit(app: &AppHandle, channel: &str, detail: &str) {
+    eprintln!("[handle_unexpected_exit] {channel}: {detail}");
     let state = app.state::<Arc<AppState>>();
-    *state.rest.lock().await = None;
-    *state.server_info.lock().await = None;
-    if let Some(ws) = state.ws.lock().await.take() {
-        ws.close().await;
+    {
+        let map = state.backends.lock().await;
+        if let Some(bs) = map.get(channel) {
+            *bs.rest.lock().await = None;
+            *bs.server_info.lock().await = None;
+            if let Some(ws) = bs.ws.lock().await.take() {
+                ws.close().await;
+            }
+            bs.backend_running.store(false, Ordering::SeqCst);
+        }
     }
-    state.backend_running.store(false, Ordering::SeqCst);
-    let _ = app.emit("server:exited", json!({ "detail": detail }));
+    let _ = app.emit("server:exited", json!({ "channel": channel, "detail": detail }));
 }
 
 // ---------- app ----------
 
+/// 应用与指定通道(缺省=激活通道)服务信息;保持旧调用兼容(channel 省略 = 激活通道)
 #[tauri::command]
-async fn app_info(app: AppHandle, state: State<'_, Arc<AppState>>) -> Result<Value, String> {
-    let info = state.server_info.lock().await;
+async fn app_info(
+    app: AppHandle,
+    state: State<'_, Arc<AppState>>,
+    channel: Option<String>,
+) -> Result<Value, String> {
+    let channel = channel.unwrap_or_else(cli::active_channel);
+    let info = {
+        let map = state.backends.lock().await;
+        match map.get(&channel) {
+            Some(bs) => bs.server_info.lock().await.clone(),
+            None => None,
+        }
+    };
     Ok(json!({
         "appVersion": app.package_info().version.to_string(),
         "cliVersion": info.as_ref().map(|i| i.cli_version.clone()),
@@ -133,15 +209,21 @@ async fn app_info(app: AppHandle, state: State<'_, Arc<AppState>>) -> Result<Val
 }
 
 /// 官方 web UI 地址(对话 tab iframe src 用):http://127.0.0.1:<port>/#token=<token>;
-/// 服务未运行返回 Err,前端据此显示未启动占位页
+/// 指定通道(缺省=激活通道)服务未运行返回 Err,前端据此显示未启动占位页
 #[tauri::command]
-async fn web_ui_url(state: State<'_, Arc<AppState>>) -> Result<String, String> {
-    let info = state
-        .server_info
-        .lock()
-        .await
-        .clone()
-        .ok_or_else(|| "server not ready".to_string())?;
+async fn web_ui_url(
+    state: State<'_, Arc<AppState>>,
+    channel: Option<String>,
+) -> Result<String, String> {
+    let channel = channel.unwrap_or_else(cli::active_channel);
+    let info = {
+        let map = state.backends.lock().await;
+        match map.get(&channel) {
+            Some(bs) => bs.server_info.lock().await.clone(),
+            None => None,
+        }
+    }
+    .ok_or_else(|| "server not ready".to_string())?;
     Ok(format!("{}#token={}", info.base_url, info.token))
 }
 
@@ -203,11 +285,14 @@ async fn cli_upgrade(app: AppHandle, state: State<'_, Arc<AppState>>) -> Result<
     }
     // kimi upgrade 本身失败时不 emit,直接抛错(与 Electron 版一致)
     let _out = cli::upgrade_cli().await?;
-    // 升级后重启 kimi web 服务使新二进制生效
-    ServerManager::stop(&state.server, &state.http).await;
-    match ServerManager::start(&state.server, &state.http, &app).await {
+    // 升级后重启激活通道的 kimi web 服务使新二进制生效
+    let channel = cli::active_channel();
+    let target = cli::connection_target();
+    let server = state.channel_server(&channel).await;
+    ServerManager::stop(&server, &state.http).await;
+    match ServerManager::start(&server, &state.http, &app, &channel, &target).await {
         Ok(info) => {
-            init_backend(&app, &state, &info).await;
+            init_backend(&app, &state, &channel, &info).await;
             let _ = app.emit(
                 "cli:upgraded",
                 json!({ "version": info.cli_version, "restartOk": true }),
@@ -256,36 +341,63 @@ async fn cli_upgrade_remote(
 
 // ---------- 后端服务启停 ----------
 
-/// 手动启动后端:已在运行则直接返回;否则按 bootstrap 流程
+/// 手动启动指定通道(缺省=激活通道)后端:已在运行则直接返回;否则按 bootstrap 流程
 /// (CLI 检测→缺失则安装→查更新→启动 kimi web)异步执行,进度经事件广播
 #[tauri::command]
-async fn start_backend(app: AppHandle, state: State<'_, Arc<AppState>>) -> Result<(), String> {
-    if state.server_info.lock().await.is_some() {
+async fn start_backend(
+    app: AppHandle,
+    state: State<'_, Arc<AppState>>,
+    channel: Option<String>,
+) -> Result<(), String> {
+    let channel = channel.unwrap_or_else(cli::active_channel);
+    // 已在运行则直接返回(server_info 就绪即视为在跑)
+    let running = {
+        let map = state.backends.lock().await;
+        match map.get(&channel) {
+            Some(bs) => bs.server_info.lock().await.is_some(),
+            None => false,
+        }
+    };
+    if running {
         return Ok(());
     }
     let app2 = app.clone();
     let st = state.inner().clone();
+    let ch = channel.clone();
     tauri::async_runtime::spawn(async move {
-        run_bootstrap(app2, st).await;
+        run_bootstrap(app2, st, ch).await;
     });
     Ok(())
 }
 
-/// 停止后端:先清 REST/ServerInfo(停服窗口内 web_ui_url/rest 报 server not ready,
-/// 不会拿旧 port/token 建僵尸连接)→ 关 WS(通知订阅器随之退出)→ 停 kimi web →
-/// 复位 backend_running
+/// 停止指定通道(缺省=激活通道)后端:先清 REST/ServerInfo(停服窗口内 web_ui_url/rest 报
+/// server not ready,不会拿旧 port/token 建僵尸连接)→ 关 WS(通知订阅器随之退出)→
+/// 停 kimi web → 复位 backend_running
 #[tauri::command]
-async fn stop_backend(app: AppHandle, state: State<'_, Arc<AppState>>) -> Result<(), String> {
+async fn stop_backend(
+    app: AppHandle,
+    state: State<'_, Arc<AppState>>,
+    channel: Option<String>,
+) -> Result<(), String> {
+    let channel = channel.unwrap_or_else(cli::active_channel);
     // 记录停止请求:bootstrap 进行中时 stop 对空 proc 空转,由 bootstrap 启动成功后自查
-    state.manual_stop.store(true, Ordering::SeqCst);
-    *state.rest.lock().await = None;
-    *state.server_info.lock().await = None;
-    if let Some(ws) = state.ws.lock().await.take() {
-        ws.close().await;
+    {
+        let map = state.backends.lock().await;
+        if let Some(bs) = map.get(&channel) {
+            bs.manual_stop.store(true, Ordering::SeqCst);
+            *bs.rest.lock().await = None;
+            *bs.server_info.lock().await = None;
+            if let Some(ws) = bs.ws.lock().await.take() {
+                ws.close().await;
+            }
+        }
     }
-    ServerManager::stop(&state.server, &state.http).await;
-    state.backend_running.store(false, Ordering::SeqCst);
-    let _ = app.emit("server:stopped", ());
+    let server = state.channel_server(&channel).await;
+    ServerManager::stop(&server, &state.http).await;
+    state
+        .with_backend(&channel, |bs| bs.backend_running.store(false, Ordering::SeqCst))
+        .await;
+    let _ = app.emit("server:stopped", json!({ "channel": channel }));
     Ok(())
 }
 
@@ -297,7 +409,13 @@ async fn cli_npm_upgrade(app: AppHandle, state: State<'_, Arc<AppState>>) -> Res
     }
     let _out = cli::npm_upgrade().await?;
     // 服务在跑则重启使新版本生效;未启动只需报告新版本号
-    let was_running = state.server_info.lock().await.is_some();
+    let was_running = {
+        let map = state.backends.lock().await;
+        match map.get(&cli::active_channel()) {
+            Some(bs) => bs.server_info.lock().await.is_some(),
+            None => false,
+        }
+    };
     if was_running {
         restart_backend(&app, &state).await?;
     }
@@ -354,24 +472,33 @@ async fn get_kimi_home() -> Value {
     })
 }
 
-/// 重启后端:先清 REST/ServerInfo(理由同 stop_backend,杜绝僵尸 WS 窗口)→
+/// 重启激活通道后端:先清该通道 REST/ServerInfo(理由同 stop_backend,杜绝僵尸 WS 窗口)→
 /// 关 WS(通知订阅器随之退出,init_backend 按新 ServerInfo 重建)→ 停服务 →
-/// 按新配置重新启动并广播 server:ready / server:error
+/// 按新配置重新启动并广播 server:ready / server:error(带 channel)
 async fn restart_backend(app: &AppHandle, state: &AppState) -> Result<(), String> {
-    *state.rest.lock().await = None;
-    *state.server_info.lock().await = None;
-    state.backend_running.store(false, Ordering::SeqCst);
-    if let Some(ws) = state.ws.lock().await.take() {
-        ws.close().await;
+    let channel = cli::active_channel();
+    let target = cli::connection_target_for(&channel);
+    let server = state.channel_server(&channel).await;
+    {
+        let map = state.backends.lock().await;
+        if let Some(bs) = map.get(&channel) {
+            *bs.rest.lock().await = None;
+            *bs.server_info.lock().await = None;
+            bs.backend_running.store(false, Ordering::SeqCst);
+            if let Some(ws) = bs.ws.lock().await.take() {
+                ws.close().await;
+            }
+        }
     }
-    ServerManager::stop(&state.server, &state.http).await;
+    ServerManager::stop(&server, &state.http).await;
 
-    match ServerManager::start(&state.server, &state.http, app).await {
+    match ServerManager::start(&server, &state.http, app, &channel, &target).await {
         Ok(info) => {
-            init_backend(app, state, &info).await;
+            init_backend(app, state, &channel, &info).await;
             let _ = app.emit(
                 "server:ready",
                 json!({
+                    "channel": channel,
                     "cliVersion": info.cli_version,
                     "port": info.port,
                     "token": info.token,
@@ -381,7 +508,7 @@ async fn restart_backend(app: &AppHandle, state: &AppState) -> Result<(), String
             Ok(())
         }
         Err(e) => {
-            let _ = app.emit("server:error", e.clone());
+            let _ = app.emit("server:error", json!({ "channel": channel, "error": e.clone() }));
             Err(e)
         }
     }
@@ -425,6 +552,148 @@ async fn set_kimi_home(
 }
 
 // ---------- 连接目标(本机 / WSL / SSH) ----------
+
+/// 通道列表 + 当前激活通道:前端顶部切换器与设置→通道页用。
+/// running 为该通道后端实时运行状态(backend_running)
+#[tauri::command]
+async fn get_channels(app: AppHandle, state: State<'_, Arc<AppState>>) -> Result<Value, String> {
+    let cfg = config::load(&app);
+    let map = state.backends.lock().await;
+    let running = |id: &str| {
+        map.get(id)
+            .map(|b| b.backend_running.load(Ordering::SeqCst))
+            .unwrap_or(false)
+    };
+    let mut channels = vec![json!({
+        "id": "local",
+        "label": "本机",
+        "target": "local",
+        "running": running("local"),
+    })];
+    for c in cfg.extra_channels() {
+        channels.push(json!({
+            "id": c.id,
+            "label": c.label,
+            "target": c.config.target,
+            "running": running(&c.id),
+        }));
+    }
+    Ok(json!({ "channels": channels, "active": cfg.active() }))
+}
+
+/// 切换激活通道:只写配置,不启停任何服务。通道不存在报错
+#[tauri::command]
+async fn set_active_channel(app: AppHandle, id: String) -> Result<(), String> {
+    let mut cfg = config::load(&app);
+    let exists = id == "local" || cfg.extra_channels().iter().any(|c| c.id == id);
+    if !exists {
+        return Err(format!("通道不存在: {id}"));
+    }
+    cfg.active_channel = if id == "local" { None } else { Some(id) };
+    config::save(&app, &cfg)?;
+    cli::refresh_channels(&cfg.extra_channels(), cfg.active());
+    // 远端 CLI 覆盖随激活通道走
+    apply_active_remote_bin(&cfg);
+    Ok(())
+}
+
+/// 添加通道:复用 set_connection_target 的保存/密码落 keyring 逻辑,但只追加,
+/// 不切换激活通道、不重启任何服务。id 按目标自动生成,重复报错;本机不可添加。
+/// label 省略时按目标展示名(本机 / WSL (Ubuntu) / user@host)生成
+#[tauri::command]
+async fn add_channel(
+    app: AppHandle,
+    cfg: Value,
+    label: Option<String>,
+    password: Option<String>,
+) -> Result<Value, String> {
+    let conn: target::ConnectionConfig =
+        serde_json::from_value(cfg).map_err(|e| format!("连接目标配置格式错误: {e}"))?;
+    let target = target::ConnectionTarget::from(conn.clone());
+    if let target::ConnectionTarget::Ssh { host, .. } = &target {
+        if host.trim().is_empty() {
+            return Err("SSH 目标必须填写 user@host".to_string());
+        }
+    }
+    if target.is_local() {
+        return Err("本机通道已存在,无需添加".to_string());
+    }
+    let id = cli::channel_id_for(&conn);
+    let mut desktop = config::load(&app);
+    if desktop.extra_channels().iter().any(|c| c.id == id) {
+        return Err(format!("通道已存在: {id}"));
+    }
+    // 密码认证:保存到系统凭据管理器。ssh 侧只从 keyring 读密码,
+    // keyring 写失败则后端启动必失败,这里直接报错(与 set_connection_target 一致)
+    if let target::ConnectionTarget::Ssh { auth, .. } = &target {
+        if auth.as_deref() != Some("key") {
+            if let Some(pw) = password.as_deref().filter(|p| !p.is_empty()) {
+                target
+                    .ssh_config()
+                    .and_then(|c| ssh::save_password(&c.user, &c.host, c.port, pw))
+                    .map_err(|e| format!("系统凭据管理器不可用,密码无法保存: {e}"))?;
+            }
+        }
+    }
+    let label = label
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| target.describe());
+    let channel = config::Channel {
+        id: id.clone(),
+        label,
+        config: conn,
+    };
+    let mut channels = desktop.channels.take().unwrap_or_default();
+    channels.push(channel.clone());
+    desktop.channels = Some(channels);
+    config::save(&app, &desktop)?;
+    cli::refresh_channels(&desktop.extra_channels(), desktop.active());
+    serde_json::to_value(&channel).map_err(|e| e.to_string())
+}
+
+/// 删除通道:若其服务在跑先停;从配置删除;若删的是激活通道则 active 回落 "local"。local 不可删。
+/// 删除后同步清掉该通道的 SSH 共享连接与远端路径缓存
+#[tauri::command]
+async fn remove_channel(
+    app: AppHandle,
+    state: State<'_, Arc<AppState>>,
+    id: String,
+) -> Result<(), String> {
+    if id == "local" {
+        return Err("本机通道不可删除".to_string());
+    }
+    let mut cfg = config::load(&app);
+    if !cfg.extra_channels().iter().any(|c| c.id == id) {
+        return Err(format!("通道不存在: {id}"));
+    }
+    // 服务在跑先停(顺带关 WS,避免移除后通知订阅器对死端口空转)
+    let server = state.channel_server(&id).await;
+    {
+        let map = state.backends.lock().await;
+        if let Some(bs) = map.get(&id) {
+            *bs.rest.lock().await = None;
+            *bs.server_info.lock().await = None;
+            if let Some(ws) = bs.ws.lock().await.take() {
+                ws.close().await;
+            }
+        }
+    }
+    ServerManager::stop(&server, &state.http).await;
+    state.backends.lock().await.remove(&id);
+
+    cfg.channels = Some(cfg.extra_channels().into_iter().filter(|c| c.id != id).collect());
+    if cfg.active() == id {
+        cfg.active_channel = None;
+    }
+    config::save(&app, &cfg)?;
+    cli::refresh_channels(&cfg.extra_channels(), cfg.active());
+    apply_active_remote_bin(&cfg);
+    // SSH 共享连接与远端路径缓存按目标隔离,删除后清理不残留
+    ssh::invalidate().await;
+    target::invalidate_remote_caches();
+    Ok(())
+}
 
 /// 首次启动向导状态(App.tsx 挂载时据此决定是否进入向导)
 #[tauri::command]
@@ -524,10 +793,8 @@ async fn set_connection_target(
     desktop.connection = Some(conn);
     desktop.setup_done = Some(true);
     config::save(&app, &desktop)?;
-    // 目标可能变化:丢弃旧 SSH 共享连接与远端路径缓存,restart 时按新配置重连/重探测
-    ssh::invalidate().await;
-    target::invalidate_remote_caches();
-    // 应用新配置的远端 CLI 覆盖(随连接目标一起持久化在 connection.remoteBin;空串视为 None)
+    // 立即生效:本机通道切换为该目标(持久化仍走旧 connection 字段,下次启动按迁移规则转通道)
+    cli::set_channel_target("local", target);
     cli::set_remote_bin_override(
         desktop
             .connection
@@ -536,7 +803,9 @@ async fn set_connection_target(
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty()),
     );
-    cli::set_connection_target(target);
+    // 目标可能变化:丢弃旧 SSH 共享连接与远端路径缓存,restart 时按新配置重连/重探测
+    ssh::invalidate().await;
+    target::invalidate_remote_caches();
 
     restart_backend(&app, &state).await?;
     let mut out = get_connection_target();
@@ -608,13 +877,21 @@ async fn set_remote_bin(
         None => None,
     };
 
-    // 持久化(连接目标本身不变,只更新 remoteBin 字段)
+    // 持久化到激活通道的 config(额外通道写 channels;local 通道写旧 connection 字段)
     let mut cfg = config::load(&app);
-    let mut conn = cfg
-        .connection
-        .unwrap_or_else(|| target::ConnectionConfig::from(&conn_target));
-    conn.remote_bin = bin.clone();
-    cfg.connection = Some(conn);
+    if cfg.active() == "local" {
+        let mut conn = cfg
+            .connection
+            .unwrap_or_else(|| target::ConnectionConfig::from(&conn_target));
+        conn.remote_bin = bin.clone();
+        cfg.connection = Some(conn);
+    } else {
+        let mut channels = cfg.extra_channels();
+        if let Some(c) = channels.iter_mut().find(|c| c.id == cfg.active()) {
+            c.config.remote_bin = bin.clone();
+        }
+        cfg.channels = Some(channels);
+    }
     config::save(&app, &cfg)?;
     cli::set_remote_bin_override(bin);
     // 路径变化:丢弃探测缓存,restart 时按新路径/重新探测
@@ -664,9 +941,18 @@ async fn rest_request(
     path: String,
     body: Option<Value>,
     query: Option<HashMap<String, String>>,
+    channel: Option<String>,
 ) -> Result<Value, String> {
+    let channel = channel.unwrap_or_else(cli::active_channel);
     // 锁内 clone 出 RestClient 后即释放 guard,HTTP await 不再持有全局锁(避免所有 REST 调用串行化)
-    let rest = state.rest.lock().await.clone().ok_or("server not ready")?;
+    let rest = {
+        let map = state.backends.lock().await;
+        match map.get(&channel) {
+            Some(bs) => bs.rest.lock().await.clone(),
+            None => None,
+        }
+    }
+    .ok_or("server not ready")?;
     rest.request(method.as_deref(), &path, body, query)
         .await
         .map_err(|e| e.to_string())
@@ -674,9 +960,21 @@ async fn rest_request(
 
 /// 拉取服务端文件(图片等),字节转 base64 返回(桥接层解码)
 #[tauri::command(rename_all = "snake_case")]
-async fn rest_file(state: State<'_, Arc<AppState>>, file_id: String) -> Result<String, String> {
+async fn rest_file(
+    state: State<'_, Arc<AppState>>,
+    file_id: String,
+    channel: Option<String>,
+) -> Result<String, String> {
+    let channel = channel.unwrap_or_else(cli::active_channel);
     // 同 rest_request:clone 后即释放锁
-    let rest = state.rest.lock().await.clone().ok_or("server not ready")?;
+    let rest = {
+        let map = state.backends.lock().await;
+        match map.get(&channel) {
+            Some(bs) => bs.rest.lock().await.clone(),
+            None => None,
+        }
+    }
+    .ok_or("server not ready")?;
     let bytes = rest.download_file(&file_id).await.map_err(|e| e.to_string())?;
     Ok(base64::engine::general_purpose::STANDARD.encode(bytes))
 }
@@ -687,12 +985,21 @@ async fn rest_upload(
     bytes_base64: String,
     name: String,
     media_type: String,
+    channel: Option<String>,
 ) -> Result<Value, String> {
+    let channel = channel.unwrap_or_else(cli::active_channel);
     let bytes = base64::engine::general_purpose::STANDARD
         .decode(bytes_base64)
         .map_err(|e| e.to_string())?;
     // 同 rest_request:clone 后即释放锁
-    let rest = state.rest.lock().await.clone().ok_or("server not ready")?;
+    let rest = {
+        let map = state.backends.lock().await;
+        match map.get(&channel) {
+            Some(bs) => bs.rest.lock().await.clone(),
+            None => None,
+        }
+    }
+    .ok_or("server not ready")?;
     rest.upload_file(bytes, &name, &media_type)
         .await
         .map_err(|e| e.to_string())
@@ -765,55 +1072,71 @@ async fn fetch_provider_models(
 
 // ---------- local ----------
 
+/// local_* 系列:按通道解析出对应 ConnectionConfig 再路由(缺省=激活通道);
+/// local_drives 只对本机有意义,忽略 channel 参数
+
 #[tauri::command]
-async fn local_plugins() -> Vec<local_store::PluginEntry> {
-    local_store::list_plugins().await
+async fn local_plugins(channel: Option<String>) -> Vec<local_store::PluginEntry> {
+    local_store::list_plugins(&channel.unwrap_or_else(cli::active_channel)).await
 }
 
 #[tauri::command]
-async fn local_skills() -> Vec<local_store::SkillEntry> {
-    local_store::list_skills().await
+async fn local_skills(channel: Option<String>) -> Vec<local_store::SkillEntry> {
+    local_store::list_skills(&channel.unwrap_or_else(cli::active_channel)).await
 }
 
 #[tauri::command]
-async fn local_agents() -> Vec<local_store::AgentProfile> {
-    local_store::list_agent_profiles().await
+async fn local_agents(channel: Option<String>) -> Vec<local_store::AgentProfile> {
+    local_store::list_agent_profiles(&channel.unwrap_or_else(cli::active_channel)).await
 }
 
 #[tauri::command]
-async fn local_cron() -> Vec<local_store::CronEntry> {
-    local_store::list_cron_jobs().await
+async fn local_cron(channel: Option<String>) -> Vec<local_store::CronEntry> {
+    local_store::list_cron_jobs(&channel.unwrap_or_else(cli::active_channel)).await
 }
 
 #[tauri::command]
-async fn local_usage_daily(days: Option<u32>) -> local_store::UsageDailyResult {
-    local_store::aggregate_usage_daily(days.unwrap_or(30)).await
+async fn local_usage_daily(
+    days: Option<u32>,
+    channel: Option<String>,
+) -> local_store::UsageDailyResult {
+    local_store::aggregate_usage_daily(
+        &channel.unwrap_or_else(cli::active_channel),
+        days.unwrap_or(30),
+    )
+    .await
 }
 
 /// 今日逐小时用量(实时曲线,Tauri 专属)
 #[tauri::command]
-async fn local_usage_today() -> local_store::UsageTodayResult {
-    local_store::aggregate_usage_today().await
+async fn local_usage_today(channel: Option<String>) -> local_store::UsageTodayResult {
+    local_store::aggregate_usage_today(&channel.unwrap_or_else(cli::active_channel)).await
 }
 
 #[tauri::command]
-async fn local_mcp_read() -> Value {
-    local_store::read_mcp_config().await
+async fn local_mcp_read(channel: Option<String>) -> Value {
+    local_store::read_mcp_config(&channel.unwrap_or_else(cli::active_channel)).await
 }
 
 #[tauri::command]
-async fn local_mcp_write(data: Value) -> Result<String, String> {
-    local_store::write_mcp_config(data).await
+async fn local_mcp_write(
+    data: Value,
+    channel: Option<String>,
+) -> Result<String, String> {
+    local_store::write_mcp_config(&channel.unwrap_or_else(cli::active_channel), data).await
 }
 
 #[tauri::command]
-async fn local_cli_config_read() -> Option<String> {
-    local_store::read_config_toml().await
+async fn local_cli_config_read(channel: Option<String>) -> Option<String> {
+    local_store::read_config_toml(&channel.unwrap_or_else(cli::active_channel)).await
 }
 
 #[tauri::command]
-async fn local_cli_config_write(content: String) -> Result<String, String> {
-    local_store::write_config_toml(content).await
+async fn local_cli_config_write(
+    content: String,
+    channel: Option<String>,
+) -> Result<String, String> {
+    local_store::write_config_toml(&channel.unwrap_or_else(cli::active_channel), content).await
 }
 
 #[tauri::command]
@@ -886,11 +1209,14 @@ fn create_tray(app: &AppHandle) -> tauri::Result<()> {
 
 /// 启动流程:CLI 自检测(缺则自动装)→ 查更新(不阻塞)→ 启动 kimi web。
 /// 由 start_backend 命令触发(对话页占位图"启动服务"、错误页"重试"等入口)。
-async fn run_bootstrap(app: AppHandle, state: Arc<AppState>) {
+/// channel 为该流程所属通道;启动/停止/事件均按通道隔离
+async fn run_bootstrap(app: AppHandle, state: Arc<AppState>, channel: String) {
     let run = async {
-        let target = cli::connection_target();
-        state.manual_stop.store(false, Ordering::SeqCst);
-        // 1. 检测安装(仅本机目标支持自动安装;WSL/SSH 需用户自行在对应环境安装)
+        let target = cli::connection_target_for(&channel);
+        state
+            .with_backend(&channel, |bs| bs.manual_stop.store(false, Ordering::SeqCst))
+            .await;
+        // 1. 检测安装(仅本机通道支持自动安装;WSL/SSH 需用户自行在对应环境安装)
         // 非本机目标直接透传探测错误:detect_installed 的 Option 语义会把 SSH 认证
         // 失败等真实错误吞成 None,误报为"未安装 CLI"引导用户重装
         let mut version = if target.is_local() {
@@ -913,7 +1239,7 @@ async fn run_bootstrap(app: AppHandle, state: Arc<AppState>) {
                 target.describe()
             ));
         };
-        // 2. 查更新(不阻塞启动;仅本机目标,npm 查询对远端环境无意义)
+        // 2. 查更新(不阻塞启动;仅本机通道,npm 查询对远端环境无意义)
         if target.is_local() {
             let app2 = app.clone();
             let http = state.http.clone();
@@ -929,18 +1255,23 @@ async fn run_bootstrap(app: AppHandle, state: Arc<AppState>) {
                 }
             });
         }
-        // 3. 启动 kimi web
-        let info = ServerManager::start(&state.server, &state.http, &app).await?;
+        // 3. 启动该通道的 kimi web
+        let server = state.channel_server(&channel).await;
+        let info = ServerManager::start(&server, &state.http, &app, &channel, &target).await?;
         // bootstrap 途中用户点了停止(stop_backend 对空 proc 空转):停掉刚拉起的服务,
         // 尊重停止意图,而不是静默完成启动
-        if state.manual_stop.swap(false, Ordering::SeqCst) {
-            ServerManager::stop(&state.server, &state.http).await;
+        let manual_stopped = state
+            .with_backend(&channel, |bs| bs.manual_stop.swap(false, Ordering::SeqCst))
+            .await;
+        if manual_stopped {
+            ServerManager::stop(&server, &state.http).await;
             return Ok::<(), String>(());
         }
-        init_backend(&app, &state, &info).await;
+        init_backend(&app, &state, &channel, &info).await;
         let _ = app.emit(
             "server:ready",
             json!({
+                "channel": channel,
                 "cliVersion": info.cli_version,
                 "port": info.port,
                 "token": info.token,
@@ -950,8 +1281,8 @@ async fn run_bootstrap(app: AppHandle, state: Arc<AppState>) {
         Ok::<(), String>(())
     };
     if let Err(e) = run.await {
-        eprintln!("bootstrap failed: {e}");
-        let _ = app.emit("server:error", e);
+        eprintln!("bootstrap failed ({channel}): {e}");
+        let _ = app.emit("server:error", json!({ "channel": channel, "error": e }));
     }
 }
 
@@ -985,6 +1316,10 @@ pub fn run() {
             cli_check_update,
             start_backend,
             stop_backend,
+            get_channels,
+            set_active_channel,
+            add_channel,
+            remove_channel,
             get_kimi_home,
             set_kimi_home,
             get_setup_state,
@@ -1012,29 +1347,22 @@ pub fn run() {
             local_drives,
         ])
         .setup(move |app| {
+            // 旧版单目标配置 → 通道模型迁移(channels 为空且 connection 非本机时转成通道并设为 active)
+            let cfg = config::migrate(app.handle());
             // 加载用户自定义配置(数据目录/CLI 二进制,必须先于 bootstrap 启动服务)
-            let cfg = config::load(app.handle());
-            if let Some(home) = cfg.kimi_home {
+            if let Some(home) = cfg.kimi_home.as_deref() {
                 if !home.trim().is_empty() {
                     cli::set_kimi_home_override(Some(PathBuf::from(home)));
                 }
             }
-            if let Some(bin) = cfg.cli_bin {
+            if let Some(bin) = cfg.cli_bin.as_deref() {
                 if !bin.trim().is_empty() {
-                    cli::set_cli_bin_override(Some(bin));
+                    cli::set_cli_bin_override(Some(bin.to_string()));
                 }
             }
-            // 连接目标(本机 / WSL / SSH),必须先于 bootstrap 启动服务;
-            // 同时加载其携带的远端 CLI 覆盖(WSL/SSH 生效)
-            if let Some(conn) = cfg.connection {
-                cli::set_remote_bin_override(
-                    conn.remote_bin
-                        .clone()
-                        .map(|s| s.trim().to_string())
-                        .filter(|s| !s.is_empty()),
-                );
-                cli::set_connection_target(conn.into());
-            }
+            // 通道映射(含本机):active 决定连接目标路由;远端 CLI 覆盖随激活通道走
+            cli::refresh_channels(&cfg.extra_channels(), cfg.active());
+            apply_active_remote_bin(&cfg);
             // 程序化建窗(参数与原 config app.windows 一致):config 声明的窗口挂不上
             // on_new_window(builder 级钩子),iframe 内 window.open/target=_blank 必须接管
             // 转系统浏览器,否则官方 UI 外链会被 WebView2 静默吞掉
@@ -1057,14 +1385,14 @@ pub fn run() {
                 })
                 .build()?;
             create_tray(app.handle())?;
-            // 关闭拦截:后端运行中时不直接关窗,通知前端弹退出确认框(确认后走 confirm_close);
+            // 关闭拦截:任一通道后端运行中时不直接关窗,通知前端弹退出确认框(确认后走 confirm_close);
             // 覆盖标题栏关闭按钮、Alt+F4、任务栏关闭等所有关窗路径
             if let Some(win) = app.get_webview_window("main") {
                 let st = app.state::<Arc<AppState>>().inner().clone();
                 let win2 = win.clone();
                 win.on_window_event(move |e| {
                     if let tauri::WindowEvent::CloseRequested { api, .. } = e {
-                        if st.backend_running.load(Ordering::SeqCst) {
+                        if st.any_backend_running() {
                             api.prevent_close();
                             let _ = win2.emit("app:close-requested", ());
                         }
@@ -1077,7 +1405,7 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
 
-    // 退出前优雅关停 kimi web(对应 Electron 的 before-quit)
+    // 退出前优雅关停所有通道的 kimi web(对应 Electron 的 before-quit)
     app.run(|handle, event| {
         if let tauri::RunEvent::ExitRequested { api, .. } = event {
             let state = handle.state::<Arc<AppState>>();
@@ -1086,7 +1414,16 @@ pub fn run() {
                 let h = handle.clone();
                 tauri::async_runtime::spawn(async move {
                     let s = h.state::<Arc<AppState>>();
-                    ServerManager::stop(&s.server, &s.http).await;
+                    let servers: Vec<SharedServer> = s
+                        .backends
+                        .lock()
+                        .await
+                        .values()
+                        .map(|b| b.server.clone())
+                        .collect();
+                    for server in servers {
+                        ServerManager::stop(&server, &s.http).await;
+                    }
                     h.exit(0);
                 });
             }

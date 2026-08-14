@@ -18,19 +18,28 @@ export default function App() {
 
   useEffect(() => {
     const offs = [
-      window.kimiApi.onServerReady(() => {
+      // 事件带 channel:只影响激活通道的前端阶段(phase);其余通道的运行状态由 setChannelRunning 维护
+      window.kimiApi.onServerReady((info) => {
+        useUi.getState().setChannelRunning(info.channel, true)
+        if (info.channel !== useUi.getState().activeChannel) return
         setPhase('ready')
         setInstalling(false)
         setServerError(null)
       }),
-      window.kimiApi.onServerError((msg) => {
-        setServerError(msg)
+      window.kimiApi.onServerError((info) => {
+        if (info.channel !== useUi.getState().activeChannel) return
+        setServerError(info.error)
         setPhase('error')
       }),
       // 手动停止服务(设置页)不离开主页面:对话 iframe 自行进入未运行态,统计/设置本地可读
-      window.kimiApi.onServerExited((detail) => {
-        setServerError(`后端服务意外退出:${detail}`)
+      window.kimiApi.onServerExited((info) => {
+        useUi.getState().setChannelRunning(info.channel, false)
+        if (info.channel !== useUi.getState().activeChannel) return
+        setServerError(`后端服务意外退出:${info.detail}`)
         setPhase('error')
+      }),
+      window.kimiApi.onServerStopped((info) => {
+        useUi.getState().setChannelRunning(info.channel, false)
       }),
       window.kimiApi.onCliInstalling(() => {
         setInstalling(true)
@@ -50,11 +59,16 @@ export default function App() {
       })
     ]
     // 启动即进主页面:服务已在运行(热重载等)直接 ready;未运行也 ready,
-    // 对话页显示占位图(目标选择 + 启动按钮),由用户手动启动服务
+    // 对话页显示占位图(启动按钮),由用户手动启动服务
     window.kimiApi
       .appInfo()
       .then(() => setPhase('ready'))
       .catch(() => setPhase('ready'))
+    // 通道列表 + 激活通道:填充全局 store(顶部切换器 / 对话 iframe 按通道区分)
+    window.kimiApi
+      .getChannels()
+      .then((r) => useUi.getState().setChannels(r.channels, r.active))
+      .catch(() => {})
     // 连接目标:填充全局 store(FolderPickerDialog / GeneralSettings 等按目标调整行为)
     window.kimiApi
       .connectionTargetGet()
@@ -197,16 +211,25 @@ export default function App() {
         </div>
       )}
 
-      {/* 向导覆盖层(设置页"重新运行初始向导"、占位页选择 WSL/SSH 触发,可取消);
-          完成后关闭并启动服务(set_connection_target 已保存目标;
-          服务在跑时其内部已重启,startBackend 是 no-op) */}
+      {/* 向导覆盖层(设置页"重新运行初始向导"、设置→通道页"添加通道"触发,可取消)。
+          完成后关闭;switch 模式启动激活通道(set_connection_target 已保存目标;
+          服务在跑时其内部已重启,startBackend 是 no-op);add 模式只追加,调用方刷新通道列表 */}
       {onboardingOpen && (
         <div className="fixed inset-0 z-[95] flex flex-col bg-surface">
           <OnboardingPage
+            mode={useUi.getState().onboardingMode}
             initialTarget={useUi.getState().onboardingTarget}
             onDone={() => {
               useUi.getState().closeOnboarding()
-              startBackend()
+              if (useUi.getState().onboardingMode === 'add') {
+                // 添加通道完成:刷新通道列表(active 不变)
+                window.kimiApi
+                  .getChannels()
+                  .then((r) => useUi.getState().setChannels(r.channels, r.active))
+                  .catch(() => {})
+              } else {
+                startBackend()
+              }
             }}
             onCancel={() => useUi.getState().closeOnboarding()}
           />

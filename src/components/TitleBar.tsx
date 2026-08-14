@@ -1,18 +1,23 @@
 import { Minus, Square, X } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import logoUrl from '../assets/logo.png'
+import { useUi } from '../stores/ui'
 
 export function TitleBar() {
   const [cliVersion, setCliVersion] = useState<string>('')
+  const activeChannel = useUi((s) => s.activeChannel)
 
   useEffect(() => {
-    const off = window.kimiApi.onServerReady((info) => setCliVersion(info.cliVersion))
+    // CLI 版本跟随激活通道:切换通道后重探
+    const off = window.kimiApi.onServerReady((info) => {
+      if (info.channel === activeChannel) setCliVersion(info.cliVersion)
+    })
     window.kimiApi
-      .appInfo()
+      .appInfo(activeChannel)
       .then((i: { cliVersion: string | null }) => i.cliVersion && setCliVersion(i.cliVersion))
       .catch(() => {})
     return off
-  }, [])
+  }, [activeChannel])
 
   return (
     <div

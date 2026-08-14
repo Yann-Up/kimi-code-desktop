@@ -15,7 +15,6 @@ use tokio::process::Child;
 
 use tauri::AppHandle;
 
-use crate::cli;
 use crate::ssh::SshProcess;
 use crate::target::ConnectionTarget;
 
@@ -185,10 +184,14 @@ impl ServerManager {
         shared.lock().await.info.clone()
     }
 
+    /// 启动 kimi web:target 指定通道的连接目标(channel 为通道 id,用于意外退出回调与错误上报)。
+    /// 启动流程本身(banner token / healthz)与单通道时代完全一致,仅按通道隔离实例。
     pub async fn start(
         shared: &SharedServer,
         http: &reqwest::Client,
         app: &AppHandle,
+        channel: &str,
+        target: &ConnectionTarget,
     ) -> Result<ServerInfo, String> {
         let mut mgr = shared.lock().await;
         if let Some(info) = &mgr.info {
@@ -198,7 +201,6 @@ impl ServerManager {
         // 见上),新代监控持有新 flag,互不干扰
         mgr.stopping = Arc::new(AtomicBool::new(false));
         // 连接目标决定启动/读 token/检测 CLI 的方式;REST/WS 永远连 127.0.0.1:port
-        let target = cli::connection_target();
         let cli_version = target.detect_cli().await?;
         let port = free_port(START_PORT)?;
 
@@ -301,12 +303,13 @@ impl ServerManager {
         };
 
         // 退出监控:非主动停止的意外退出记录日志、清空 info,
-        // 并回调 lib.rs 清 AppState + 广播 server:exited(否则崩溃后卡死在假"运行中"状态)
+        // 并回调 lib.rs 清该通道 AppState + 广播 server:exited(否则崩溃后卡死在假"运行中"状态)
         {
             let stopping = mgr.stopping.clone();
             let weak = Arc::downgrade(shared);
             let monitor_probe = probe.clone();
             let app = app.clone();
+            let channel = channel.to_string();
             tokio::spawn(async move {
                 loop {
                     tokio::time::sleep(Duration::from_millis(500)).await;
@@ -336,7 +339,7 @@ impl ServerManager {
                             if let Some(m) = weak.upgrade() {
                                 m.lock().await.info = None;
                             }
-                            crate::handle_unexpected_exit(&app, &detail).await;
+                            crate::handle_unexpected_exit(&app, &channel, &detail).await;
                         }
                         break;
                     }

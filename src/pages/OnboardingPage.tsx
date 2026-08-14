@@ -13,18 +13,22 @@ const inputCls =
 
 /**
  * 连接目标向导:选择 kimi web 服务的运行目标(本机 / WSL / SSH),
- * WSL/SSH 需先测试连接通过,完成后保存配置并启动后端。
+ * WSL/SSH 需先测试连接通过,完成后保存配置。
+ * - mode='switch'(默认):调 connectionTargetSet 切换激活通道目标并重启服务(原行为);
+ * - mode='add':调 addChannel 只追加一条通道,不切换激活、不重启(设置→通道页"添加通道"用)。
  * onCancel 存在时(设置页/占位页触发的覆盖层)显示"取消"按钮,仅关闭向导不做改动。
  * initialTarget:打开时预选的目标(占位页点 WSL/SSH 带入),直接进入对应配置步骤。
  */
 export function OnboardingPage({
   onDone,
   onCancel,
-  initialTarget
+  initialTarget,
+  mode = 'switch'
 }: {
   onDone: () => void
   onCancel?: () => void
   initialTarget?: Target | null
+  mode?: 'switch' | 'add'
 }) {
   // 步骤:目标选择 → 配置(wsl/ssh);local 在选择页直接完成
   const [target, setTarget] = useState<Target | null>(initialTarget ?? null)
@@ -87,12 +91,22 @@ export function OnboardingPage({
     }
   }
 
-  /** 完成:持久化配置(Rust 侧写 setupDone + 重启后端由调用方触发) */
+  /** 完成:switch 模式调 connectionTargetSet(持久化 + 重启,由调用方启动);add 模式调 addChannel(只追加) */
   const finish = async (t: Target) => {
     setFinishing(true)
     setFinishError('')
     try {
       const cfg = buildConfig(t)
+      if (mode === 'add') {
+        // 添加通道:只追加不切换激活;label 省略由后端按目标展示名生成
+        await window.kimiApi.addChannel(
+          cfg,
+          undefined,
+          t === 'ssh' && sshAuth === 'password' ? sshPassword : undefined
+        )
+        onDone()
+        return
+      }
       const r = await window.kimiApi.connectionTargetSet(
         cfg,
         t === 'ssh' && sshAuth === 'password' ? sshPassword : undefined
@@ -133,22 +147,30 @@ export function OnboardingPage({
         <div className="mb-6 text-center">
           <p className="text-xl font-semibold">欢迎使用 Kimi Code Desktop</p>
           <p className="mt-1 text-[13px] text-text-tertiary">
-            首次启动,请选择 Kimi Code 服务的运行位置
+            {mode === 'add'
+              ? '添加连接通道:选择运行位置并测试连接,完成后将追加到通道列表'
+              : '首次启动,请选择 Kimi Code 服务的运行位置'}
           </p>
         </div>
 
-        {/* 步骤 1:目标选择(本机可直接完成) */}
+        {/* 步骤 1:目标选择(本机可直接完成;add 模式下本机已存在,置灰不可选) */}
         <div className="grid grid-cols-3 gap-3">
           {targets.map((t) => {
             const Icon = t.icon
             const active = target === t.id
+            const isLocal = t.id === 'local'
+            // add 模式:本机通道恒在,无需添加
+            const disabledCard = mode === 'add' && isLocal
             return (
               <button
                 key={t.id}
+                disabled={disabledCard}
                 className={`rounded-xl border bg-surface p-4 text-left transition-colors ${
-                  active
-                    ? 'border-primary bg-primary-soft'
-                    : 'border-border hover:border-primary/50 hover:bg-surface-tertiary'
+                  disabledCard
+                    ? 'cursor-not-allowed opacity-50'
+                    : active
+                      ? 'border-primary bg-primary-soft'
+                      : 'border-border hover:border-primary/50 hover:bg-surface-tertiary'
                 }`}
                 onClick={() => {
                   if (t.id === 'local') return // 本机走卡片下方按钮直接完成
@@ -160,15 +182,23 @@ export function OnboardingPage({
                 <Icon size={20} className={active ? 'text-primary' : 'text-text-secondary'} />
                 <p className="mt-2 text-[14px] font-medium">{t.title}</p>
                 <p className="mt-1 text-[12px] leading-snug text-text-tertiary">{t.desc}</p>
-                {t.id === 'local' && (
+                {isLocal && (
                   <span
-                    className="mt-3 inline-block rounded-lg bg-primary px-3 py-1.5 text-[12.5px] font-medium text-white hover:bg-primary-hover"
+                    className={`mt-3 inline-block rounded-lg px-3 py-1.5 text-[12.5px] font-medium ${
+                      disabledCard
+                        ? 'bg-surface-tertiary text-text-tertiary'
+                        : 'bg-primary text-white hover:bg-primary-hover'
+                    }`}
                     onClick={(e) => {
                       e.stopPropagation()
-                      void finish('local')
+                      if (!disabledCard) void finish('local')
                     }}
                   >
-                    {finishing && target !== 'wsl' && target !== 'ssh' ? '启动中…' : '完成并启动'}
+                    {disabledCard
+                      ? '本机已存在'
+                      : finishing && target !== 'wsl' && target !== 'ssh'
+                        ? '启动中…'
+                        : '完成并启动'}
                   </span>
                 )}
               </button>
@@ -317,7 +347,13 @@ export function OnboardingPage({
                   disabled={finishing || !testResult?.ok}
                   onClick={() => target && void finish(target)}
                 >
-                  {finishing ? '启动中…' : '完成并启动'}
+                  {finishing
+                    ? mode === 'add'
+                      ? '添加中…'
+                      : '启动中…'
+                    : mode === 'add'
+                      ? '添加通道'
+                      : '完成并启动'}
                 </button>
               </div>
             </div>

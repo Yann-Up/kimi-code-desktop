@@ -5,7 +5,13 @@
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { getCurrentWindow } from '@tauri-apps/api/window'
-import type { KimiApi, ServerReadyInfo, TurnEndedInfo } from './kimi-api'
+import type {
+  ChannelsState,
+  KimiApi,
+  ServerErrorInfo,
+  ServerReadyInfo,
+  TurnEndedInfo
+} from './kimi-api'
 
 type Unsubscribe = () => void
 
@@ -31,7 +37,7 @@ function sanitizeQuery(
 
 const api: KimiApi = {
   // app
-  appInfo: () => invoke('app_info'),
+  appInfo: (channel) => invoke('app_info', { channel }),
   windowControl: async (action) => {
     const win = getCurrentWindow()
     if (action === 'minimize') await win.minimize()
@@ -53,41 +59,47 @@ const api: KimiApi = {
   connectionTargetTest: (cfg, password) => invoke('test_connection_target', { cfg, password }),
   setupStateGet: () => invoke('get_setup_state'),
   setupStateReset: () => invoke('reset_setup'),
-  startBackend: () => invoke('start_backend'),
-  stopBackend: () => invoke('stop_backend'),
+  getChannels: () => invoke<ChannelsState>('get_channels'),
+  setActiveChannel: (id) => invoke('set_active_channel', { id }),
+  addChannel: (cfg, label, password) => invoke('add_channel', { cfg, label, password }),
+  removeChannel: (id) => invoke('remove_channel', { id }),
+  startBackend: (channel) => invoke('start_backend', { channel }),
+  stopBackend: (channel) => invoke('stop_backend', { channel }),
   onServerStopped: (cb) => on('server:stopped', cb),
-  onServerExited: (cb) => on('server:exited', (p: { detail: string }) => cb(p?.detail ?? '')),
+  onServerExited: (cb) => on('server:exited', cb),
   onCliInstalling: (cb) => on('cli:installing', cb),
   onCliUpdateAvailable: (cb) => on('cli:update-available', cb),
   onCliUpgraded: (cb) => on('cli:upgraded', cb),
   onServerReady: (cb) => on<ServerReadyInfo>('server:ready', cb),
-  onServerError: (cb) => on('server:error', cb),
+  onServerError: (cb) => on<ServerErrorInfo>('server:error', cb),
   onCloseRequested: (cb) => on('app:close-requested', cb),
   confirmClose: () => invoke('confirm_close'),
 
   // web ui
-  webUiUrl: () => invoke<string>('web_ui_url'),
+  webUiUrl: (channel) => invoke<string>('web_ui_url', { channel }),
   onTurnEnded: (cb) => on<TurnEndedInfo>('session:turn-ended', cb),
 
   // rest
-  rest: (opts) =>
+  rest: (opts, channel) =>
     invoke('rest_request', {
       method: opts.method,
       path: opts.path,
       body: opts.body,
-      query: sanitizeQuery(opts.query)
+      query: sanitizeQuery(opts.query),
+      channel
     }),
 
   // local
-  localSkills: () => invoke('local_skills'),
-  localAgents: () => invoke('local_agents'),
-  localCron: () => invoke('local_cron'),
-  localMcpRead: () => invoke('local_mcp_read'),
-  localMcpWrite: (data) => invoke('local_mcp_write', { data }),
-  cliConfigRead: () => invoke<string | null>('local_cli_config_read'),
-  cliConfigWrite: (content) => invoke<string>('local_cli_config_write', { content }),
-  localUsageDaily: (days) => invoke('local_usage_daily', { days }),
-  localUsageToday: () => invoke('local_usage_today'),
+  localSkills: (channel) => invoke('local_skills', { channel }),
+  localAgents: (channel) => invoke('local_agents', { channel }),
+  localCron: (channel) => invoke('local_cron', { channel }),
+  localMcpRead: (channel) => invoke('local_mcp_read', { channel }),
+  localMcpWrite: (data, channel) => invoke('local_mcp_write', { data, channel }),
+  cliConfigRead: (channel) => invoke<string | null>('local_cli_config_read', { channel }),
+  cliConfigWrite: (content, channel) =>
+    invoke<string>('local_cli_config_write', { content, channel }),
+  localUsageDaily: (days, channel) => invoke('local_usage_daily', { days, channel }),
+  localUsageToday: (channel) => invoke('local_usage_today', { channel }),
   localDrives: () => invoke('local_drives')
 }
 

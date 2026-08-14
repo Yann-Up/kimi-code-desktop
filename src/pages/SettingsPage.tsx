@@ -6,6 +6,7 @@ import {
   Database,
   FileCode2,
   Globe,
+  Network,
   Repeat,
   Settings2,
   SlidersHorizontal,
@@ -14,6 +15,7 @@ import {
 } from 'lucide-react'
 import { useUi } from '../stores/ui'
 import { GeneralSettings } from './settings/GeneralSettings'
+import { ChannelsSettings } from './settings/ChannelsSettings'
 import { CliGeneralSettings } from './settings/CliGeneralSettings'
 import { CliThinkingSettings } from './settings/CliThinkingSettings'
 import { CliLoopSettings } from './settings/CliLoopSettings'
@@ -32,7 +34,13 @@ import { CommandsSettings } from './settings/CommandsSettings'
 type SectionDef = { id: string; label: string; icon: typeof Settings2 }
 
 const GROUPS: { label: string; items: SectionDef[] }[] = [
-  { label: '桌面', items: [{ id: 'general', label: '常规', icon: Settings2 }] },
+  {
+    label: '桌面',
+    items: [
+      { id: 'general', label: '常规', icon: Settings2 },
+      { id: 'channels', label: '通道', icon: Network }
+    ]
+  },
   {
     label: 'CLI 配置',
     items: [
@@ -63,6 +71,8 @@ export function SettingsPage() {
     switch (settingsSection) {
       case 'general':
         return <GeneralSettings />
+      case 'channels':
+        return <ChannelsSettings />
       case 'cli-general':
         return <CliGeneralSettings />
       case 'cli-thinking':
