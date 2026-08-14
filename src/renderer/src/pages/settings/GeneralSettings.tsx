@@ -39,6 +39,139 @@ const CLI_SOURCE_LABEL: Record<KimiCliInfo['source'], string> = {
   auto: '自动探测'
 }
 
+/* ---------------- CLI 来源卡片(本机 / 远端 WSL/SSH) ---------------- */
+
+/**
+ * CLI 程序卡片:本机与远端(WSL/SSH)共用同一结构,差异通过参数注入——
+ * 说明文案、升级按钮(本机「npm 升级」仅非官方安装可见 / 远端「升级 CLI」)、
+ * 恢复默认与保存的目标函数(本机 kimiCliSet / 远端 remoteBinSet)、编辑输入占位符。
+ */
+function CliSourceCard(props: {
+  cliInfo: KimiCliInfo | null
+  description: string
+  checking: boolean
+  onCheck: () => void
+  /** 升级按钮参数;visible=false 时不渲染 */
+  upgrade: {
+    visible: boolean
+    label: string
+    busyLabel: string
+    busy: boolean
+    onUpgrade: () => void
+  }
+  switching: boolean
+  onReset: () => void
+  editing: boolean
+  onToggleEditing: () => void
+  pathText: string
+  onPathTextChange: (v: string) => void
+  placeholder: string
+  onSavePath: (p: string) => void
+  error: string
+  checkMsg: { ok: boolean; text: string } | null
+}) {
+  const {
+    cliInfo,
+    description,
+    checking,
+    onCheck,
+    upgrade,
+    switching,
+    onReset,
+    editing,
+    onToggleEditing,
+    pathText,
+    onPathTextChange,
+    placeholder,
+    onSavePath,
+    error,
+    checkMsg
+  } = props
+  return (
+    <>
+      <div className="flex items-center justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-[13.5px] font-medium">Kimi Code CLI 可执行文件</p>
+          <p className="mt-0.5 truncate font-mono text-[12px] text-text-secondary">
+            {cliInfo?.bin ?? '—'}
+            {cliInfo && (
+              <span className="ml-2 rounded bg-surface-tertiary px-1.5 py-0.5 font-sans text-[11px] text-text-tertiary">
+                {CLI_SOURCE_LABEL[cliInfo.source]}
+              </span>
+            )}
+            {cliInfo?.version && (
+              <span className="ml-2 rounded bg-surface-tertiary px-1.5 py-0.5 font-sans text-[11px] text-text-tertiary">
+                v{cliInfo.version}
+              </span>
+            )}
+          </p>
+          <p className="mt-1 text-[12px] text-text-tertiary">{description}</p>
+        </div>
+        <div className="flex shrink-0 gap-2">
+          <button
+            className="rounded-lg border border-border px-3 py-1.5 text-[13px] text-text-secondary hover:bg-surface-tertiary disabled:opacity-50"
+            disabled={checking || upgrade.busy || switching}
+            onClick={onCheck}
+          >
+            {checking ? '检查中…' : '检查更新'}
+          </button>
+          {upgrade.visible && (
+            <button
+              className="rounded-lg border border-border px-3 py-1.5 text-[13px] text-text-secondary hover:bg-surface-tertiary disabled:opacity-50"
+              disabled={upgrade.busy || switching}
+              onClick={upgrade.onUpgrade}
+            >
+              {upgrade.busy ? upgrade.busyLabel : upgrade.label}
+            </button>
+          )}
+          {cliInfo?.source === 'custom' && (
+            <button
+              className="rounded-lg border border-border px-3 py-1.5 text-[13px] text-text-secondary hover:bg-surface-tertiary disabled:opacity-50"
+              disabled={switching}
+              onClick={onReset}
+            >
+              恢复默认
+            </button>
+          )}
+          <button
+            className="rounded-lg border border-border px-3 py-1.5 text-[13px] text-text-secondary hover:bg-surface-tertiary disabled:opacity-50"
+            disabled={switching}
+            onClick={onToggleEditing}
+          >
+            {switching ? '切换中…' : editing ? '取消' : '修改'}
+          </button>
+        </div>
+      </div>
+      {editing && (
+        <div className="mt-3 flex items-center gap-2">
+          <input
+            className="min-w-0 flex-1 rounded-lg border border-border bg-surface px-2.5 py-1.5 font-mono text-[12px] outline-none placeholder:text-text-tertiary"
+            placeholder={placeholder}
+            value={pathText}
+            onChange={(e) => onPathTextChange(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && pathText.trim()) void onSavePath(pathText.trim())
+            }}
+          />
+          <button
+            className="shrink-0 rounded-lg bg-primary px-3 py-1.5 text-[13px] font-medium text-white hover:bg-primary-hover disabled:opacity-50"
+            disabled={switching || !pathText.trim()}
+            onClick={() => void onSavePath(pathText.trim())}
+          >
+            保存
+          </button>
+        </div>
+      )}
+      {error && <p className="mt-2 text-[12px] text-danger">{error}</p>}
+      {checkMsg && (
+        <p className={`mt-2 text-[12px] ${checkMsg.ok ? 'text-success' : 'text-warning'}`}>
+          {checkMsg.text}
+        </p>
+      )}
+    </>
+  )
+}
+
 export function GeneralSettings() {
   const [info, setInfo] = useState<AppInfo | null>(null)
   const [permission, setPermission] = useState<string>('')
@@ -473,187 +606,69 @@ export function GeneralSettings() {
       <GroupLabel>CLI 程序</GroupLabel>
       <Card>
         {(!connInfo || connInfo.config.target === 'local') ? (
-        <>
-        <div className="flex items-center justify-between gap-3">
-          <div className="min-w-0">
-            <p className="text-[13.5px] font-medium">Kimi Code CLI 可执行文件</p>
-            <p className="mt-0.5 truncate font-mono text-[12px] text-text-secondary">
-              {cliInfo?.bin ?? '—'}
-              {cliInfo && (
-                <span className="ml-2 rounded bg-surface-tertiary px-1.5 py-0.5 font-sans text-[11px] text-text-tertiary">
-                  {CLI_SOURCE_LABEL[cliInfo.source]}
-                </span>
-              )}
-              {cliInfo?.version && (
-                <span className="ml-2 rounded bg-surface-tertiary px-1.5 py-0.5 font-sans text-[11px] text-text-tertiary">
-                  v{cliInfo.version}
-                </span>
-              )}
-            </p>
-            <p className="mt-1 text-[12px] text-text-tertiary">
-              应用内一键升级仅适用于官方脚本安装;npm/自定义安装可直接点右侧"npm 升级"(等价 npm update -g)。切换将重启本地服务
-            </p>
-          </div>
-          <div className="flex shrink-0 gap-2">
-            <button
-              className="rounded-lg border border-border px-3 py-1.5 text-[13px] text-text-secondary hover:bg-surface-tertiary disabled:opacity-50"
-              disabled={cliChecking || npmUpgrading || cliSwitching}
-              onClick={checkCliUpdate}
-            >
-              {cliChecking ? '检查中…' : '检查更新'}
-            </button>
-            {cliInfo && cliInfo.source !== 'home' && (
-              <button
-                className="rounded-lg border border-border px-3 py-1.5 text-[13px] text-text-secondary hover:bg-surface-tertiary disabled:opacity-50"
-                disabled={npmUpgrading || cliSwitching}
-                onClick={() => {
-                  setNpmUpgrading(true)
-                  setCliError('')
-                  window.kimiApi
-                    .cliNpmUpgrade()
-                    .then(() => setTimeout(() => window.location.reload(), 600))
-                    .catch((e) => {
-                      setCliError(e instanceof Error ? e.message : String(e))
-                      setNpmUpgrading(false)
-                    })
-                }}
-              >
-                {npmUpgrading ? '升级中…' : 'npm 升级'}
-              </button>
-            )}
-            {cliInfo?.source === 'custom' && (
-              <button
-                className="rounded-lg border border-border px-3 py-1.5 text-[13px] text-text-secondary hover:bg-surface-tertiary disabled:opacity-50"
-                disabled={cliSwitching}
-                onClick={() => void switchCli(null)}
-              >
-                恢复默认
-              </button>
-            )}
-            <button
-              className="rounded-lg border border-border px-3 py-1.5 text-[13px] text-text-secondary hover:bg-surface-tertiary disabled:opacity-50"
-              disabled={cliSwitching}
-              onClick={() => {
-                setCliPathText(cliInfo?.bin ?? '')
-                setEditingCli((v) => !v)
-              }}
-            >
-              {cliSwitching ? '切换中…' : editingCli ? '取消' : '修改'}
-            </button>
-          </div>
-        </div>
-        {editingCli && (
-          <div className="mt-3 flex items-center gap-2">
-            <input
-              className="min-w-0 flex-1 rounded-lg border border-border bg-surface px-2.5 py-1.5 font-mono text-[12px] outline-none placeholder:text-text-tertiary"
-              placeholder="CLI 路径,如 D:\Env\nodejs\kimi.cmd(npm 全局)或 C:\...\kimi.exe"
-              value={cliPathText}
-              onChange={(e) => setCliPathText(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && cliPathText.trim()) void switchCli(cliPathText.trim())
-              }}
-            />
-            <button
-              className="shrink-0 rounded-lg bg-primary px-3 py-1.5 text-[13px] font-medium text-white hover:bg-primary-hover disabled:opacity-50"
-              disabled={cliSwitching || !cliPathText.trim()}
-              onClick={() => void switchCli(cliPathText.trim())}
-            >
-              保存
-            </button>
-          </div>
-        )}
-        {cliError && <p className="mt-2 text-[12px] text-danger">{cliError}</p>}
-        {cliCheckMsg && (
-          <p className={`mt-2 text-[12px] ${cliCheckMsg.ok ? 'text-success' : 'text-warning'}`}>
-            {cliCheckMsg.text}
-          </p>
-        )}
-        </>
+          <CliSourceCard
+            cliInfo={cliInfo}
+            description={'应用内一键升级仅适用于官方脚本安装;npm/自定义安装可直接点右侧"npm 升级"(等价 npm update -g)。切换将重启本地服务'}
+            checking={cliChecking}
+            onCheck={checkCliUpdate}
+            upgrade={{
+              visible: !!cliInfo && cliInfo.source !== 'home',
+              label: 'npm 升级',
+              busyLabel: '升级中…',
+              busy: npmUpgrading,
+              onUpgrade: () => {
+                setNpmUpgrading(true)
+                setCliError('')
+                window.kimiApi
+                  .cliNpmUpgrade()
+                  .then(() => setTimeout(() => window.location.reload(), 600))
+                  .catch((e) => {
+                    setCliError(e instanceof Error ? e.message : String(e))
+                    setNpmUpgrading(false)
+                  })
+              }
+            }}
+            switching={cliSwitching}
+            onReset={() => void switchCli(null)}
+            editing={editingCli}
+            onToggleEditing={() => {
+              setCliPathText(cliInfo?.bin ?? '')
+              setEditingCli((v) => !v)
+            }}
+            pathText={cliPathText}
+            onPathTextChange={setCliPathText}
+            placeholder="CLI 路径,如 D:\Env\nodejs\kimi.cmd(npm 全局)或 C:\...\kimi.exe"
+            onSavePath={(p) => void switchCli(p)}
+            error={cliError}
+            checkMsg={cliCheckMsg}
+          />
         ) : (
-        <>
-        <div className="flex items-center justify-between gap-3">
-          <div className="min-w-0">
-            <p className="text-[13.5px] font-medium">Kimi Code CLI 可执行文件</p>
-            <p className="mt-0.5 truncate font-mono text-[12px] text-text-secondary">
-              {cliInfo?.bin ?? '—'}
-              {cliInfo && (
-                <span className="ml-2 rounded bg-surface-tertiary px-1.5 py-0.5 font-sans text-[11px] text-text-tertiary">
-                  {CLI_SOURCE_LABEL[cliInfo.source]}
-                </span>
-              )}
-              {cliInfo?.version && (
-                <span className="ml-2 rounded bg-surface-tertiary px-1.5 py-0.5 font-sans text-[11px] text-text-tertiary">
-                  v{cliInfo.version}
-                </span>
-              )}
-            </p>
-            <p className="mt-1 text-[12px] text-text-tertiary">
-              CLI 在远端环境({connInfo?.describe ?? 'WSL/SSH'})运行;升级按安装方式自动选择官方安装脚本或 npm update -g,完成后重启服务
-            </p>
-          </div>
-          <div className="flex shrink-0 gap-2">
-            <button
-              className="rounded-lg border border-border px-3 py-1.5 text-[13px] text-text-secondary hover:bg-surface-tertiary disabled:opacity-50"
-              disabled={cliChecking || cliUpgrading || cliSwitching}
-              onClick={checkCliUpdate}
-            >
-              {cliChecking ? '检查中…' : '检查更新'}
-            </button>
-            <button
-              className="rounded-lg border border-border px-3 py-1.5 text-[13px] text-text-secondary hover:bg-surface-tertiary disabled:opacity-50"
-              disabled={cliUpgrading || cliSwitching}
-              onClick={upgradeRemoteCli}
-            >
-              {cliUpgrading ? '升级中…' : '升级 CLI'}
-            </button>
-            {cliInfo?.source === 'custom' && (
-              <button
-                className="rounded-lg border border-border px-3 py-1.5 text-[13px] text-text-secondary hover:bg-surface-tertiary disabled:opacity-50"
-                disabled={cliSwitching}
-                onClick={() => void switchRemoteCli(null)}
-              >
-                恢复默认
-              </button>
-            )}
-            <button
-              className="rounded-lg border border-border px-3 py-1.5 text-[13px] text-text-secondary hover:bg-surface-tertiary disabled:opacity-50"
-              disabled={cliSwitching}
-              onClick={() => {
-                setCliPathText(cliInfo?.bin ?? '')
-                setEditingCli((v) => !v)
-              }}
-            >
-              {cliSwitching ? '切换中…' : editingCli ? '取消' : '修改'}
-            </button>
-          </div>
-        </div>
-        {editingCli && (
-          <div className="mt-3 flex items-center gap-2">
-            <input
-              className="min-w-0 flex-1 rounded-lg border border-border bg-surface px-2.5 py-1.5 font-mono text-[12px] outline-none placeholder:text-text-tertiary"
-              placeholder="远端绝对路径,如 /home/user/.kimi-code/bin/kimi"
-              value={cliPathText}
-              onChange={(e) => setCliPathText(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && cliPathText.trim()) void switchRemoteCli(cliPathText.trim())
-              }}
-            />
-            <button
-              className="shrink-0 rounded-lg bg-primary px-3 py-1.5 text-[13px] font-medium text-white hover:bg-primary-hover disabled:opacity-50"
-              disabled={cliSwitching || !cliPathText.trim()}
-              onClick={() => void switchRemoteCli(cliPathText.trim())}
-            >
-              保存
-            </button>
-          </div>
-        )}
-        {cliError && <p className="mt-2 text-[12px] text-danger">{cliError}</p>}
-        {cliCheckMsg && (
-          <p className={`mt-2 text-[12px] ${cliCheckMsg.ok ? 'text-success' : 'text-warning'}`}>
-            {cliCheckMsg.text}
-          </p>
-        )}
-        </>
+          <CliSourceCard
+            cliInfo={cliInfo}
+            description={`CLI 在远端环境(${connInfo?.describe ?? 'WSL/SSH'})运行;升级按安装方式自动选择官方安装脚本或 npm update -g,完成后重启服务`}
+            checking={cliChecking}
+            onCheck={checkCliUpdate}
+            upgrade={{
+              visible: true,
+              label: '升级 CLI',
+              busyLabel: '升级中…',
+              busy: cliUpgrading,
+              onUpgrade: upgradeRemoteCli
+            }}
+            switching={cliSwitching}
+            onReset={() => void switchRemoteCli(null)}
+            editing={editingCli}
+            onToggleEditing={() => {
+              setCliPathText(cliInfo?.bin ?? '')
+              setEditingCli((v) => !v)
+            }}
+            pathText={cliPathText}
+            onPathTextChange={setCliPathText}
+            placeholder="远端绝对路径,如 /home/user/.kimi-code/bin/kimi"
+            onSavePath={(p) => void switchRemoteCli(p)}
+            error={cliError}
+            checkMsg={cliCheckMsg}
+          />
         )}
       </Card>
 

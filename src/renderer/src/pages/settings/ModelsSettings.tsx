@@ -196,38 +196,39 @@ const emptyPanelModelRow = (): PanelModelRow => ({
   default_effort: ''
 })
 
+/** 兼容 snake_case/camelCase 双写:优先 snake_case,其次 camelCase。
+ *  按类型匹配(0/空串等 falsy 值也会命中),类型不符时回退另一种写法。 */
+function pickStr(o: Record<string, unknown>, snake: string, camel: string): string | undefined {
+  const a = o[snake]
+  const b = o[camel]
+  return typeof a === 'string' ? a : typeof b === 'string' ? b : undefined
+}
+
+function pickNum(o: Record<string, unknown>, snake: string, camel: string): number | undefined {
+  const a = o[snake]
+  const b = o[camel]
+  return typeof a === 'number' ? a : typeof b === 'number' ? b : undefined
+}
+
+function pickStrArr(o: Record<string, unknown>, snake: string, camel: string): string[] | undefined {
+  const a = o[snake]
+  const b = o[camel]
+  return Array.isArray(a) ? a.map(String) : Array.isArray(b) ? b.map(String) : undefined
+}
+
 /** 从 /api/v1/config 的 models 段条目构建面板模型行,缺失元数据时回退默认值。
  *  注意 REST 返回 camelCase(displayName/maxContextSize/supportEfforts/defaultEffort),两种写法都兼容。 */
 function panelRowFromConfig(model: string, entry: Record<string, unknown> | undefined): PanelModelRow {
   const e = entry ?? {}
-  const ctx =
-    typeof e.max_context_size === 'number'
-      ? e.max_context_size
-      : typeof e.maxContextSize === 'number'
-        ? e.maxContextSize
-        : DEFAULT_CONTEXT
-  const dn =
-    typeof e.display_name === 'string'
-      ? e.display_name
-      : typeof e.displayName === 'string'
-        ? e.displayName
-        : ''
-  const se = Array.isArray(e.support_efforts)
-    ? e.support_efforts
-    : Array.isArray(e.supportEfforts)
-      ? e.supportEfforts
-      : undefined
-  const de =
-    typeof e.default_effort === 'string'
-      ? e.default_effort
-      : typeof e.defaultEffort === 'string'
-        ? e.defaultEffort
-        : ''
+  const ctx = pickNum(e, 'max_context_size', 'maxContextSize') ?? DEFAULT_CONTEXT
+  const dn = pickStr(e, 'display_name', 'displayName') ?? ''
+  const se = pickStrArr(e, 'support_efforts', 'supportEfforts')
+  const de = pickStr(e, 'default_effort', 'defaultEffort') ?? ''
   return {
     model,
     display_name: dn,
     maxCtx: String(ctx > 0 ? ctx : DEFAULT_CONTEXT),
-    support_efforts: se ? se.map(String).join(',') : '',
+    support_efforts: se ? se.join(',') : '',
     default_effort: de,
     capabilities: Array.isArray(e.capabilities) ? e.capabilities.map(String) : undefined,
     max_output_size: typeof e.max_output_size === 'number' ? e.max_output_size : undefined
@@ -243,18 +244,12 @@ function overrideFor(config: Record<string, unknown> | null, m: ModelItem): Mode
   const raw = models[`${m.provider}/${m.model}`] ?? models[m.model]
   if (!isPlainObj(raw)) return {}
   const r = raw as Record<string, unknown>
-  const num = (a: unknown, b: unknown) =>
-    typeof a === 'number' ? a : typeof b === 'number' ? b : undefined
-  const str = (a: unknown, b: unknown) =>
-    typeof a === 'string' ? a : typeof b === 'string' ? b : undefined
-  const strArr = (a: unknown, b: unknown) =>
-    Array.isArray(a) ? a.map(String) : Array.isArray(b) ? b.map(String) : undefined
   return {
-    display_name: str(r.display_name, r.displayName),
-    max_context_size: num(r.max_context_size, r.maxContextSize),
-    capabilities: strArr(r.capabilities, r.capabilities),
-    support_efforts: strArr(r.support_efforts, r.supportEfforts),
-    default_effort: str(r.default_effort, r.defaultEffort)
+    display_name: pickStr(r, 'display_name', 'displayName'),
+    max_context_size: pickNum(r, 'max_context_size', 'maxContextSize'),
+    capabilities: pickStrArr(r, 'capabilities', 'capabilities'),
+    support_efforts: pickStrArr(r, 'support_efforts', 'supportEfforts'),
+    default_effort: pickStr(r, 'default_effort', 'defaultEffort')
   }
 }
 
@@ -1280,6 +1275,55 @@ function ProviderPanel(props: { req: PanelReq | null; onSaved: () => void; onClo
 
 /* ---------------- 模型深度配置(内联编辑卡) ---------------- */
 
+/**
+ * 收敛「POST /api/v1/config(merge)→ 回读 → 乐观更新」的保存流程。
+ * save(build, onSuccess):busy/error/saved 由 hook 统一管理;
+ * build() 返回 { patch, base }(base 为乐观更新底,通常取 props.config 或刚回读的 config),
+ * 成功后回读一次最新配置(回读失败用 {...base, ...patch} 兜底)再回调 onSuccess。
+ * 差异点由调用方以参数表达:ModelDeepConfig 先读 config 再算 patch;
+ * Secondary/ThinkingCard 直接基于 props.config 构造 patch;后两者成功时还需 setDirty(false)。
+ */
+function useConfigMerge() {
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  const [saved, setSaved] = useState(false)
+
+  const save = useCallback(
+    async (
+      build: () =>
+        | { patch: Record<string, unknown>; base: Record<string, unknown> }
+        | Promise<{ patch: Record<string, unknown>; base: Record<string, unknown> }>,
+      onSuccess?: (cfg: Record<string, unknown>) => void
+    ) => {
+      setBusy(true)
+      setError('')
+      setSaved(false)
+      try {
+        const { patch, base } = await build()
+        const optimistic = { ...base, ...patch }
+        await rest('/api/v1/config', { method: 'POST', body: patch })
+        /* 回读一次,保证界面与服务端一致;失败则用本地合并结果兜底 */
+        let next: Record<string, unknown> = optimistic
+        try {
+          const fresh = await rest<Record<string, unknown>>('/api/v1/config')
+          if (isPlainObj(fresh)) next = fresh
+        } catch {
+          /* 保存已成功,仅回读失败 */
+        }
+        onSuccess?.(next)
+        setSaved(true)
+      } catch (e) {
+        setError(errText(e))
+      } finally {
+        setBusy(false)
+      }
+    },
+    []
+  )
+
+  return { save, busy, error, saved, setSaved, setError }
+}
+
 function ModelDeepConfig(props: {
   m: ModelItem
   override: ModelOverride
@@ -1295,57 +1339,41 @@ function ModelDeepConfig(props: {
     (override.support_efforts ?? m.support_efforts ?? []).join(',')
   )
   const [defaultEffort, setDefaultEffort] = useState(override.default_effort ?? m.default_effort ?? '')
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState('')
-  const [saved, setSaved] = useState(false)
+  const merge = useConfigMerge()
+  const { busy, error, saved } = merge
 
   const toggleCap = (c: string) => {
-    setSaved(false)
+    merge.setSaved(false)
     setCaps((prev) => (prev.includes(c) ? prev.filter((x) => x !== c) : [...prev, c]))
   }
 
-  const save = async () => {
-    setBusy(true)
-    setError('')
-    setSaved(false)
-    try {
-      /* 读取 models 段 → 合并修改 → POST(merge 语义) */
-      const cfg = await rest<Record<string, unknown>>('/api/v1/config')
-      const base = isPlainObj(cfg) ? cfg : {}
-      const modelsSection = isPlainObj(base.models) ? { ...(base.models as Record<string, unknown>) } : {}
-      const fullKey = `${m.provider}/${m.model}`
-      const key = modelsSection[fullKey] !== undefined ? fullKey : modelsSection[m.model] !== undefined ? m.model : fullKey
-      const entry: Record<string, unknown> = { ...(isPlainObj(modelsSection[key]) ? modelsSection[key] : {}) }
-      const dn = displayName.trim()
-      if (dn) entry.display_name = dn
-      else delete entry.display_name
-      const n = Number(maxCtx)
-      entry.max_context_size = Number.isFinite(n) && n > 0 ? Math.round(n) : DEFAULT_CONTEXT
-      entry.capabilities = caps
-      const eff = efforts.split(/[,，]/).map((s) => s.trim()).filter(Boolean)
-      if (eff.length) entry.support_efforts = eff
-      else delete entry.support_efforts
-      const de = defaultEffort.trim()
-      if (de) entry.default_effort = de
-      else delete entry.default_effort
-      modelsSection[key] = entry
-      const optimistic = { ...base, models: modelsSection }
-      await rest('/api/v1/config', { method: 'POST', body: { models: modelsSection } })
-      /* 回读一次,保证界面与服务端一致;失败则用本地合并结果兜底 */
-      let next: Record<string, unknown> = optimistic
-      try {
-        const fresh = await rest<Record<string, unknown>>('/api/v1/config')
-        if (isPlainObj(fresh)) next = fresh
-      } catch {
-        /* 保存已成功,仅回读失败 */
-      }
-      props.onSaved(next)
-      setSaved(true)
-    } catch (e) {
-      setError(errText(e))
-    } finally {
-      setBusy(false)
-    }
+  const save = () => {
+    void merge.save(
+      async () => {
+        /* 读取 models 段 → 合并修改 → POST(merge 语义) */
+        const cfg = await rest<Record<string, unknown>>('/api/v1/config')
+        const base = isPlainObj(cfg) ? cfg : {}
+        const modelsSection = isPlainObj(base.models) ? { ...(base.models as Record<string, unknown>) } : {}
+        const fullKey = `${m.provider}/${m.model}`
+        const key = modelsSection[fullKey] !== undefined ? fullKey : modelsSection[m.model] !== undefined ? m.model : fullKey
+        const entry: Record<string, unknown> = { ...(isPlainObj(modelsSection[key]) ? modelsSection[key] : {}) }
+        const dn = displayName.trim()
+        if (dn) entry.display_name = dn
+        else delete entry.display_name
+        const n = Number(maxCtx)
+        entry.max_context_size = Number.isFinite(n) && n > 0 ? Math.round(n) : DEFAULT_CONTEXT
+        entry.capabilities = caps
+        const eff = efforts.split(/[,，]/).map((s) => s.trim()).filter(Boolean)
+        if (eff.length) entry.support_efforts = eff
+        else delete entry.support_efforts
+        const de = defaultEffort.trim()
+        if (de) entry.default_effort = de
+        else delete entry.default_effort
+        modelsSection[key] = entry
+        return { patch: { models: modelsSection }, base }
+      },
+      (next) => props.onSaved(next)
+    )
   }
 
   return (
@@ -1358,7 +1386,7 @@ function ModelDeepConfig(props: {
             value={displayName}
             onChange={(e) => {
               setDisplayName(e.target.value)
-              setSaved(false)
+              merge.setSaved(false)
             }}
           />
         </Field>
@@ -1370,7 +1398,7 @@ function ModelDeepConfig(props: {
             value={maxCtx}
             onChange={(e) => {
               setMaxCtx(e.target.value)
-              setSaved(false)
+              merge.setSaved(false)
             }}
           />
         </Field>
@@ -1405,7 +1433,7 @@ function ModelDeepConfig(props: {
             value={efforts}
             onChange={(e) => {
               setEfforts(e.target.value)
-              setSaved(false)
+              merge.setSaved(false)
             }}
           />
         </Field>
@@ -1416,7 +1444,7 @@ function ModelDeepConfig(props: {
             value={defaultEffort}
             onChange={(e) => {
               setDefaultEffort(e.target.value)
-              setSaved(false)
+              merge.setSaved(false)
             }}
           />
         </Field>
@@ -1452,9 +1480,8 @@ function SecondaryModelCard(props: {
   const [model, setModel] = useState(match ? optVal(match) : curModel)
   const [effort, setEffort] = useState(curEffort)
   const [dirty, setDirty] = useState(false)
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState('')
-  const [saved, setSaved] = useState(false)
+  const merge = useConfigMerge()
+  const { busy, error, saved } = merge
 
   /* config 异步到达/保存后,未改动时同步回显 */
   useEffect(() => {
@@ -1465,34 +1492,20 @@ function SecondaryModelCard(props: {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [props.config, props.models])
 
-  const save = async () => {
+  const save = () => {
     if (!model) {
-      setError('请选择模型')
+      merge.setError('请选择模型')
       return
     }
-    setBusy(true)
-    setError('')
-    setSaved(false)
-    try {
-      const value: Record<string, unknown> = { model }
-      if (effort.trim()) value.default_effort = effort.trim()
-      const optimistic = { ...(props.config ?? {}), secondary_model: value }
-      await rest('/api/v1/config', { method: 'POST', body: { secondary_model: value } })
-      let next: Record<string, unknown> = optimistic
-      try {
-        const fresh = await rest<Record<string, unknown>>('/api/v1/config')
-        if (isPlainObj(fresh)) next = fresh
-      } catch {
-        /* 保存已成功,仅回读失败 */
+    const value: Record<string, unknown> = { model }
+    if (effort.trim()) value.default_effort = effort.trim()
+    void merge.save(
+      () => ({ patch: { secondary_model: value }, base: props.config ?? {} }),
+      (next) => {
+        props.onSaved(next)
+        setDirty(false)
       }
-      props.onSaved(next)
-      setDirty(false)
-      setSaved(true)
-    } catch (e) {
-      setError(errText(e))
-    } finally {
-      setBusy(false)
-    }
+    )
   }
 
   return (
@@ -1514,7 +1527,7 @@ function SecondaryModelCard(props: {
             onChange={(e) => {
               setModel(e.target.value)
               setDirty(true)
-              setSaved(false)
+              merge.setSaved(false)
             }}
           >
             <option value="">选择模型…</option>
@@ -1534,7 +1547,7 @@ function SecondaryModelCard(props: {
             onChange={(e) => {
               setEffort(e.target.value)
               setDirty(true)
-              setSaved(false)
+              merge.setSaved(false)
             }}
           />
         </Field>
@@ -1563,9 +1576,8 @@ function ThinkingCard(props: { config: Record<string, unknown> | null; onSaved: 
   const [effort, setEffort] = useState(curEffort)
   const [keep, setKeep] = useState(curKeep)
   const [dirty, setDirty] = useState(false)
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState('')
-  const [saved, setSaved] = useState(false)
+  const merge = useConfigMerge()
+  const { busy, error, saved } = merge
 
   useEffect(() => {
     if (dirty) return
@@ -1575,30 +1587,16 @@ function ThinkingCard(props: { config: Record<string, unknown> | null; onSaved: 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [props.config])
 
-  const save = async () => {
-    setBusy(true)
-    setError('')
-    setSaved(false)
-    try {
-      const value: Record<string, unknown> = { enabled, keep }
-      if (effort.trim()) value.effort = effort.trim()
-      const optimistic = { ...(props.config ?? {}), thinking: value }
-      await rest('/api/v1/config', { method: 'POST', body: { thinking: value } })
-      let next: Record<string, unknown> = optimistic
-      try {
-        const fresh = await rest<Record<string, unknown>>('/api/v1/config')
-        if (isPlainObj(fresh)) next = fresh
-      } catch {
-        /* 保存已成功,仅回读失败 */
+  const save = () => {
+    const value: Record<string, unknown> = { enabled, keep }
+    if (effort.trim()) value.effort = effort.trim()
+    void merge.save(
+      () => ({ patch: { thinking: value }, base: props.config ?? {} }),
+      (next) => {
+        props.onSaved(next)
+        setDirty(false)
       }
-      props.onSaved(next)
-      setDirty(false)
-      setSaved(true)
-    } catch (e) {
-      setError(errText(e))
-    } finally {
-      setBusy(false)
-    }
+    )
   }
 
   return (
@@ -1619,7 +1617,7 @@ function ThinkingCard(props: { config: Record<string, unknown> | null; onSaved: 
           onToggle={() => {
             setEnabled((v) => !v)
             setDirty(true)
-            setSaved(false)
+            merge.setSaved(false)
           }}
         />
       </div>
@@ -1632,7 +1630,7 @@ function ThinkingCard(props: { config: Record<string, unknown> | null; onSaved: 
             onChange={(e) => {
               setEffort(e.target.value)
               setDirty(true)
-              setSaved(false)
+              merge.setSaved(false)
             }}
           />
         </Field>
@@ -1643,7 +1641,7 @@ function ThinkingCard(props: { config: Record<string, unknown> | null; onSaved: 
             onChange={(e) => {
               setKeep(e.target.value)
               setDirty(true)
-              setSaved(false)
+              merge.setSaved(false)
             }}
           >
             <option value="all">all</option>
