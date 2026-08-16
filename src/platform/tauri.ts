@@ -98,6 +98,10 @@ const api: KimiApi = {
   cliConfigRead: (channel) => invoke<string | null>('local_cli_config_read', { channel }),
   cliConfigWrite: (content, channel) =>
     invoke<string>('local_cli_config_write', { content, channel }),
+  cliConfigMerge: (patch, channel) =>
+    invoke<string>('local_cli_config_merge', { patch, channel }),
+  cliConfigParsed: (channel) =>
+    invoke<Record<string, unknown> | null>('local_cli_config_parsed', { channel }),
   localUsageDaily: (days, channel) => invoke('local_usage_daily', { days, channel }),
   localUsageToday: (channel) => invoke('local_usage_today', { channel }),
   localDrives: () => invoke('local_drives')

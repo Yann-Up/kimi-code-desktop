@@ -3,6 +3,7 @@ import {
   Brain,
   CalendarClock,
   Command,
+  Cpu,
   Database,
   FileCode2,
   Globe,
@@ -17,6 +18,7 @@ import { useUi } from '../stores/ui'
 import { GeneralSettings } from './settings/GeneralSettings'
 import { ChannelsSettings } from './settings/ChannelsSettings'
 import { CliGeneralSettings } from './settings/CliGeneralSettings'
+import { CliModelsSettings } from './settings/CliModelsSettings'
 import { CliThinkingSettings } from './settings/CliThinkingSettings'
 import { CliLoopSettings } from './settings/CliLoopSettings'
 import { CliServicesSettings } from './settings/CliServicesSettings'
@@ -45,6 +47,7 @@ const GROUPS: { label: string; items: SectionDef[] }[] = [
     label: 'CLI 配置',
     items: [
       { id: 'cli-general', label: '通用行为', icon: SlidersHorizontal },
+      { id: 'cli-models', label: '模型与供应商', icon: Cpu },
       { id: 'cli-thinking', label: '思考', icon: Brain },
       { id: 'cli-loop', label: '循环与后台', icon: Repeat },
       { id: 'cli-services', label: '服务与图像', icon: Globe },
@@ -66,6 +69,7 @@ const GROUPS: { label: string; items: SectionDef[] }[] = [
 
 export function SettingsPage() {
   const { settingsSection, setSettingsSection } = useUi()
+  const settingsZoom = useUi((s) => s.settingsZoom)
 
   const content = (() => {
     switch (settingsSection) {
@@ -75,6 +79,8 @@ export function SettingsPage() {
         return <ChannelsSettings />
       case 'cli-general':
         return <CliGeneralSettings />
+      case 'cli-models':
+        return <CliModelsSettings />
       case 'cli-thinking':
         return <CliThinkingSettings />
       case 'cli-loop':
@@ -101,7 +107,8 @@ export function SettingsPage() {
   })()
 
   return (
-    <div className="flex min-h-0 flex-1">
+    // zoom 整体缩放设置页(组件均为固定 px 字号,继承式 font-size 不生效);仅作用本页
+    <div className="flex min-h-0 flex-1" style={{ zoom: settingsZoom / 100 }}>
       <div className="flex w-[200px] shrink-0 flex-col border-r border-border-light bg-surface-secondary">
         <div className="mt-2 flex-1 overflow-y-auto px-2 pb-2">
           {GROUPS.map((g) => (

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Section, Card, GroupLabel } from '../../components/settings/common'
 import { FolderPickerDialog } from '../../components/FolderPickerDialog'
-import type { ConnectionTargetConfig, ConnectionTargetInfo } from '../../platform/kimi-api'
+import type { ConnectionTargetInfo } from '../../platform/kimi-api'
 import { useUi } from '../../stores/ui'
 
 interface AppInfo {
@@ -186,25 +186,15 @@ export function GeneralSettings() {
   const [svcRunning, setSvcRunning] = useState<boolean | null>(null)
   const [svcBusy, setSvcBusy] = useState(false)
   const quotaRefreshSecs = useUi((s) => s.quotaRefreshSecs)
+  const settingsZoom = useUi((s) => s.settingsZoom)
   const [npmUpgrading, setNpmUpgrading] = useState(false)
   // 手动检查更新状态与结果
   const [cliChecking, setCliChecking] = useState(false)
   const [cliCheckMsg, setCliCheckMsg] = useState<{ ok: boolean; text: string } | null>(null)
   // 远端(WSL/SSH)CLI 升级中标记
   const [cliUpgrading, setCliUpgrading] = useState(false)
-  // 连接目标(本机 / WSL / SSH)
+  // 连接目标信息(本机 / WSL / SSH),仅用于条件渲染存储位置与 CLI 卡片;编辑入口已迁移至「通道」页
   const [connInfo, setConnInfo] = useState<ConnectionTargetInfo | null>(null)
-  const [connTarget, setConnTarget] = useState<ConnectionTargetConfig['target']>('local')
-  const [wslDistro, setWslDistro] = useState('')
-  const [sshHost, setSshHost] = useState('')
-  const [sshUser, setSshUser] = useState('')
-  const [sshPort, setSshPort] = useState('')
-  const [sshAuth, setSshAuth] = useState<'password' | 'key'>('key')
-  const [sshPassword, setSshPassword] = useState('')
-  const [sshIdentity, setSshIdentity] = useState('')
-  const [connSaving, setConnSaving] = useState(false)
-  const [connError, setConnError] = useState('')
-  const [connWarn, setConnWarn] = useState('')
   // 本页所有服务信息/事件跟随激活通道:切换通道后重探
   const activeChannel = useUi((s) => s.activeChannel)
 
@@ -224,16 +214,7 @@ export function GeneralSettings() {
       .catch(() => {})
     window.kimiApi
       .connectionTargetGet()
-      .then((t) => {
-        setConnInfo(t)
-        setConnTarget(t.config.target)
-        setWslDistro(t.config.wslDistro ?? '')
-        setSshHost(t.config.sshHost ?? '')
-        setSshUser(t.config.sshUser ?? '')
-        setSshPort(t.config.sshPort ? String(t.config.sshPort) : '')
-        setSshAuth(t.config.sshAuth ?? 'key')
-        setSshIdentity(t.config.sshIdentity ?? '')
-      })
+      .then((t) => setConnInfo(t))
       .catch(() => {})
     const refreshInfo = () => {
       window.kimiApi
@@ -342,53 +323,6 @@ export function GeneralSettings() {
       })
   }
 
-  /** 保存连接目标:后端持久化并重启 kimi web 服务,完成后整页重载 */
-  const saveConnection = async () => {
-    setConnError('')
-    setConnWarn('')
-    let port: number | null = null
-    if (connTarget === 'ssh' && sshPort.trim()) {
-      const n = Number(sshPort.trim())
-      if (!Number.isInteger(n) || n < 1 || n > 65535) {
-        setConnError('SSH 端口必须是 1-65535 的整数')
-        return
-      }
-      port = n
-    }
-    // 密码仅在新输入时上送;留空表示保持已保存的密码不变
-    const password =
-      connTarget === 'ssh' && sshAuth === 'password' && sshPassword ? sshPassword : undefined
-    setConnSaving(true)
-    try {
-      const r = await window.kimiApi.connectionTargetSet(
-        {
-          target: connTarget,
-          wslDistro: connTarget === 'wsl' ? wslDistro.trim() || null : null,
-          sshHost: connTarget === 'ssh' ? sshHost.trim() || null : null,
-          sshUser: connTarget === 'ssh' ? sshUser.trim() || null : null,
-          sshPort: connTarget === 'ssh' ? port : null,
-          sshIdentity:
-            connTarget === 'ssh' && sshAuth === 'key' ? sshIdentity.trim() || null : null,
-          sshAuth: connTarget === 'ssh' ? sshAuth : null,
-          // 远端 CLI 覆盖由 CLI 卡片单独维护,重新保存连接目标时原样保留
-          remoteBin: connInfo?.config.remoteBin ?? null
-        },
-        password
-      )
-      // keyring 保存失败:本次仅内存生效,重载前提示用户
-      if (password && !r.passwordSaved) {
-        setConnWarn('密码保存失败,本次仅保存在内存;下次启动需重新输入')
-        setConnSaving(false)
-        setTimeout(() => window.location.reload(), 2500)
-        return
-      }
-      setTimeout(() => window.location.reload(), 600)
-    } catch (e) {
-      setConnError(e instanceof Error ? e.message : String(e))
-      setConnSaving(false)
-    }
-  }
-
   return (
     <Section title="常规" desc="应用与 Kimi Code CLI 的基本信息">
       <GroupLabel>版本</GroupLabel>
@@ -406,153 +340,7 @@ export function GeneralSettings() {
         </div>
       </Card>
 
-      <GroupLabel>连接目标</GroupLabel>
-      <Card>
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0 flex-1">
-            <p className="text-[13.5px] font-medium">
-              kimi web 服务运行位置
-              {connInfo && (
-                <span className="ml-2 rounded bg-surface-tertiary px-1.5 py-0.5 text-[11px] text-text-tertiary">
-                  {connInfo.describe}
-                </span>
-              )}
-            </p>
-            <p className="mt-1 text-[12px] text-text-tertiary">
-              本机直接启动 CLI;WSL 经 wsl.exe 进入发行版;SSH 连接远程机器(支持密码 / 私钥认证,密码存系统凭据管理器)。切换将重启服务
-            </p>
-            <div className="mt-3 space-y-2 text-[13px]">
-              <label className="flex cursor-pointer items-center gap-2">
-                <input
-                  type="radio"
-                  name="conn-target"
-                  className="h-3.5 w-3.5 accent-primary"
-                  checked={connTarget === 'local'}
-                  onChange={() => setConnTarget('local')}
-                />
-                本机
-              </label>
-              <label className="flex cursor-pointer items-center gap-2">
-                <input
-                  type="radio"
-                  name="conn-target"
-                  className="h-3.5 w-3.5 accent-primary"
-                  checked={connTarget === 'wsl'}
-                  onChange={() => setConnTarget('wsl')}
-                />
-                WSL
-              </label>
-              {connTarget === 'wsl' && (
-                <input
-                  className="ml-5 w-72 rounded-lg border border-border bg-surface px-2.5 py-1.5 font-mono text-[12px] outline-none placeholder:text-text-tertiary"
-                  placeholder="发行版名称(留空 = 默认发行版)"
-                  value={wslDistro}
-                  onChange={(e) => setWslDistro(e.target.value)}
-                />
-              )}
-              <label className="flex cursor-pointer items-center gap-2">
-                <input
-                  type="radio"
-                  name="conn-target"
-                  className="h-3.5 w-3.5 accent-primary"
-                  checked={connTarget === 'ssh'}
-                  onChange={() => setConnTarget('ssh')}
-                />
-                SSH(远程机器)
-              </label>
-              {connTarget === 'ssh' && (
-                <div className="ml-5 space-y-2">
-                  <input
-                    className="w-72 rounded-lg border border-border bg-surface px-2.5 py-1.5 font-mono text-[12px] outline-none placeholder:text-text-tertiary"
-                    placeholder="主机,可 user@host(必填)"
-                    value={sshHost}
-                    onChange={(e) => setSshHost(e.target.value)}
-                  />
-                  <input
-                    className="w-72 rounded-lg border border-border bg-surface px-2.5 py-1.5 font-mono text-[12px] outline-none placeholder:text-text-tertiary"
-                    placeholder="用户名(可选,优先于主机中的 user@)"
-                    value={sshUser}
-                    onChange={(e) => setSshUser(e.target.value)}
-                  />
-                  <input
-                    className="w-72 rounded-lg border border-border bg-surface px-2.5 py-1.5 font-mono text-[12px] outline-none placeholder:text-text-tertiary"
-                    placeholder="SSH 端口(可选,默认 22)"
-                    value={sshPort}
-                    onChange={(e) => setSshPort(e.target.value)}
-                  />
-                  <div className="flex items-center gap-4 text-[13px]">
-                    <span className="text-text-secondary">认证方式</span>
-                    <label className="flex cursor-pointer items-center gap-1.5">
-                      <input
-                        type="radio"
-                        name="ssh-auth"
-                        className="h-3.5 w-3.5 accent-primary"
-                        checked={sshAuth === 'key'}
-                        onChange={() => setSshAuth('key')}
-                      />
-                      私钥
-                    </label>
-                    <label className="flex cursor-pointer items-center gap-1.5">
-                      <input
-                        type="radio"
-                        name="ssh-auth"
-                        className="h-3.5 w-3.5 accent-primary"
-                        checked={sshAuth === 'password'}
-                        onChange={() => setSshAuth('password')}
-                      />
-                      密码
-                    </label>
-                  </div>
-                  {sshAuth === 'password' ? (
-                    <input
-                      type="password"
-                      className="w-72 rounded-lg border border-border bg-surface px-2.5 py-1.5 font-mono text-[12px] outline-none placeholder:text-text-tertiary"
-                      placeholder={
-                        connInfo?.hasPassword ? '已保存,留空保持不变' : 'SSH 密码'
-                      }
-                      value={sshPassword}
-                      onChange={(e) => setSshPassword(e.target.value)}
-                    />
-                  ) : (
-                    <input
-                      className="w-72 rounded-lg border border-border bg-surface px-2.5 py-1.5 font-mono text-[12px] outline-none placeholder:text-text-tertiary"
-                      placeholder="私钥路径(可选,如 C:\Users\you\.ssh\id_ed25519)"
-                      value={sshIdentity}
-                      onChange={(e) => setSshIdentity(e.target.value)}
-                    />
-                  )}
-                </div>
-              )}
-            </div>
-          </div>
-          <button
-            className="shrink-0 rounded-lg bg-primary px-3 py-1.5 text-[13px] font-medium text-white hover:bg-primary-hover disabled:opacity-50"
-            disabled={connSaving || (connTarget === 'ssh' && !sshHost.trim())}
-            onClick={() => void saveConnection()}
-          >
-            {connSaving ? '保存中…' : '保存'}
-          </button>
-        </div>
-        {connError && <p className="mt-2 text-[12px] text-danger">{connError}</p>}
-        {connWarn && <p className="mt-2 text-[12px] text-warning">{connWarn}</p>}
-        {/* 重跑首启向导:复位 setup_done 后以覆盖层打开向导,可取消 */}
-        <div className="mt-3 border-t border-border-light pt-3">
-          <button
-            className="rounded-lg border border-border px-3 py-1.5 text-[12.5px] text-text-secondary hover:bg-surface-tertiary"
-            onClick={() => {
-              void window.kimiApi
-                .setupStateReset()
-                .then(() => useUi.getState().openOnboarding())
-                .catch(() => {})
-            }}
-          >
-            重新运行初始向导
-          </button>
-          <p className="mt-1.5 text-[11.5px] text-text-tertiary">
-            重新走一遍连接目标选择流程;当前配置在向导完成前不会改动
-          </p>
-        </div>
-      </Card>
+      {/* 连接目标的编辑入口已迁移至「通道」设置页(ChannelsSettings) */}
 
       {/* 非本机目标使用远端自己的 ~/.kimi-code,数据目录设置不适用 */}
       {(!connInfo || connInfo.config.target === 'local') && (
@@ -703,6 +491,27 @@ export function GeneralSettings() {
           >
             {svcBusy ? '处理中…' : svcRunning ? '停止服务' : '启动服务'}
           </button>
+        </div>
+      </Card>
+
+      <GroupLabel>界面</GroupLabel>
+      <Card>
+        {/* 设置页字体大小:存 localStorage,SettingsPage 根节点经 CSS zoom 响应式生效 */}
+        <div className="flex items-center justify-between">
+          <div>
+            <p className="text-[13.5px] font-medium">设置页字体大小</p>
+            <p className="text-[12px] text-text-tertiary">整体缩放设置页的字体与控件(立即生效,仅影响设置页)</p>
+          </div>
+          <select
+            className="rounded-lg border border-border bg-surface px-2.5 py-1.5 text-[13px] outline-none"
+            value={settingsZoom}
+            onChange={(e) => useUi.getState().setSettingsZoom(Number(e.target.value))}
+          >
+            <option value={90}>较小(90%)</option>
+            <option value={100}>标准(100%,默认)</option>
+            <option value={110}>较大(110%)</option>
+            <option value={125}>特大(125%)</option>
+          </select>
         </div>
       </Card>
 

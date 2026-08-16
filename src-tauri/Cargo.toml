@@ -31,6 +31,10 @@ chrono = { version = "0.4", default-features = false, features = ["std", "clock"
 russh = { version = "0.62", default-features = false, features = ["ring", "rsa"] }
 # SSH 密码存系统凭据管理器(Windows Credential Manager),不落明文配置
 keyring = "4"
+# config.toml 合并写(保留注释/格式):REST 不支持的配置段(如 identity)走文件合并
+toml_edit = "0.22"
+# config.toml 解析为 JSON(模型/供应商设置页读取用)
+toml = "0.8"
 
 [profile.release]
 lto = true

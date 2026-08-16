@@ -24,12 +24,15 @@ interface UiState {
   onboardingTarget: ConnectionTargetConfig['target'] | null
   /** 额度条自动刷新间隔(秒,0=关闭;持久化 localStorage,默认 60) */
   quotaRefreshSecs: number
+  /** 设置页字体缩放(百分比,100=标准;持久化 localStorage,经 CSS zoom 生效) */
+  settingsZoom: number
   /** 切换顶部导航 tab */
   setView: (v: ShellView) => void
   openSettings: (section?: string) => void
   closeSettings: () => void
   setSettingsSection: (s: string) => void
   setQuotaRefreshSecs: (secs: number) => void
+  setSettingsZoom: (pct: number) => void
   setConnectionTarget: (t: ConnectionTargetConfig['target']) => void
   /** 填充通道列表与激活通道;connectionTarget 随之派生 */
   setChannels: (channels: ChannelInfo[], active: string) => void
@@ -64,6 +67,16 @@ export const useUi = create<UiState>((set) => ({
   setQuotaRefreshSecs: (secs) => {
     localStorage.setItem('kimi.quotaRefreshSecs', String(secs))
     set({ quotaRefreshSecs: secs })
+  },
+  settingsZoom: (() => {
+    const raw = localStorage.getItem('kimi.settingsZoom')
+    if (raw === null) return 100
+    const n = Number(raw)
+    return Number.isFinite(n) && n >= 75 && n <= 200 ? n : 100
+  })(),
+  setSettingsZoom: (pct) => {
+    localStorage.setItem('kimi.settingsZoom', String(pct))
+    set({ settingsZoom: pct })
   },
   setConnectionTarget: (t) => set({ connectionTarget: t }),
   setChannels: (channels, active) =>

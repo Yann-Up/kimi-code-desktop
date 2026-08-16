@@ -1,12 +1,14 @@
 import type { ReactNode } from 'react'
 
-/** 设置页标准区块:标题 + 描述 + 内容卡片流(占满可用宽度,随窗口自适应) */
-export function Section(props: { title: string; desc?: string; children: ReactNode }) {
+/** 设置页标准区块:标题 + 描述 + 内容卡片流(占满可用宽度,随窗口自适应);fill=true 时内容区占满剩余高度(用于编辑器等场景) */
+export function Section(props: { title: string; desc?: string; children: ReactNode; fill?: boolean }) {
   return (
-    <div className="px-8 py-6">
+    <div className={props.fill ? 'flex h-full min-h-0 flex-col px-8 py-6' : 'px-8 py-6'}>
       <h2 className="text-xl font-semibold">{props.title}</h2>
       {props.desc && <p className="mb-5 mt-1 text-[13px] text-text-tertiary">{props.desc}</p>}
-      <div className="mt-4 space-y-3">{props.children}</div>
+      <div className={props.fill ? 'mt-4 flex min-h-0 flex-1 flex-col space-y-3' : 'mt-4 space-y-3'}>
+        {props.children}
+      </div>
     </div>
   )
 }

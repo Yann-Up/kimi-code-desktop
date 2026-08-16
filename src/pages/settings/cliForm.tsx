@@ -5,8 +5,9 @@
  */
 import { useState } from 'react'
 import type { ReactNode } from 'react'
-import { Plus, Trash2 } from 'lucide-react'
+import { FolderOpen, Plus, Trash2 } from 'lucide-react'
 import { Section, Empty } from '../../components/settings/common'
+import { FolderPickerDialog } from '../../components/FolderPickerDialog'
 import type { CliConfig } from '../../hooks/useCliConfig'
 
 /** 按路径取嵌套值;路径段可为 string 或候选键数组(兼容 snake/camel 差异),取到即返回 */
@@ -176,6 +177,8 @@ export function PathListField(props: {
   onChange: (v: string[]) => void
   placeholder?: string
 }) {
+  // 「浏览选择」弹层:经 FolderPickerDialog(REST fs:browse)选目录后追加为一行;手动输入仍可用
+  const [picking, setPicking] = useState(false)
   return (
     <div>
       <p className="text-[13.5px] font-medium">{props.label}</p>
@@ -199,12 +202,33 @@ export function PathListField(props: {
           </div>
         ))}
       </div>
-      <button
-        className="mt-2 inline-flex items-center gap-1 rounded-lg border border-dashed border-border px-2.5 py-1 text-[12.5px] text-text-secondary transition-colors hover:border-primary hover:bg-primary-soft hover:text-primary"
-        onClick={() => props.onChange([...props.values, ''])}
-      >
-        <Plus size={12} /> 添加路径
-      </button>
+      <div className="mt-2 flex items-center gap-2">
+        <button
+          className="inline-flex items-center gap-1 rounded-lg border border-dashed border-border px-2.5 py-1 text-[12.5px] text-text-secondary transition-colors hover:border-primary hover:bg-primary-soft hover:text-primary"
+          onClick={() => props.onChange([...props.values, ''])}
+        >
+          <Plus size={12} /> 添加路径
+        </button>
+        <button
+          className="inline-flex items-center gap-1 rounded-lg border border-dashed border-border px-2.5 py-1 text-[12.5px] text-text-secondary transition-colors hover:border-primary hover:bg-primary-soft hover:text-primary"
+          onClick={() => setPicking(true)}
+        >
+          <FolderOpen size={12} /> 浏览选择
+        </button>
+      </div>
+      {picking && (
+        <FolderPickerDialog
+          title="选择目录"
+          subtitle={props.label}
+          confirmLabel="添加此目录"
+          onSelect={(p) => {
+            setPicking(false)
+            // 已存在则不再重复添加
+            if (!props.values.includes(p)) props.onChange([...props.values, p])
+          }}
+          onClose={() => setPicking(false)}
+        />
+      )}
     </div>
   )
 }

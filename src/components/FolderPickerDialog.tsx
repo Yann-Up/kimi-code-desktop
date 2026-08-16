@@ -20,6 +20,8 @@ export function FolderPickerDialog(props: {
 }) {
   const [current, setCurrent] = useState<BrowseResult | null>(null)
   const [drives, setDrives] = useState<string[] | null>(null)
+  // 平台是否有盘符概念:Windows 有;Linux/macOS(含 WSL 本机)没有,退化为普通目录浏览
+  const [drivesAvailable, setDrivesAvailable] = useState<boolean | null>(null)
   const [pathText, setPathText] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
@@ -49,12 +51,19 @@ export function FolderPickerDialog(props: {
     setError(null)
     try {
       const list = (await window.kimiApi.localDrives()) as string[]
-      setDrives(Array.isArray(list) && list.length ? list : ['C:\\'])
-      setCurrent(null)
-      setPathText('')
+      if (Array.isArray(list) && list.length) {
+        setDrivesAvailable(true)
+        setDrives(list)
+        setCurrent(null)
+        setPathText('')
+        setLoading(false)
+      } else {
+        // 无盘符平台(Linux/macOS/WSL 本机):直接进入目录浏览(服务端默认目录,通常是 home)
+        setDrivesAvailable(false)
+        await browse()
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
-    } finally {
       setLoading(false)
     }
   }
@@ -116,7 +125,7 @@ export function FolderPickerDialog(props: {
               <ArrowUp size={14} /> 上一级
             </button>
           )}
-          {!drives && isLocal && atDriveRoot && (
+          {!drives && isLocal && atDriveRoot && drivesAvailable && (
             <button
               className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-[13px] text-text-secondary hover:bg-surface-secondary"
               onClick={() => void showDrives()}

@@ -68,9 +68,10 @@ export function CliAdvancedSettings() {
     <Section
       title="高级"
       desc="直接编辑 config.toml 源文件(当前连接目标的数据目录下);其余可视化页面覆盖不到的键(telemetry、permission、tools、hooks 等)都可以在这里维护"
+      fill
     >
       <GroupLabel>config.toml 源文件</GroupLabel>
-      <Card>
+      <Card className="flex min-h-0 flex-1 flex-col">
         {loading ? (
           <Empty text="加载中…" />
         ) : error ? (
@@ -143,13 +144,13 @@ export function CliAdvancedSettings() {
 
             {editing ? (
               <textarea
-                className="h-96 w-full resize-y rounded-lg border border-border bg-surface-secondary p-3 font-mono text-[12px] leading-relaxed outline-none transition-colors focus:border-primary"
+                className="min-h-40 w-full flex-1 resize-none rounded-lg border border-border bg-surface-secondary p-3 font-mono text-[12px] leading-relaxed outline-none transition-colors focus:border-primary"
                 spellCheck={false}
                 value={draft}
                 onChange={(e) => setDraft(e.target.value)}
               />
             ) : (
-              <pre className="h-96 w-full overflow-auto rounded-lg border border-border bg-surface-secondary p-3 font-mono text-[12px] leading-relaxed text-text whitespace-pre-wrap">
+              <pre className="min-h-40 w-full flex-1 overflow-auto rounded-lg border border-border bg-surface-secondary p-3 font-mono text-[12px] leading-relaxed text-text whitespace-pre-wrap">
                 {content ?? ''}
               </pre>
             )}

@@ -172,6 +172,10 @@ export interface KimiApi {
   cliConfigRead(channel?: string): Promise<string | null>
   /** 写 <kimi_home>/config.toml 原文(自动备份 .kimi-desktop-bak,原子写);返回备份路径 */
   cliConfigWrite(content: string, channel?: string): Promise<string>
+  /** 合并写 config.toml:JSON patch 深合并进现有文件(保留注释,自动备份);不依赖服务运行,用于 REST 不支持的段(如 identity) */
+  cliConfigMerge(patch: Record<string, unknown>, channel?: string): Promise<string>
+  /** 读 config.toml 并解析为 JSON(键为 snake_case 原样);文件不存在返回 null;不依赖服务运行 */
+  cliConfigParsed(channel?: string): Promise<Record<string, unknown> | null>
   localUsageDaily(days: number, channel?: string): Promise<any>
   localUsageToday(channel?: string): Promise<any>
   localDrives(): Promise<any>

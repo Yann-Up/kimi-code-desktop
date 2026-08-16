@@ -1140,6 +1140,16 @@ async fn local_cli_config_write(
 }
 
 #[tauri::command]
+async fn local_cli_config_merge(patch: Value, channel: Option<String>) -> Result<String, String> {
+    local_store::merge_config_toml(&channel.unwrap_or_else(cli::active_channel), patch).await
+}
+
+#[tauri::command]
+async fn local_cli_config_parsed(channel: Option<String>) -> Result<Option<Value>, String> {
+    local_store::read_config_toml_parsed(&channel.unwrap_or_else(cli::active_channel)).await
+}
+
+#[tauri::command]
 fn local_drives() -> Vec<String> {
     local_store::list_drives()
 }
@@ -1344,6 +1354,8 @@ pub fn run() {
             local_mcp_write,
             local_cli_config_read,
             local_cli_config_write,
+            local_cli_config_merge,
+            local_cli_config_parsed,
             local_drives,
         ])
         .setup(move |app| {

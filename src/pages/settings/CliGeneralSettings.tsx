@@ -2,8 +2,10 @@
  * CLI 配置 · 通用行为:default_model / default_permission_mode / default_plan_mode /
  * merge_all_available_skills / builtin_product_skills / extra_skill_dirs / extra_agent_dirs。
  * 保存时提交 snake_case patch(深合并,空输入不提交该键)。
+ * 技能/智能体目录区:先只读展示默认搜索目录(按优先级,用户级路径经 kimiHomeGet 解析),
+ * 再接可编辑的额外目录,让用户清楚额外目录叠加在哪一层。
  */
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Card, GroupLabel } from '../../components/settings/common'
 import { useCliConfig, type CliConfig } from '../../hooks/useCliConfig'
 import {
@@ -29,14 +31,49 @@ const PERMISSION_OPTIONS = [
 
 export function CliGeneralSettings() {
   const { config, loading, error, reload, saveSection } = useCliConfig()
+  // 激活通道的 kimi 数据目录(本机/远端通用),用于把用户级默认目录解析成真实路径展示
+  const [home, setHome] = useState('')
+  useEffect(() => {
+    window.kimiApi
+      .kimiHomeGet()
+      .then((h) => setHome(typeof h?.home === 'string' && h.home ? h.home : '~/.kimi-code'))
+      .catch(() => setHome('~/.kimi-code'))
+  }, [])
   return (
     <CliConfigGate title="通用行为" desc="新会话的默认模型、权限与技能等通用行为(config.toml 顶层键)" loading={loading} error={error} onRetry={reload}>
-      <GeneralForm config={config ?? {}} saveSection={saveSection} />
+      <GeneralForm config={config ?? {}} saveSection={saveSection} home={home || '~/.kimi-code'} />
     </CliConfigGate>
   )
 }
 
-function GeneralForm({ config, saveSection }: { config: CliConfig; saveSection: (p: Record<string, unknown>) => Promise<void> }) {
+/** 默认搜索目录只读清单:按优先级从高到低列出各层级,给「额外目录」一个参照系 */
+function DefaultDirs(props: { tiers: { label: string; paths: string[]; note?: string }[] }) {
+  return (
+    <div>
+      <p className="text-[13.5px] font-medium">默认搜索目录</p>
+      <p className="mt-0.5 text-[12px] text-text-tertiary">
+        按优先级从高到低排列;出现同名条目时,高优先级层级的生效
+      </p>
+      <div className="mt-2 space-y-2">
+        {props.tiers.map((t) => (
+          <div key={t.label} className="flex items-baseline gap-3 text-[12px]">
+            <span className="w-16 shrink-0 text-text-secondary">{t.label}</span>
+            <div className="min-w-0 flex-1">
+              {t.paths.map((p) => (
+                <p key={p} className="truncate font-mono text-text-tertiary" title={p}>
+                  {p}
+                </p>
+              ))}
+              {t.note && <p className="text-[11.5px] text-text-tertiary">{t.note}</p>}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function GeneralForm({ config, saveSection, home }: { config: CliConfig; saveSection: (p: Record<string, unknown>) => Promise<void>; home: string }) {
   // default_model 选项来自 config.models 的键;当前值不在其中时兜底加入
   const modelKeys = (() => {
     const m = nested(config, 'models')
@@ -122,21 +159,59 @@ function GeneralForm({ config, saveSection }: { config: CliConfig; saveSection: 
         />
         <ToggleField
           label="内置产品技能"
-          desc="向模型提供 Kimi Code 自身的内置技能(update-config、check-kimi-code-docs 等,默认开启)"
+          desc="向模型提供 Kimi Code 自身的内置技能(update-config、check-kimi-code-docs 等,默认开启);内置层优先级最低"
           checked={builtinSkills}
           onChange={setBuiltinSkills}
         />
+      </Card>
+
+      <GroupLabel>技能目录</GroupLabel>
+      <Card className="space-y-4">
+        <DefaultDirs
+          tiers={[
+            {
+              label: '项目级',
+              paths: ['<项目根>/.kimi-code/skills', '<项目根>/.agents/skills'],
+              note: '项目根 = 从工作目录向上查找、最近的含 .git 的目录;仅对该项目生效'
+            },
+            {
+              label: '用户级',
+              paths: [`${home}/skills`, '~/.agents/skills'],
+              note: '对所有项目生效;~/.agents/skills 为跨工具共享目录,不随数据目录迁移'
+            },
+            { label: '内置', paths: ['随 CLI 自带'], note: '产品类内置技能由上方开关控制' }
+          ]}
+        />
         <PathListField
           label="额外技能目录(extra_skill_dirs)"
-          desc="额外的技能搜索目录,叠加在默认目录之上"
-          placeholder="如 D:\my-skills"
+          desc="叠加在默认目录之上,优先级介于用户级与内置之间;适合团队共享技能库等场景"
+          placeholder="如 ~/team-skills"
           values={skillDirs}
           onChange={setSkillDirs}
         />
+      </Card>
+
+      <GroupLabel>智能体目录</GroupLabel>
+      <Card className="space-y-4">
+        <DefaultDirs
+          tiers={[
+            {
+              label: '项目级',
+              paths: ['<项目根>/.kimi-code/agents', '<项目根>/.agents/agents'],
+              note: '项目根 = 从工作目录向上查找、最近的含 .git 的目录;仅对该项目生效'
+            },
+            {
+              label: '用户级',
+              paths: [`${home}/agents`, '~/.agents/agents'],
+              note: '对所有项目生效;~/.agents/agents 为跨工具共享目录,不随数据目录迁移'
+            },
+            { label: '内置', paths: ['plan / agent / coder / explore'], note: '随 CLI 自带;插件级介于用户级与内置之间' }
+          ]}
+        />
         <PathListField
           label="额外智能体目录(extra_agent_dirs)"
-          desc="额外的自定义 agent 搜索目录,叠加在默认目录之上"
-          placeholder="如 D:\my-agents"
+          desc="额外的自定义 agent 搜索目录,优先级介于项目级与用户级之间"
+          placeholder="如 ~/team-agents"
           values={agentDirs}
           onChange={setAgentDirs}
         />

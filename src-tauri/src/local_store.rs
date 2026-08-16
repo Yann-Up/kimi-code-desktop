@@ -102,6 +102,16 @@ pub async fn read_config_toml(channel: &str) -> Option<String> {
     t.read_text(&t.join(&home, "config.toml")).await.ok()
 }
 
+/// 读 config.toml 并解析为 JSON(键保持 snake_case 原样),供设置页结构化读写。
+/// 文件不存在返回 Ok(None);解析失败返回 Err(与原文编辑页"不校验"语义不同,这里必须可解析)。
+pub async fn read_config_toml_parsed(channel: &str) -> Result<Option<Value>, String> {
+    let Some(raw) = read_config_toml(channel).await else {
+        return Ok(None);
+    };
+    let parsed: toml::Value = toml::from_str(&raw).map_err(|e| format!("config.toml 解析失败:{e}"))?;
+    serde_json::to_value(parsed).map(Some).map_err(|e| e.to_string())
+}
+
 /// 写 config.toml:备份 → 原子写入(同 mcp.json 模式)。返回备份路径。
 pub async fn write_config_toml(channel: &str, content: String) -> Result<String, String> {
     let t = cli::connection_target_for(channel);
@@ -111,6 +121,155 @@ pub async fn write_config_toml(channel: &str, content: String) -> Result<String,
     t.copy(&file, &backup).await; // 原文件不存在则无需备份
     t.write_text(&file, &content).await?;
     Ok(backup)
+}
+
+/// JSON 标量/数组 → toml_edit Value;对象与 null 不转换(对象由 merge 层递归,null 表示删除键)
+fn json_to_toml(v: &Value) -> Option<toml_edit::Value> {
+    match v {
+        Value::Bool(b) => Some((*b).into()),
+        Value::Number(n) => {
+            if let Some(i) = n.as_i64() {
+                Some(i.into())
+            } else {
+                n.as_f64().map(|f| f.into())
+            }
+        }
+        Value::String(s) => Some(s.as_str().into()),
+        Value::Array(arr) => {
+            let mut a = toml_edit::Array::new();
+            for x in arr {
+                if let Some(tv) = json_to_toml(x) {
+                    a.push(tv);
+                }
+            }
+            Some(toml_edit::Value::Array(a))
+        }
+        _ => None,
+    }
+}
+
+/// 把 JSON patch 深合并进 TOML 表:对象递归合并,标量/数组覆盖,null 删除键
+fn merge_toml_table(tbl: &mut toml_edit::Table, patch: &serde_json::Map<String, Value>) {
+    for (k, v) in patch {
+        match v {
+            Value::Object(obj) => {
+                let item = tbl.entry(k).or_insert(toml_edit::Item::Table(toml_edit::Table::new()));
+                if !item.is_table() {
+                    *item = toml_edit::Item::Table(toml_edit::Table::new());
+                }
+                if let Some(t) = item.as_table_mut() {
+                    merge_toml_table(t, obj);
+                }
+            }
+            Value::Null => {
+                tbl.remove(k);
+            }
+            _ => {
+                if let Some(tv) = json_to_toml(v) {
+                    tbl[k] = toml_edit::Item::Value(tv);
+                }
+            }
+        }
+    }
+}
+
+/// 合并写 config.toml:把 JSON patch 深合并进现有文件(保留注释与格式),备份后原子写回。
+/// 用于 REST /api/v1/config 不支持的配置段(实测 identity 段会被服务端静默丢弃);
+/// 不依赖 kimi web 服务运行。返回备份路径。
+pub async fn merge_config_toml(channel: &str, patch: Value) -> Result<String, String> {
+    let t = cli::connection_target_for(channel);
+    let home = t.kimi_home_str().await?;
+    let file = t.join(&home, "config.toml");
+    let raw = t.read_text(&file).await.unwrap_or_default();
+    let mut doc = raw
+        .parse::<toml_edit::DocumentMut>()
+        .map_err(|e| format!("config.toml 解析失败:{e}"))?;
+    let obj = patch.as_object().ok_or("patch 必须是 JSON 对象")?;
+    merge_toml_table(doc.as_table_mut(), obj);
+    let backup = format!("{file}.kimi-desktop-bak");
+    t.copy(&file, &backup).await; // 原文件不存在则无需备份
+    t.write_text(&file, &doc.to_string()).await?;
+    Ok(backup)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn merge(raw: &str, patch: Value) -> String {
+        let mut doc = raw.parse::<toml_edit::DocumentMut>().unwrap();
+        merge_toml_table(doc.as_table_mut(), patch.as_object().unwrap());
+        doc.to_string()
+    }
+
+    #[test]
+    fn merge_preserves_comments_and_updates_scalar() {
+        let out = merge(
+            "# 注释\ndefault_model = \"a\"\n",
+            json!({"default_model": "b"}),
+        );
+        assert!(out.contains("# 注释"));
+        assert!(out.contains("default_model = \"b\""));
+    }
+
+    #[test]
+    fn merge_nested_table_and_null_delete() {
+        let out = merge(
+            "[identity]\nname = \"old\"\nslug = \"old-slug\"\n",
+            json!({"identity": {"name": "新名字", "slug": null}}),
+        );
+        assert!(out.contains("name = \"新名字\""));
+        assert!(!out.contains("slug"));
+    }
+
+    #[test]
+    fn merge_quoted_dotted_key_roundtrip() {
+        // providers."managed:kimi-code" 这类带冒号/点的键:更新已有键保持引号形式
+        let out = merge(
+            "[providers.\"managed:kimi-code\"]\ntype = \"kimi\"\n",
+            json!({"providers": {"managed:kimi-code": {"base_url": "https://x/v1"}}}),
+        );
+        assert!(out.contains("base_url"), "输出: {out}");
+        // 新增同名风格的键也必须可解析
+        let out2 = merge("", json!({"providers": {"my:prov": {"type": "openai"}}}));
+        let re: toml_edit::DocumentMut = out2.parse().unwrap();
+        assert_eq!(
+            re["providers"]["my:prov"]["type"].as_str(),
+            Some("openai"),
+            "输出: {out2}"
+        );
+    }
+
+    #[test]
+    fn merge_removes_whole_table_via_null() {
+        let out = merge(
+            "[models.\"a/b\"]\nmodel = \"m\"\n",
+            json!({"models": {"a/b": null}}),
+        );
+        assert!(!out.contains("a/b"), "输出: {out}");
+    }
+
+    /// 冒烟:对本机真实 config.toml 跑 read_config_toml_parsed(模型与供应商设置页的读取路径)。
+    /// 无文件时直接通过(CI/新机)。
+    #[tokio::test]
+    async fn read_parsed_real_config_shape() {
+        let Ok(Some(v)) = read_config_toml_parsed("local").await else {
+            return;
+        };
+        let providers = v.get("providers").and_then(|p| p.as_object()).cloned();
+        let models = v.get("models").and_then(|m| m.as_object()).cloned();
+        if let (Some(p), Some(m)) = (providers, models) {
+            assert!(!p.is_empty(), "providers 不应为空对象");
+            assert!(!m.is_empty(), "models 不应为空对象");
+            // 每个模型至少要有 provider/model/max_context_size(设置页渲染依赖)
+            for (alias, mv) in &m {
+                let mo = mv.as_object().unwrap_or_else(|| panic!("模型 {alias} 不是对象"));
+                assert!(mo.contains_key("provider"), "模型 {alias} 缺 provider");
+                assert!(mo.contains_key("model"), "模型 {alias} 缺 model");
+            }
+        }
+    }
 }
 
 pub async fn list_plugins(channel: &str) -> Vec<PluginEntry> {
