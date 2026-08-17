@@ -26,15 +26,15 @@ const STRATEGY_OPTIONS = [
 ]
 
 export function CliLoopSettings() {
-  const { config, loading, error, reload, saveSection } = useCliConfig()
+  const { config, loading, error, reload, saveSection, offline } = useCliConfig()
   return (
-    <CliConfigGate title="循环与后台" desc="Agent 循环步数/压缩阈值、后台任务与子智能体运行参数(config.toml 多块)" loading={loading} error={error} onRetry={reload}>
-      <LoopForm config={config ?? {}} saveSection={saveSection} />
+    <CliConfigGate title="循环与后台" desc="Agent 循环步数/压缩阈值、后台任务与子智能体运行参数(config.toml 多块)" loading={loading} error={error} onRetry={reload} offline={offline}>
+      <LoopForm config={config ?? {}} saveSection={saveSection} offline={offline} />
     </CliConfigGate>
   )
 }
 
-function LoopForm({ config, saveSection }: { config: CliConfig; saveSection: (p: Record<string, unknown>) => Promise<void> }) {
+function LoopForm({ config, saveSection, offline }: { config: CliConfig; saveSection: (p: Record<string, unknown>) => Promise<void>; offline: boolean }) {
   const [maxStepsPerTurn, setMaxStepsPerTurn] = useState<string>(
     numStr(nested(config, ['loop_control', 'loopControl'], 'maxStepsPerTurn'))
   )
@@ -173,7 +173,7 @@ function LoopForm({ config, saveSection }: { config: CliConfig; saveSection: (p:
       <div className="pt-3">
         <MergeNote />
       </div>
-      <SaveBar saving={saving} saved={saved} error={error} onSave={onSave} />
+      <SaveBar saving={saving} saved={saved} error={error} onSave={onSave} savedText={offline ? '已写入 config.toml;重启服务后新会话生效' : undefined} />
     </>
   )
 }

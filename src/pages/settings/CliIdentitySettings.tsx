@@ -17,9 +17,9 @@ import {
 } from './cliForm'
 
 export function CliIdentitySettings() {
-  const { config, loading, error, reload } = useCliConfig()
+  const { config, loading, error, reload, offline } = useCliConfig()
   return (
-    <CliConfigGate title="身份" desc="自定义 agent 的身份标识(config.toml [identity] 块)" loading={loading} error={error} onRetry={reload}>
+    <CliConfigGate title="身份" desc="自定义 agent 的身份标识(config.toml [identity] 块)" loading={loading} error={error} onRetry={reload} offline={offline}>
       <IdentityForm config={config ?? {}} />
     </CliConfigGate>
   )

@@ -6,6 +6,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import type {
+  ApiCallsResult,
   ChannelsState,
   KimiApi,
   ServerErrorInfo,
@@ -92,7 +93,6 @@ const api: KimiApi = {
   // local
   localSkills: (channel) => invoke('local_skills', { channel }),
   localAgents: (channel) => invoke('local_agents', { channel }),
-  localCron: (channel) => invoke('local_cron', { channel }),
   localMcpRead: (channel) => invoke('local_mcp_read', { channel }),
   localMcpWrite: (data, channel) => invoke('local_mcp_write', { data, channel }),
   cliConfigRead: (channel) => invoke<string | null>('local_cli_config_read', { channel }),
@@ -104,6 +104,10 @@ const api: KimiApi = {
     invoke<Record<string, unknown> | null>('local_cli_config_parsed', { channel }),
   localUsageDaily: (days, channel) => invoke('local_usage_daily', { days, channel }),
   localUsageToday: (channel) => invoke('local_usage_today', { channel }),
+  localApiCalls: (page, pageSize, channel) =>
+    invoke<ApiCallsResult>('local_api_calls', { page, pageSize, channel }),
+  experimentalGet: () => invoke<Record<string, boolean>>('experimental_get'),
+  experimentalSet: (flags) => invoke('experimental_set', { flags }),
   localDrives: () => invoke('local_drives')
 }
 

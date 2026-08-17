@@ -19,15 +19,15 @@ import {
 } from './cliForm'
 
 export function CliServicesSettings() {
-  const { config, loading, error, reload, saveSection } = useCliConfig()
+  const { config, loading, error, reload, saveSection, offline } = useCliConfig()
   return (
-    <CliConfigGate title="服务与图像" desc="联网搜索/抓取服务、图片压缩与 MCP 超时(config.toml services / image / mcp 块)" loading={loading} error={error} onRetry={reload}>
-      <ServicesForm config={config ?? {}} saveSection={saveSection} />
+    <CliConfigGate title="服务与图像" desc="联网搜索/抓取服务、图片压缩与 MCP 超时(config.toml services / image / mcp 块)" loading={loading} error={error} onRetry={reload} offline={offline}>
+      <ServicesForm config={config ?? {}} saveSection={saveSection} offline={offline} />
     </CliConfigGate>
   )
 }
 
-function ServicesForm({ config, saveSection }: { config: CliConfig; saveSection: (p: Record<string, unknown>) => Promise<void> }) {
+function ServicesForm({ config, saveSection, offline }: { config: CliConfig; saveSection: (p: Record<string, unknown>) => Promise<void>; offline: boolean }) {
   const [searchUrl, setSearchUrl] = useState<string>(str(nested(config, 'services', ['moonshotSearch', 'moonshot_search'], 'baseUrl')))
   const [fetchUrl, setFetchUrl] = useState<string>(str(nested(config, 'services', ['moonshotFetch', 'moonshot_fetch'], 'baseUrl')))
   const [maxEdgePx, setMaxEdgePx] = useState<string>(numStr(nested(config, 'image', 'maxEdgePx')) || '2000')
@@ -76,16 +76,16 @@ function ServicesForm({ config, saveSection }: { config: CliConfig; saveSection:
       <Card className="space-y-4">
         <TextField
           label="联网搜索地址(搜索服务 base_url)"
-          desc="moonshot_search 的 API 地址"
-          placeholder="如 https://api.moonshot.cn/v1/search"
+          desc="moonshot_search 的 API 地址;留空使用内置默认"
+          placeholder="默认:https://api.kimi.com/coding/v1/search"
           mono
           value={searchUrl}
           onChange={setSearchUrl}
         />
         <TextField
           label="网页抓取地址(抓取服务 base_url)"
-          desc="moonshot_fetch 的 API 地址"
-          placeholder="如 https://api.moonshot.cn/v1/fetch"
+          desc="moonshot_fetch 的 API 地址;留空使用内置默认"
+          placeholder="默认:https://api.kimi.com/coding/v1/fetch"
           mono
           value={fetchUrl}
           onChange={setFetchUrl}
@@ -130,7 +130,7 @@ function ServicesForm({ config, saveSection }: { config: CliConfig; saveSection:
       <div className="pt-3">
         <MergeNote />
       </div>
-      <SaveBar saving={saving} saved={saved} error={error} onSave={onSave} />
+      <SaveBar saving={saving} saved={saved} error={error} onSave={onSave} savedText={offline ? '已写入 config.toml;重启服务后新会话生效' : undefined} />
     </>
   )
 }

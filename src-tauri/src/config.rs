@@ -28,6 +28,9 @@ pub struct DesktopConfig {
     pub active_channel: Option<String>,
     /// 首次启动向导是否已完成(默认 false:进入向导)
     pub setup_done: Option<bool>,
+    /// 实验性功能开关:env 名 → 是否开启(启动 kimi web 时注入为环境变量;
+    /// 缺 key 按各项默认 —— KIMI_CODE_EXPERIMENTAL_SECONDARY_MODEL 默认开,其余默认关)
+    pub experimental: Option<std::collections::HashMap<String, bool>>,
 }
 
 impl DesktopConfig {

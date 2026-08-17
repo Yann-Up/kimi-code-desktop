@@ -119,6 +119,55 @@ pub fn invalidate_remote_caches() {
     REMOTE_KIMI_BIN.write().unwrap().clear();
 }
 
+/// 实验性开关登记表:(env, CLI 默认是否开启, 未显式设置时桌面端是否按开启处理)
+/// 注入规则:有效值 ≠ CLI 默认时才注入对应 env —— 显式关闭 CLI 默认开启的项(如 search_worker)
+/// 会注入 "0";未设置且桌面端不干预时不注入,由 CLI 自身默认生效
+/// (flag 清单与本机 CLI 0.36.1 的 FlagResolver 注册表一致;新增实验特性时在此追加)
+const EXPERIMENTAL_FLAG_TABLE: &[(&str, bool, bool)] = &[
+    ("KIMI_CODE_EXPERIMENTAL_FLAG", false, false),
+    // 二级模型:桌面端历来默认开启(保持既有行为)
+    ("KIMI_CODE_EXPERIMENTAL_SECONDARY_MODEL", false, true),
+    ("KIMI_CODE_EXPERIMENTAL_TOOL_SELECT", false, false),
+    ("KIMI_CODE_EXPERIMENTAL_AUTO_SESSION_TITLE", false, false),
+    // 搜索索引 worker 线程:CLI 默认开启
+    ("KIMI_CODE_EXPERIMENTAL_SEARCH_WORKER", true, false),
+];
+
+/// 各实验性开关的有效值(用户显式设置 > 桌面端默认 > CLI 默认)
+pub fn experimental_effective() -> Vec<(String, bool)> {
+    let flags = crate::cli::experimental_flags();
+    EXPERIMENTAL_FLAG_TABLE
+        .iter()
+        .map(|(env, cli_default, desktop_on)| {
+            let on = flags
+                .get(*env)
+                .copied()
+                .unwrap_or(*desktop_on || *cli_default);
+            (env.to_string(), on)
+        })
+        .collect()
+}
+
+/// 实验性功能开关 → 启动 kimi web 时注入的环境变量。
+/// 只注入有效值与 CLI 默认不一致的项(开 → "1",关 → "0"),其余由 CLI 默认生效
+pub fn experimental_envs() -> Vec<(String, String)> {
+    experimental_effective()
+        .into_iter()
+        .zip(EXPERIMENTAL_FLAG_TABLE.iter())
+        .filter(|((_, on), (_, cli_default, _))| on != cli_default)
+        .map(|((env, on), _)| (env, if on { "1".to_string() } else { "0".to_string() }))
+        .collect()
+}
+
+/// experimental_envs 的 shell 前缀形式(WSL/SSH 命令串用):"A=1 B=1 ";无开关时为空串
+pub fn experimental_env_prefix() -> String {
+    let mut s = String::new();
+    for (k, v) in experimental_envs() {
+        s.push_str(&format!("{k}={v} "));
+    }
+    s
+}
+
 /// run_shell 的统一返回(对齐子进程 output 语义)
 pub struct ShellOut {
     pub code: i32,
@@ -137,17 +186,29 @@ pub struct UsageRecord {
     pub input_cache_creation: i64,
 }
 
-/// 用量扫描结果:每个有 wire.jsonl 的会话一条,records 为解析后的 usage 记录
+/// 单条 API 调用(step.end 事件)解析结果:含 token 用量与 TTFT/流式耗时
+#[derive(Clone)]
+pub struct ApiCallRecord {
+    pub time: i64, // 毫秒时间戳
+    pub model: String, // 由同文件 llm.request 按 turnId.step join,缺省 "unknown"
+    pub session_id: String,
+    pub agent_id: String,
+    pub workspace: String, // sessions 下的 wd 目录名
+    pub input_other: i64,
+    pub input_cache_read: i64,
+    pub input_cache_creation: i64,
+    pub output: i64,
+    pub ttft_ms: Option<i64>,   // llmFirstTokenLatencyMs
+    pub stream_ms: Option<i64>, // llmStreamDurationMs(首 token 之后的流式耗时)
+    pub finish_reason: Option<String>,
+}
+
+/// 用量扫描结果:每个有 wire.jsonl 的会话一条,records 为解析后的 usage 记录,
+/// api_calls 为 step.end 口径的逐次 API 调用(API 调用统计页用)
 pub struct SessionUsage {
     pub sid: String,
     pub records: Vec<UsageRecord>,
-}
-
-/// cron 文件扫描结果:每个 *.json 一条(内容原样带回,JSON 解析留在 local_store)
-pub struct CronFile {
-    pub sid: String,
-    pub file: String,
-    pub content: String,
+    pub api_calls: Vec<ApiCallRecord>,
 }
 
 /// 远端批量扫描的标记行分隔符(\x01 + 文件路径,JSON 文本中不会出现 \x01)
@@ -167,25 +228,30 @@ fn split_marked(out: &str) -> Vec<(String, String)> {
     files
 }
 
-/// 从 <home>/sessions/<wd>/<sid>/... 提取 (wd, sid)
-fn session_parts(home: &str, path: &str) -> Option<(String, String)> {
+/// 从 <home>/sessions/<wd>/<sid>/agents/<agentId>/wire.jsonl 提取 (wd, sid, agentId)
+fn wire_path_parts(home: &str, path: &str) -> Option<(String, String, String)> {
     let prefix = format!("{home}/sessions/");
     let rest = path.strip_prefix(&prefix)?;
     let mut it = rest.split('/');
     let wd = it.next()?.to_string();
     let sid = it.next()?.to_string();
-    if wd.is_empty() || sid.is_empty() {
+    if it.next()? != "agents" {
         return None;
     }
-    Some((wd, sid))
+    let agent = it.next()?.to_string();
+    if wd.is_empty() || sid.is_empty() || agent.is_empty() {
+        return None;
+    }
+    Some((wd, sid, agent))
 }
 
-/// 远端用量扫描脚本:逐 wire.jsonl 打 marker 后 grep 出 usage.record 行
+/// 远端用量扫描脚本:逐 wire.jsonl 打 marker 后 grep 出 usage/step.end/llm.request 行
 /// (主代理与 subagent 的 wire 文件都扫,即 agents/*/wire.jsonl;
-/// marker 行存在即代表该会话有 wire 文件,usage_record_lines 的 sessions 计数依赖这一点)
+/// marker 行存在即代表该会话有 wire 文件,usage_record_lines 的 sessions 计数依赖这一点;
+/// step.end/llm.request 行供 API 调用统计解析 TTFT/TPS)
 fn usage_scan_script(home: &str) -> String {
     format!(
-        "for f in {h}/sessions/*/*/agents/*/wire.jsonl; do [ -f \"$f\" ] || continue; printf '\\001%s\\n' \"$f\"; grep -F '\"usage.record\"' -- \"$f\" 2>/dev/null; done",
+        "for f in {h}/sessions/*/*/agents/*/wire.jsonl; do [ -f \"$f\" ] || continue; printf '\\001%s\\n' \"$f\"; grep -E '\"(usage\\.record|step\\.end|llm\\.request)\"' -- \"$f\" 2>/dev/null; done",
         h = sq(home)
     )
 }
@@ -225,11 +291,138 @@ fn parse_usage_line(line: &str) -> Option<UsageRecord> {
     })
 }
 
+/// 从 JSON 取整数(i64 或 f64 截断),缺失/非法 → 0
+fn json_num(v: Option<&Value>) -> i64 {
+    v.and_then(|v| v.as_i64().or_else(|| v.as_f64().map(|f| f as i64)))
+        .unwrap_or(0)
+}
+
+/// 解析 llm.request 行 → (turnStep, modelAlias 或 model),供 step.end 按轮次 join 模型名
+fn parse_llm_request_line(line: &str) -> Option<(String, String)> {
+    if !line.contains("\"llm.request\"") {
+        return None;
+    }
+    let rec: Value = serde_json::from_str(line).ok()?;
+    if rec.get("type").and_then(|t| t.as_str()) != Some("llm.request") {
+        return None;
+    }
+    let turn_step = rec.get("turnStep").and_then(|t| t.as_str())?.to_string();
+    let model = rec
+        .get("modelAlias")
+        .and_then(|m| m.as_str())
+        .or_else(|| rec.get("model").and_then(|m| m.as_str()))
+        .filter(|s| !s.is_empty())?
+        .to_string();
+    Some((turn_step, model))
+}
+
+/// 提取 step.end 事件:支持顶层 {"type":"step.end"} 与 context.append_loop_event 包裹
+/// 两种形态;返回 (事件体, 时间戳毫秒)(包裹形态时间在外层)
+fn step_end_event(line: &str) -> Option<(Value, i64)> {
+    if !line.contains("\"step.end\"") {
+        return None;
+    }
+    let rec: Value = serde_json::from_str(line).ok()?;
+    match rec.get("type").and_then(|t| t.as_str()) {
+        Some("step.end") => {
+            let time = rec.get("time").and_then(|t| t.as_i64())?;
+            Some((rec, time))
+        }
+        Some("context.append_loop_event") => {
+            let ev = rec.get("event")?.clone();
+            if ev.get("type").and_then(|t| t.as_str()) != Some("step.end") {
+                return None;
+            }
+            let time = rec
+                .get("time")
+                .and_then(|t| t.as_i64())
+                .or_else(|| ev.get("time").and_then(|t| t.as_i64()))?;
+            Some((ev, time))
+        }
+        _ => None,
+    }
+}
+
+/// step.end 事件体 → ApiCallRecord(model 由 model_map 按 "<turnId>.<step>" join,
+/// 缺省 "unknown";session/agent/workspace 由调用方按路径回填)
+fn api_call_from_step_end(
+    ev: &Value,
+    time: i64,
+    model_map: &HashMap<String, String>,
+) -> ApiCallRecord {
+    let usage = ev.get("usage");
+    let num = |key: &str| -> i64 { json_num(usage.and_then(|u| u.get(key))) };
+    let turn_id = ev
+        .get("turnId")
+        .and_then(|t| {
+            t.as_str()
+                .map(String::from)
+                .or_else(|| t.as_i64().map(|n| n.to_string()))
+        })
+        .unwrap_or_default();
+    let step = json_num(ev.get("step"));
+    let model = model_map
+        .get(&format!("{turn_id}.{step}"))
+        .cloned()
+        .unwrap_or_else(|| "unknown".to_string());
+    ApiCallRecord {
+        time,
+        model,
+        session_id: String::new(),
+        agent_id: String::new(),
+        workspace: String::new(),
+        input_other: num("inputOther"),
+        input_cache_read: num("inputCacheRead"),
+        input_cache_creation: num("inputCacheCreation"),
+        output: num("output"),
+        ttft_ms: ev.get("llmFirstTokenLatencyMs").and_then(|v| v.as_i64()),
+        stream_ms: ev.get("llmStreamDurationMs").and_then(|v| v.as_i64()),
+        finish_reason: ev
+            .get("finishReason")
+            .and_then(|f| f.as_str())
+            .map(String::from),
+    }
+}
+
+/// 单个 wire.jsonl 的完整解析结果(usage 记录 + API 调用,一次遍历产出)
+struct WireParse {
+    records: Vec<UsageRecord>,
+    api_calls: Vec<ApiCallRecord>,
+}
+
+/// 逐行解析 wire.jsonl 内容:usage.record / llm.request / step.end 三类行
+/// (llm.request 先建 turnStep→model map,step.end 统一在遍历结束后 join 模型,
+/// 不依赖行序;读取中断由调用方判定)
+fn parse_wire_lines<'a>(lines: impl Iterator<Item = &'a str>) -> WireParse {
+    let mut records = Vec::new();
+    let mut model_map: HashMap<String, String> = HashMap::new();
+    let mut step_ends: Vec<(Value, i64)> = Vec::new();
+    for line in lines {
+        if let Some(rec) = parse_usage_line(line) {
+            records.push(rec);
+        }
+        if let Some((turn_step, model)) = parse_llm_request_line(line) {
+            model_map.insert(turn_step, model);
+        }
+        if let Some(se) = step_end_event(line) {
+            step_ends.push(se);
+        }
+    }
+    WireParse {
+        records,
+        api_calls: step_ends
+            .iter()
+            .map(|(ev, time)| api_call_from_step_end(ev, *time, &model_map))
+            .collect(),
+    }
+}
+
 /// 单个 wire.jsonl 的缓存条目:mtime 或 len 任一变化即视为失效(改动文件就地覆盖)
 struct CachedUsage {
     mtime: Option<SystemTime>,
     len: u64,
     records: Vec<UsageRecord>,
+    api_calls: Vec<ApiCallRecord>,
 }
 
 /// 进程内 usage 解析缓存(Local 目标专用)。key = (kimi_home 字符串, wire.jsonl 绝对路径),
@@ -238,33 +431,40 @@ struct CachedUsage {
 static USAGE_CACHE: std::sync::LazyLock<std::sync::Mutex<HashMap<(String, String), CachedUsage>>> =
     std::sync::LazyLock::new(|| std::sync::Mutex::new(HashMap::new()));
 
-/// BufReader 逐行读 wire.jsonl,只解析含 "usage.record" 的行(不整文件载入内存)。
-/// 文件不存在/读取失败返回 None(与原 read_to_string 失败整体跳过该文件一致)。
-async fn read_usage_records(path: &std::path::Path) -> Option<Vec<UsageRecord>> {
+/// 用量扫描全局互斥锁:冷缓存时并发扫描串行化(见 usage_record_lines)
+static USAGE_SCAN_LOCK: std::sync::LazyLock<tokio::sync::Mutex<()>> =
+    std::sync::LazyLock::new(|| tokio::sync::Mutex::new(()));
+
+/// BufReader 逐行读 wire.jsonl,只收 usage.record/step.end/llm.request 三类行后解析
+/// (不整文件载入内存)。文件不存在/读取失败返回 None(与原 read_to_string 失败整体跳过一致)。
+async fn read_wire_parse(path: &std::path::Path) -> Option<WireParse> {
     let file = tokio::fs::File::open(path).await.ok()?;
     let mut lines = tokio::io::BufReader::new(file).lines();
-    let mut out = Vec::new();
+    let mut raw: Vec<String> = Vec::new();
     loop {
         match lines.next_line().await {
             Ok(Some(line)) => {
-                if let Some(rec) = parse_usage_line(&line) {
-                    out.push(rec);
+                if line.contains("\"usage.record\"")
+                    || line.contains("\"step.end\"")
+                    || line.contains("\"llm.request\"")
+                {
+                    raw.push(line);
                 }
             }
             Ok(None) => break,
             Err(_) => return None, // 读取中断:整文件视为失败
         }
     }
-    Some(out)
+    Some(parse_wire_lines(raw.iter().map(|s| s.as_str())))
 }
 
 /// 带缓存读单个 wire.jsonl:stat 校验 → 命中直接克隆解析结果,未命中才逐行读+解析。
 /// 返回 None 表示文件不存在/非文件/读取失败(此时不加入 touched,旧缓存随扫描结束清理)。
-async fn cached_usage_records(
+async fn cached_wire_parse(
     path: &std::path::Path,
     key: &(String, String),
     touched: &mut HashSet<(String, String)>,
-) -> Option<Vec<UsageRecord>> {
+) -> Option<(Vec<UsageRecord>, Vec<ApiCallRecord>)> {
     let meta = tokio::fs::metadata(path).await.ok()?;
     if !meta.is_file() {
         return None;
@@ -276,16 +476,22 @@ async fn cached_usage_records(
         let cache = USAGE_CACHE.lock().unwrap();
         if let Some(c) = cache.get(key) {
             if c.mtime == mtime && c.len == len {
-                return Some(c.records.clone());
+                return Some((c.records.clone(), c.api_calls.clone()));
             }
         }
     }
-    let records = read_usage_records(path).await?;
-    USAGE_CACHE
-        .lock()
-        .unwrap()
-        .insert(key.clone(), CachedUsage { mtime, len, records: records.clone() });
-    Some(records)
+    let parsed = read_wire_parse(path).await?;
+    let out = (parsed.records.clone(), parsed.api_calls.clone());
+    USAGE_CACHE.lock().unwrap().insert(
+        key.clone(),
+        CachedUsage {
+            mtime,
+            len,
+            records: parsed.records,
+            api_calls: parsed.api_calls,
+        },
+    );
+    Some(out)
 }
 
 /// 清理本次扫描未触达的缓存 key(文件删除/目录变化/切换 kimi_home 后不残留)
@@ -294,14 +500,6 @@ fn prune_usage_cache(touched: &HashSet<(String, String)>) {
         .lock()
         .unwrap()
         .retain(|k, _| touched.contains(k));
-}
-
-/// 远端 cron 扫描脚本:逐 cron/*.json 打 marker 后 cat 内容
-fn cron_scan_script(home: &str) -> String {
-    format!(
-        "for f in {h}/sessions/*/*/cron/*.json; do [ -f \"$f\" ] || continue; printf '\\001%s\\n' \"$f\"; cat -- \"$f\"; printf '\\n'; done",
-        h = sq(home)
-    )
 }
 
 /// 远端 $HOME 缓存(kimi_home_str 用,键为目标描述;切换目标后键不同自然隔离)
@@ -437,6 +635,17 @@ impl ConnectionTarget {
         let full = format!("{home}/.kimi-code");
         HOME_CACHE.write().unwrap().insert(key, full.clone());
         Ok(full)
+    }
+
+    /// 用户 home 目录字符串(~/.agents 等通用目录用):
+    /// Local 为系统用户目录(与 KIMI_CODE_HOME 覆盖无关);WSL/SSH 由 kimi_home_str 去掉
+    /// "/.kimi-code" 后缀推出(远端该目录恒为 $HOME/.kimi-code,见 kimi_home_str)
+    pub async fn user_home_str(&self) -> Result<String, String> {
+        if let ConnectionTarget::Local = self {
+            return Ok(crate::cli::home_dir().to_string_lossy().replace('\\', "/"));
+        }
+        let h = self.kimi_home_str().await?;
+        Ok(h.strip_suffix("/.kimi-code").unwrap_or(&h).to_string())
     }
 
     /// 读文本文件(远端: cat --,失败含文件不存在返回 Err)
@@ -640,8 +849,16 @@ impl ConnectionTarget {
             .map_err(|_| "wsl 命令超时".to_string())?
     }
 
-    /// 用量扫描:Local 逐文件读(带进程内缓存);WSL/SSH 一条命令带回全部 wire.jsonl 的 usage 行
+    /// 用量扫描:Local 逐文件读(带进程内缓存);WSL/SSH 一条命令带回全部 wire.jsonl 的
+    /// usage/step.end/llm.request 行;api_calls 为 step.end 口径的逐次 API 调用。
+    /// 全局互斥串行化:冷缓存时并发调用方(daily/today/api_calls 同时进来)排队等首轮扫描,
+    /// 后者直接命中缓存,避免同一批 wire 文件被重复全量读
     pub async fn usage_record_lines(&self) -> Vec<SessionUsage> {
+        let _guard = USAGE_SCAN_LOCK.lock().await;
+        self.usage_record_lines_inner().await
+    }
+
+    async fn usage_record_lines_inner(&self) -> Vec<SessionUsage> {
         match self {
             ConnectionTarget::Local => {
                 let sessions_root = kimi_home().join("sessions");
@@ -664,14 +881,22 @@ impl ConnectionTarget {
                         };
                         let mut found = false;
                         let mut records: Vec<UsageRecord> = Vec::new();
+                        let mut api_calls: Vec<ApiCallRecord> = Vec::new();
                         for agent in agents.flatten() {
                             let wire = agent.path().join("wire.jsonl");
                             let key = (home_str.clone(), wire.to_string_lossy().into_owned());
-                            // 按文件缓存解析结果(mtime/len 未变直接复用),三个聚合口径共享
-                            if let Some(mut recs) =
-                                cached_usage_records(&wire, &key, &mut touched).await
+                            // 按文件缓存解析结果(mtime/len 未变直接复用),各聚合口径共享
+                            if let Some((mut recs, mut calls)) =
+                                cached_wire_parse(&wire, &key, &mut touched).await
                             {
+                                let agent_id = agent.file_name().to_string_lossy().into_owned();
+                                for c in &mut calls {
+                                    c.workspace = wd.file_name().to_string_lossy().into_owned();
+                                    c.session_id = sid.file_name().to_string_lossy().into_owned();
+                                    c.agent_id = agent_id.clone();
+                                }
                                 records.append(&mut recs);
+                                api_calls.append(&mut calls);
                                 found = true;
                             }
                         }
@@ -681,6 +906,7 @@ impl ConnectionTarget {
                         out.push(SessionUsage {
                             sid: sid.file_name().to_string_lossy().into_owned(),
                             records,
+                            api_calls,
                         });
                     }
                 }
@@ -700,88 +926,36 @@ impl ConnectionTarget {
                 // 同一会话的主代理与 subagent 各有 wire 文件,按 (wd, sid) 合并,
                 // 保证 sessions 计数与 Local 分支一致
                 let mut order: Vec<(String, String)> = Vec::new();
-                let mut map: HashMap<(String, String), Vec<UsageRecord>> = HashMap::new();
+                let mut map: HashMap<(String, String), (Vec<UsageRecord>, Vec<ApiCallRecord>)> =
+                    HashMap::new();
                 for (path, body) in split_marked(&out.stdout) {
-                    let Some((wd, sid)) = session_parts(&home, &path) else {
+                    let Some((wd, sid, agent_id)) = wire_path_parts(&home, &path) else {
                         continue;
                     };
-                    let key = (wd, sid);
+                    let key = (wd.clone(), sid.clone());
                     if !map.contains_key(&key) {
                         order.push(key.clone());
                     }
-                    map.entry(key).or_default().extend(
-                        body.split('\n')
-                            .filter(|l| !l.is_empty())
-                            .filter_map(parse_usage_line),
-                    );
+                    let parsed = parse_wire_lines(body.split('\n').filter(|l| !l.is_empty()));
+                    let mut calls = parsed.api_calls;
+                    for c in &mut calls {
+                        c.workspace = wd.clone();
+                        c.session_id = sid.clone();
+                        c.agent_id = agent_id.clone();
+                    }
+                    let entry = map.entry(key).or_default();
+                    entry.0.extend(parsed.records);
+                    entry.1.extend(calls);
                 }
                 order
                     .into_iter()
-                    .map(|key| SessionUsage {
-                        sid: key.1.clone(),
-                        records: map.remove(&key).unwrap_or_default(),
-                    })
-                    .collect()
-            }
-        }
-    }
-
-    /// cron 文件扫描:Local 逐文件读;WSL/SSH 一条命令带回全部 cron/*.json 内容
-    pub async fn cron_files(&self) -> Vec<CronFile> {
-        match self {
-            ConnectionTarget::Local => {
-                let sessions_root = kimi_home().join("sessions");
-                let mut out = Vec::new();
-                let Ok(wds) = std::fs::read_dir(&sessions_root) else {
-                    return out;
-                };
-                for wd in wds.flatten() {
-                    let Ok(sids) = std::fs::read_dir(wd.path()) else {
-                        continue;
-                    };
-                    for sid in sids.flatten() {
-                        let cron_dir = sid.path().join("cron");
-                        let Ok(files) = std::fs::read_dir(&cron_dir) else {
-                            continue;
-                        };
-                        for f in files.flatten() {
-                            let name = f.file_name().to_string_lossy().into_owned();
-                            if !name.ends_with(".json") {
-                                continue;
-                            }
-                            let Ok(content) = tokio::fs::read_to_string(f.path()).await else {
-                                continue;
-                            };
-                            out.push(CronFile {
-                                sid: sid.file_name().to_string_lossy().into_owned(),
-                                file: name,
-                                content,
-                            });
+                    .map(|key| {
+                        let (records, api_calls) = map.remove(&key).unwrap_or_default();
+                        SessionUsage {
+                            sid: key.1.clone(),
+                            records,
+                            api_calls,
                         }
-                    }
-                }
-                out
-            }
-            _ => {
-                let Ok(home) = self.kimi_home_str().await else {
-                    return vec![];
-                };
-                let Ok(out) = self
-                    .run_shell(&cron_scan_script(&home), Duration::from_secs(60))
-                    .await
-                else {
-                    return vec![];
-                };
-                split_marked(&out.stdout)
-                    .into_iter()
-                    .filter_map(|(path, body)| {
-                        let (_, sid) = session_parts(&home, &path)?;
-                        let file = path.rsplit('/').next()?.to_string();
-                        Some(CronFile {
-                            sid,
-                            file,
-                            content: body,
-                        })
                     })
                     .collect()
             }
@@ -797,9 +971,12 @@ impl ConnectionTarget {
             ConnectionTarget::Local => {
                 let mut cmd = hidden_command(&kimi_bin());
                 cmd.args(["web", "--no-open", "--port", &local_port.to_string()])
-                    .env("KIMI_CODE_EXPERIMENTAL_SECONDARY_MODEL", "1")
                     // 显式传入数据目录:保证 CLI 与桌面端读取同一份(自定义工作区/默认一致)
                     .env("KIMI_CODE_HOME", kimi_home());
+                // 实验性功能开关(设置页可配;二级模型默认开)
+                for (k, v) in experimental_envs() {
+                    cmd.env(k, v);
+                }
                 Ok(cmd)
             }
             ConnectionTarget::Wsl { distro } => {
@@ -810,7 +987,11 @@ impl ConnectionTarget {
                 let bin = self.kimi_bin_resolved().await?;
                 Ok(Self::wsl_shell_command(
                     distro,
-                    &format!("{} web --no-open --port {local_port}", sq(&bin)),
+                    &format!(
+                        "{}{} web --no-open --port {local_port}",
+                        experimental_env_prefix(),
+                        sq(&bin)
+                    ),
                 ))
             }
             ConnectionTarget::Ssh { .. } => {
@@ -1056,5 +1237,88 @@ impl ConnectionTarget {
             });
         }
         Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_wire_lines_joins_model_and_timing() {
+        let lines = vec![
+            r#"{"type":"llm.request","kind":"loop","model":"kimi-for-coding","modelAlias":"kimi-code/kimi-for-coding","turnStep":"0.1","time":1783502095754}"#,
+            r#"{"type":"context.append_loop_event","event":{"type":"step.end","uuid":"u1","turnId":"0","step":1,"usage":{"inputOther":7250,"output":69,"inputCacheRead":17920,"inputCacheCreation":0},"finishReason":"end_turn","llmFirstTokenLatencyMs":2178,"llmStreamDurationMs":35},"time":1783502097968}"#,
+            r#"{"type":"usage.record","model":"kimi-code/kimi-for-coding","usage":{"inputOther":489,"output":1065,"inputCacheRead":19712,"inputCacheCreation":0},"usageScope":"turn","time":1783407794721}"#,
+            // 顶层 step.end(旧格式)且 llm.request 缺失 → model 回退 unknown
+            r#"{"type":"step.end","turnId":"1","step":2,"usage":{"inputOther":10,"output":5,"inputCacheRead":0,"inputCacheCreation":0},"time":1783502100000}"#,
+        ];
+        let parsed = parse_wire_lines(lines.into_iter());
+        assert_eq!(parsed.records.len(), 1);
+        assert_eq!(parsed.records[0].output, 1065);
+        assert_eq!(parsed.api_calls.len(), 2);
+        let c = &parsed.api_calls[0];
+        assert_eq!(c.model, "kimi-code/kimi-for-coding");
+        assert_eq!(c.time, 1783502097968);
+        assert_eq!(c.input_other, 7250);
+        assert_eq!(c.input_cache_read, 17920);
+        assert_eq!(c.output, 69);
+        assert_eq!(c.ttft_ms, Some(2178));
+        assert_eq!(c.stream_ms, Some(35));
+        assert_eq!(c.finish_reason.as_deref(), Some("end_turn"));
+        let c2 = &parsed.api_calls[1];
+        assert_eq!(c2.model, "unknown");
+        assert_eq!(c2.ttft_ms, None);
+    }
+
+    #[test]
+    fn experimental_envs_injection_rules() {
+        // 未设置任何开关:仅二级模型(桌面默认开 ≠ CLI 默认关)注入 "1"
+        crate::cli::set_experimental_flags(HashMap::new());
+        assert_eq!(
+            experimental_envs(),
+            vec![(
+                "KIMI_CODE_EXPERIMENTAL_SECONDARY_MODEL".to_string(),
+                "1".to_string()
+            )]
+        );
+        // 显式关闭 CLI 默认开启的 search_worker → 注入 "0";显式打开 tool_select → 注入 "1"
+        crate::cli::set_experimental_flags(HashMap::from([
+            ("KIMI_CODE_EXPERIMENTAL_SEARCH_WORKER".to_string(), false),
+            ("KIMI_CODE_EXPERIMENTAL_TOOL_SELECT".to_string(), true),
+        ]));
+        let envs: HashMap<String, String> = experimental_envs().into_iter().collect();
+        assert_eq!(
+            envs.get("KIMI_CODE_EXPERIMENTAL_SEARCH_WORKER").map(String::as_str),
+            Some("0")
+        );
+        assert_eq!(
+            envs.get("KIMI_CODE_EXPERIMENTAL_TOOL_SELECT").map(String::as_str),
+            Some("1")
+        );
+        // 二级模型未设置仍按桌面默认注入 "1"
+        assert_eq!(
+            envs.get("KIMI_CODE_EXPERIMENTAL_SECONDARY_MODEL").map(String::as_str),
+            Some("1")
+        );
+        // 显式打开与 CLI 默认一致的项不注入
+        crate::cli::set_experimental_flags(HashMap::from([(
+            "KIMI_CODE_EXPERIMENTAL_SEARCH_WORKER".to_string(),
+            true,
+        )]));
+        let envs: HashMap<String, String> = experimental_envs().into_iter().collect();
+        assert!(!envs.contains_key("KIMI_CODE_EXPERIMENTAL_SEARCH_WORKER"));
+        crate::cli::set_experimental_flags(HashMap::new()); // 复位,避免影响其他用例
+    }
+
+    #[test]
+    fn wire_path_parts_extracts_agent() {
+        let (wd, sid, agent) =
+            wire_path_parts("/home/u/.kimi-code", "/home/u/.kimi-code/sessions/wd_a_0123456789ab/session_x/agents/main/wire.jsonl")
+                .unwrap();
+        assert_eq!(wd, "wd_a_0123456789ab");
+        assert_eq!(sid, "session_x");
+        assert_eq!(agent, "main");
+        assert!(wire_path_parts("/home/u/.kimi-code", "/other/path").is_none());
     }
 }

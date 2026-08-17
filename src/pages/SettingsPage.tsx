@@ -1,11 +1,11 @@
 import {
   Bot,
   Brain,
-  CalendarClock,
   Command,
   Cpu,
   Database,
   FileCode2,
+  FlaskConical,
   Globe,
   Network,
   Repeat,
@@ -24,10 +24,10 @@ import { CliLoopSettings } from './settings/CliLoopSettings'
 import { CliServicesSettings } from './settings/CliServicesSettings'
 import { CliIdentitySettings } from './settings/CliIdentitySettings'
 import { CliAdvancedSettings } from './settings/CliAdvancedSettings'
+import { CliExperimentalSettings } from './settings/CliExperimentalSettings'
 import { SubagentsSettings } from './settings/SubagentsSettings'
 import { SkillsSettings } from './settings/SkillsSettings'
 import { McpSettings } from './settings/McpSettings'
-import { CronSettings } from './settings/CronSettings'
 import { CommandsSettings } from './settings/CommandsSettings'
 
 // 模型/供应商/OAuth/权限/主题等设置交给官方 web UI;这里只保留官方 UI 没有的壳设置页
@@ -52,6 +52,7 @@ const GROUPS: { label: string; items: SectionDef[] }[] = [
       { id: 'cli-loop', label: '循环与后台', icon: Repeat },
       { id: 'cli-services', label: '服务与图像', icon: Globe },
       { id: 'cli-identity', label: '身份', icon: User2 },
+      { id: 'cli-experimental', label: '实验性功能', icon: FlaskConical },
       { id: 'cli-advanced', label: '高级', icon: FileCode2 }
     ]
   },
@@ -61,7 +62,6 @@ const GROUPS: { label: string; items: SectionDef[] }[] = [
       { id: 'mcp', label: 'MCP', icon: Database },
       { id: 'skills', label: '技能', icon: Wand2 },
       { id: 'subagents', label: '子智能体', icon: Bot },
-      { id: 'cron', label: '定时', icon: CalendarClock },
       { id: 'commands', label: '命令', icon: Command }
     ]
   }
@@ -89,6 +89,8 @@ export function SettingsPage() {
         return <CliServicesSettings />
       case 'cli-identity':
         return <CliIdentitySettings />
+      case 'cli-experimental':
+        return <CliExperimentalSettings />
       case 'cli-advanced':
         return <CliAdvancedSettings />
       case 'mcp':
@@ -97,8 +99,6 @@ export function SettingsPage() {
         return <SkillsSettings />
       case 'subagents':
         return <SubagentsSettings />
-      case 'cron':
-        return <CronSettings />
       case 'commands':
         return <CommandsSettings />
       default:

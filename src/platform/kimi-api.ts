@@ -100,6 +100,42 @@ export interface TurnEndedInfo {
   session_id: string
 }
 
+/** 单次 API 调用明细(step.end 口径,serde camelCase;ttftMs/streamMs 缺字段时省略) */
+export interface ApiCallItem {
+  time: number // 毫秒时间戳
+  model: string
+  sessionId: string
+  agentId: string
+  workspace: string
+  inputOther: number
+  inputCacheRead: number
+  inputCacheCreation: number
+  output: number
+  ttftMs?: number
+  streamMs?: number
+  finishReason?: string
+}
+
+/** API 调用全量汇总(不分页;平均 TTFT/TPS 只统计有耗时字段的调用) */
+export interface ApiCallsSummary {
+  totalCalls: number
+  totalOutput: number
+  avgTtftMs?: number
+  /** 平均输出 TPS(不含首 token 时间) */
+  avgTpsExclFirst?: number
+  /** 平均输出 TPS(含首 token 时间) */
+  avgTpsInclFirst?: number
+}
+
+/** local_api_calls 分页返回 */
+export interface ApiCallsResult {
+  total: number
+  page: number
+  pageSize: number
+  items: ApiCallItem[]
+  summary: ApiCallsSummary
+}
+
 export interface KimiApi {
   // app
   /** 应用与指定通道(缺省=激活通道)服务信息;channel 省略时后端按激活通道解析 */
@@ -165,7 +201,6 @@ export interface KimiApi {
   // local
   localSkills(channel?: string): Promise<any>
   localAgents(channel?: string): Promise<any>
-  localCron(channel?: string): Promise<any>
   localMcpRead(channel?: string): Promise<any>
   localMcpWrite(data: Record<string, unknown>, channel?: string): Promise<any>
   /** 读 <kimi_home>/config.toml 原文(经目标通道,本机/WSL/SSH 通用);文件不存在返回 null */
@@ -178,6 +213,12 @@ export interface KimiApi {
   cliConfigParsed(channel?: string): Promise<Record<string, unknown> | null>
   localUsageDaily(days: number, channel?: string): Promise<any>
   localUsageToday(channel?: string): Promise<any>
+  /** API 调用明细分页(step.end 口径,按时间倒序,page 从 1 开始) */
+  localApiCalls(page: number, pageSize: number, channel?: string): Promise<ApiCallsResult>
+  /** 实验性功能开关(env 名 → 开关;返回有效值含默认:二级模型默认开) */
+  experimentalGet(): Promise<Record<string, boolean>>
+  /** 保存实验性开关;激活通道后端运行中会自动重启使环境变量生效 */
+  experimentalSet(flags: Record<string, boolean>): Promise<void>
   localDrives(): Promise<any>
 }
 

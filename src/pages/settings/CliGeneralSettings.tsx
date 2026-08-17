@@ -30,7 +30,7 @@ const PERMISSION_OPTIONS = [
 ]
 
 export function CliGeneralSettings() {
-  const { config, loading, error, reload, saveSection } = useCliConfig()
+  const { config, loading, error, reload, saveSection, offline } = useCliConfig()
   // 激活通道的 kimi 数据目录(本机/远端通用),用于把用户级默认目录解析成真实路径展示
   const [home, setHome] = useState('')
   useEffect(() => {
@@ -40,8 +40,8 @@ export function CliGeneralSettings() {
       .catch(() => setHome('~/.kimi-code'))
   }, [])
   return (
-    <CliConfigGate title="通用行为" desc="新会话的默认模型、权限与技能等通用行为(config.toml 顶层键)" loading={loading} error={error} onRetry={reload}>
-      <GeneralForm config={config ?? {}} saveSection={saveSection} home={home || '~/.kimi-code'} />
+    <CliConfigGate title="通用行为" desc="新会话的默认模型、权限与技能等通用行为(config.toml 顶层键)" loading={loading} error={error} onRetry={reload} offline={offline}>
+      <GeneralForm config={config ?? {}} saveSection={saveSection} home={home || '~/.kimi-code'} offline={offline} />
     </CliConfigGate>
   )
 }
@@ -73,7 +73,7 @@ function DefaultDirs(props: { tiers: { label: string; paths: string[]; note?: st
   )
 }
 
-function GeneralForm({ config, saveSection, home }: { config: CliConfig; saveSection: (p: Record<string, unknown>) => Promise<void>; home: string }) {
+function GeneralForm({ config, saveSection, home, offline }: { config: CliConfig; saveSection: (p: Record<string, unknown>) => Promise<void>; home: string; offline: boolean }) {
   // default_model 选项来自 config.models 的键;当前值不在其中时兜底加入
   const modelKeys = (() => {
     const m = nested(config, 'models')
@@ -205,7 +205,7 @@ function GeneralForm({ config, saveSection, home }: { config: CliConfig; saveSec
               paths: [`${home}/agents`, '~/.agents/agents'],
               note: '对所有项目生效;~/.agents/agents 为跨工具共享目录,不随数据目录迁移'
             },
-            { label: '内置', paths: ['plan / agent / coder / explore'], note: '随 CLI 自带;插件级介于用户级与内置之间' }
+            { label: '内置', paths: ['plan / coder / explore'], note: '随 CLI 自带;插件级介于用户级与内置之间' }
           ]}
         />
         <PathListField
@@ -217,7 +217,7 @@ function GeneralForm({ config, saveSection, home }: { config: CliConfig; saveSec
         />
       </Card>
 
-      <SaveBar saving={saving} saved={saved} error={error} onSave={onSave} />
+      <SaveBar saving={saving} saved={saved} error={error} onSave={onSave} savedText={offline ? '已写入 config.toml;重启服务后新会话生效' : undefined} />
     </>
   )
 }

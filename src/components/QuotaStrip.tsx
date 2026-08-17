@@ -6,7 +6,7 @@
  * 服务未运行时不显示"停止服务"按钮,并清空额度显示。
  */
 import { useEffect, useState } from 'react'
-import { OctagonX } from 'lucide-react'
+import { OctagonX, Zap } from 'lucide-react'
 import { rest } from '../api'
 import { useUi } from '../stores/ui'
 
@@ -114,6 +114,43 @@ function QuotaMeter({ w }: { w: QuotaWindow }) {
   )
 }
 
+/** 最近一次 API 调用的实时指标(TTFT / 输出 tok/s,step.end 口径) */
+interface LiveMetrics {
+  model: string
+  time: number
+  ttftMs?: number
+  tpsExcl?: number
+  tpsIncl?: number
+}
+
+/** 实时指标块:单行胶囊,TTFT + 输出速度;悬浮显示模型与两种 TPS 口径 */
+function LiveMetricsBlock({ m }: { m: LiveMetrics }) {
+  const tip = `${m.model} · ${new Date(m.time).toLocaleTimeString()}\n输出 TPS(不含首 token):${
+    m.tpsExcl !== undefined ? m.tpsExcl.toFixed(1) : '—'
+  } tok/s\n输出 TPS(含首 token):${m.tpsIncl !== undefined ? m.tpsIncl.toFixed(1) : '—'} tok/s`
+  return (
+    <div
+      className="flex shrink-0 items-center gap-2.5 rounded-lg bg-surface-secondary px-3 py-1.5"
+      title={tip}
+    >
+      <Zap size={12} className="shrink-0 text-primary" />
+      <span className="flex items-baseline gap-1.5">
+        <span className="text-[11px] text-text-tertiary">TTFT</span>
+        <span className="text-[13px] font-semibold tabular-nums text-text">
+          {m.ttftMs !== undefined ? `${(m.ttftMs / 1000).toFixed(2)} s` : '—'}
+        </span>
+      </span>
+      <span className="h-3.5 w-px shrink-0 bg-border" />
+      <span className="flex items-baseline gap-1.5">
+        <span className="text-[11px] text-text-tertiary">输出</span>
+        <span className="text-[13px] font-semibold tabular-nums text-text">
+          {m.tpsExcl !== undefined ? `${m.tpsExcl.toFixed(1)} tok/s` : '—'}
+        </span>
+      </span>
+    </div>
+  )
+}
+
 export function QuotaStrip() {
   const [windows, setWindows] = useState<QuotaWindow[]>([])
   const [wallet, setWallet] = useState<BoosterWallet | null>(null)
@@ -127,6 +164,43 @@ export function QuotaStrip() {
   const refreshSecs = useUi((s) => s.quotaRefreshSecs)
   // 额度条跟随激活通道:切换通道后重新探测并监听该通道事件
   const activeChannel = useUi((s) => s.activeChannel)
+  // 最近一次 API 调用的 TTFT / 输出速度(wire.jsonl step.end 直读,3s 轮询 + 轮次结束即刷)
+  const [live, setLive] = useState<LiveMetrics | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    const load = () => {
+      window.kimiApi
+        .localApiCalls(1, 1, activeChannel)
+        .then((r) => {
+          if (cancelled) return
+          const it = r.items?.[0]
+          if (!it) {
+            setLive(null)
+            return
+          }
+          const tpsExcl =
+            it.streamMs && it.streamMs > 0 && it.output > 0
+              ? it.output / (it.streamMs / 1000)
+              : undefined
+          const totalMs = (it.ttftMs ?? 0) + (it.streamMs ?? 0)
+          const tpsIncl =
+            it.ttftMs !== undefined && totalMs > 0 && it.output > 0
+              ? it.output / (totalMs / 1000)
+              : undefined
+          setLive({ model: it.model, time: it.time, ttftMs: it.ttftMs, tpsExcl, tpsIncl })
+        })
+        .catch(() => {})
+    }
+    load()
+    const timer = window.setInterval(load, 3000)
+    const offTurn = window.kimiApi.onTurnEnded(load)
+    return () => {
+      cancelled = true
+      window.clearInterval(timer)
+      offTurn()
+    }
+  }, [activeChannel])
 
   useEffect(() => {
     window.kimiApi
@@ -189,6 +263,7 @@ export function QuotaStrip() {
   return (
     <div className="flex min-h-12 shrink-0 items-center justify-between gap-4 px-4 py-1.5">
       <div className="flex min-w-0 items-center gap-6">
+        {live && <LiveMetricsBlock m={live} />}
         {windows.map((w, i) => (
           <QuotaMeter key={i} w={w} />
         ))}

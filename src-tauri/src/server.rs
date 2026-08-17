@@ -226,7 +226,8 @@ impl ServerManager {
                 let bin = target.kimi_bin_resolved().await?;
                 let mut proc = client
                     .exec_keepalive(&format!(
-                        "{} web --no-open --port {port}",
+                        "{}{} web --no-open --port {port}",
+                        crate::target::experimental_env_prefix(),
                         crate::target::sq(&bin)
                     ))
                     .await?;

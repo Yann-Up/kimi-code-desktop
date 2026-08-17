@@ -1,19 +1,11 @@
 /**
- * MCP 设置:
- * - 服务器运行状态(GET /api/v1/mcp/servers)+ 重启(POST :restart)
- * - mcp.json 配置编辑(本地文件,IPC 读写,写入前主进程自动备份):可视化 / 原始 JSON 双模式
+ * MCP 设置:全局(用户级)MCP 服务器配置编辑(~/.kimi-code/mcp.json,经目标通道 IPC 读写,
+ * 写入前自动备份):可视化 / 原始 JSON 双模式。
+ * 只管理全局配置 —— 项目级 .kimi-code/mcp.json 与服务器运行状态不在此处理。
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { ChevronDown, Plus, RefreshCw, RotateCw, Save, Server, Trash2, Undo2 } from 'lucide-react'
-import { rest } from '@/api'
-import { Section, Card, GroupLabel, Empty } from '../../components/settings/common'
-
-interface McpServerInfo {
-  name: string
-  id: string
-  status: string
-  toolCount: number | null
-}
+import { ChevronDown, Plus, Save, Trash2, Undo2 } from 'lucide-react'
+import { Section, Card, GroupLabel } from '../../components/settings/common'
 
 type ServerType = 'stdio' | 'http' | 'sse'
 
@@ -31,46 +23,6 @@ const KNOWN_KEYS = ['command', 'args', 'env', 'url', 'headers', 'type', 'enabled
 
 function errMsg(e: unknown): string {
   return e instanceof Error ? e.message : String(e)
-}
-
-function statusKind(status: string): 'running' | 'stopped' | 'error' | 'unknown' {
-  const s = status.toLowerCase()
-  if (['running', 'online', 'active', 'connected', 'ready', 'healthy', 'ok'].some((k) => s.includes(k)))
-    return 'running'
-  if (['error', 'fail', 'crash', 'dead', 'unreachable'].some((k) => s.includes(k))) return 'error'
-  if (['stop', 'offline', 'inactive', 'disabled', 'down', 'idle', 'not_started'].some((k) => s.includes(k)))
-    return 'stopped'
-  return 'unknown'
-}
-
-function StatusBadge({ status }: { status: string }) {
-  const kind = statusKind(status)
-  const cls =
-    kind === 'running'
-      ? 'bg-success-soft text-success'
-      : kind === 'error'
-        ? 'bg-danger-soft text-danger'
-        : 'bg-surface-tertiary text-text-tertiary'
-  const label =
-    kind === 'running' ? '运行中' : kind === 'error' ? '错误' : kind === 'stopped' ? '已停止' : status || '未知'
-  return (
-    <span className={`inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px] font-medium ${cls}`}>
-      <span className={`h-1.5 w-1.5 rounded-full bg-current ${kind === 'running' ? 'animate-pulse' : ''}`} />
-      {label}
-    </span>
-  )
-}
-
-function normalizeServer(s: Record<string, unknown>): McpServerInfo {
-  const name = String(s.name ?? s.id ?? s.server_id ?? 'unknown')
-  const id = String(s.id ?? s.name ?? name)
-  const status = String(s.status ?? s.state ?? 'unknown')
-  let toolCount: number | null = null
-  if (Array.isArray(s.tools)) toolCount = s.tools.length
-  else if (typeof s.tools === 'number') toolCount = s.tools
-  else if (typeof s.tools_count === 'number') toolCount = s.tools_count
-  else if (typeof s.tool_count === 'number') toolCount = s.tool_count
-  return { name, id, status, toolCount }
 }
 
 function serversMap(c: Record<string, unknown> | null): Record<string, Record<string, unknown>> {
@@ -145,45 +97,11 @@ const inputCls =
 const fieldLabelCls = 'mb-1 block text-[12px] font-medium text-text-secondary'
 
 export function McpSettings() {
-  // ---------- 运行状态 ----------
-  const [servers, setServers] = useState<McpServerInfo[] | null>(null)
-  const [serversErr, setServersErr] = useState('')
-  const [restarting, setRestarting] = useState<Record<string, boolean>>({})
-  const [restartMsg, setRestartMsg] = useState<Record<string, { ok: boolean; text: string }>>({})
-
-  const loadServers = useCallback(async () => {
-    setServersErr('')
-    try {
-      const data = (await rest('/api/v1/mcp/servers')) as { servers?: unknown } | unknown[]
-      const list = Array.isArray(data)
-        ? data
-        : Array.isArray((data as { servers?: unknown[] }).servers)
-          ? ((data as { servers: unknown[] }).servers)
-          : []
-      setServers((list as Record<string, unknown>[]).map(normalizeServer))
-    } catch (e) {
-      setServers([])
-      setServersErr(errMsg(e))
-    }
-  }, [])
-
-  const restart = async (s: McpServerInfo) => {
-    setRestarting((r) => ({ ...r, [s.id]: true }))
-    setRestartMsg((m) => ({ ...m, [s.id]: { ok: true, text: '' } }))
-    try {
-      await rest(`/api/v1/mcp/servers/${encodeURIComponent(s.id)}:restart`, { method: 'POST' })
-      setRestartMsg((m) => ({ ...m, [s.id]: { ok: true, text: '已发送重启指令' } }))
-      setTimeout(() => void loadServers(), 1200)
-    } catch (e) {
-      setRestartMsg((m) => ({ ...m, [s.id]: { ok: false, text: `重启失败:${errMsg(e)}` } }))
-    } finally {
-      setRestarting((r) => ({ ...r, [s.id]: false }))
-    }
-  }
-
   // ---------- 配置 ----------
   const [config, setConfig] = useState<Record<string, unknown> | null>(null)
   const [configErr, setConfigErr] = useState('')
+  // 当前生效的数据目录(描述里展示 mcp.json 的真实路径,避免与自定义目录歧义)
+  const [kimiHome, setKimiHome] = useState('')
   const [dirty, setDirty] = useState(false)
   const [mode, setMode] = useState<'visual' | 'json'>('visual')
   const [jsonText, setJsonText] = useState('{}')
@@ -211,12 +129,15 @@ export function McpSettings() {
   }, [])
 
   useEffect(() => {
-    void loadServers()
     void loadConfig()
+    window.kimiApi
+      .kimiHomeGet()
+      .then((h) => setKimiHome(String((h as { home?: string })?.home ?? '')))
+      .catch(() => {})
     return () => {
       if (saveTimer.current) clearTimeout(saveTimer.current)
     }
-  }, [loadServers, loadConfig])
+  }, [loadConfig])
 
   const flashSaveMsg = (msg: { ok: boolean; text: string }) => {
     setSaveMsg(msg)
@@ -401,66 +322,12 @@ export function McpSettings() {
   }
 
   return (
-    <Section title="MCP" desc="管理 MCP 服务器运行状态与用户级配置(~/.kimi-code/mcp.json)">
-      {/* ---------- 服务器列表(运行状态) ---------- */}
-      <GroupLabel>服务器列表</GroupLabel>
-      {serversErr && (
-        <p className="rounded-lg bg-danger-soft px-3 py-2 text-[12px] text-danger">
-          服务器状态加载失败:{serversErr}
-        </p>
-      )}
-      {servers === null ? (
-        <Empty text="加载中…" />
-      ) : servers.length === 0 ? (
-        <Empty text="暂无 MCP 服务器" />
-      ) : (
-        <Card className="divide-y divide-border-light p-0">
-          {servers.map((s) => (
-            <div key={s.id} className="px-4 py-3">
-              <div className="flex items-center gap-3">
-                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary-soft text-primary">
-                  <Server size={15} />
-                </div>
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2">
-                    <span className="truncate text-[13.5px] font-medium">{s.name}</span>
-                    <StatusBadge status={s.status} />
-                  </div>
-                  <p className="mt-0.5 text-[12px] text-text-tertiary">
-                    {s.toolCount === null ? '工具数未知' : `${s.toolCount} 个工具`}
-                  </p>
-                </div>
-                <button
-                  className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-border px-2.5 py-1 text-[12px] text-text-secondary transition-colors hover:bg-surface-tertiary hover:text-text disabled:opacity-50"
-                  disabled={!!restarting[s.id]}
-                  onClick={() => void restart(s)}
-                >
-                  <RotateCw size={12} className={restarting[s.id] ? 'animate-spin' : ''} />
-                  {restarting[s.id] ? '重启中…' : '重启'}
-                </button>
-              </div>
-              {restartMsg[s.id]?.text && (
-                <p
-                  className={`mt-2 text-[12px] ${restartMsg[s.id].ok ? 'text-success' : 'text-danger'}`}
-                >
-                  {restartMsg[s.id].text}
-                </p>
-              )}
-            </div>
-          ))}
-        </Card>
-      )}
-      <div className="flex justify-end">
-        <button
-          className="inline-flex items-center gap-1 rounded-lg border border-border px-2.5 py-1 text-[12px] text-text-secondary transition-colors hover:bg-surface-tertiary hover:text-text"
-          onClick={() => void loadServers()}
-        >
-          <RefreshCw size={12} /> 刷新状态
-        </button>
-      </div>
-
+    <Section
+      title="MCP"
+      desc={`全局(用户级)MCP 服务器配置,文件位于当前数据目录下:\n${kimiHome ? `${kimiHome}/mcp.json` : '<数据目录>/mcp.json'}\n项目级 .kimi-code/mcp.json 不在此管理;保存后重启 MCP 服务器生效`}
+    >
       {/* ---------- 配置编辑器 ---------- */}
-      <GroupLabel>配置编辑器</GroupLabel>
+      <GroupLabel>服务器配置</GroupLabel>
       <Card>
         {/* 工具栏:模式切换 + 撤销/保存 */}
         <div className="flex items-center gap-2">

@@ -30,15 +30,15 @@ const KEEP_OPTIONS = [
 ]
 
 export function CliThinkingSettings() {
-  const { config, loading, error, reload, saveSection } = useCliConfig()
+  const { config, loading, error, reload, saveSection, offline } = useCliConfig()
   return (
-    <CliConfigGate title="思考" desc="Thinking 模式的全局默认行为(config.toml [thinking] 块)" loading={loading} error={error} onRetry={reload}>
-      <ThinkingForm config={config ?? {}} saveSection={saveSection} />
+    <CliConfigGate title="思考" desc="Thinking 模式的全局默认行为(config.toml [thinking] 块)" loading={loading} error={error} onRetry={reload} offline={offline}>
+      <ThinkingForm config={config ?? {}} saveSection={saveSection} offline={offline} />
     </CliConfigGate>
   )
 }
 
-function ThinkingForm({ config, saveSection }: { config: CliConfig; saveSection: (p: Record<string, unknown>) => Promise<void> }) {
+function ThinkingForm({ config, saveSection, offline }: { config: CliConfig; saveSection: (p: Record<string, unknown>) => Promise<void>; offline: boolean }) {
   const [enabled, setEnabled] = useState<boolean>(bool(nested(config, 'thinking', 'enabled'), true))
   const [effort, setEffort] = useState<string>(str(nested(config, 'thinking', 'effort')))
   const [keep, setKeep] = useState<string>(str(nested(config, 'thinking', 'keep')) || 'all')
@@ -80,7 +80,7 @@ function ThinkingForm({ config, saveSection }: { config: CliConfig; saveSection:
         />
       </Card>
 
-      <SaveBar saving={saving} saved={saved} error={error} onSave={onSave} />
+      <SaveBar saving={saving} saved={saved} error={error} onSave={onSave} savedText={offline ? '已写入 config.toml;重启服务后新会话生效' : undefined} />
     </>
   )
 }

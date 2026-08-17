@@ -14,7 +14,7 @@ import {
 } from 'lucide-react'
 import { QuotaStrip } from './QuotaStrip'
 import { SettingsPage } from '../pages/SettingsPage'
-import { UsageSettings } from '../pages/settings/UsageSettings'
+import { StatsPage } from '../pages/stats/StatsPage'
 import { useUi } from '../stores/ui'
 import logoUrl from '../assets/logo.png'
 
@@ -346,7 +346,7 @@ export function ShellHome() {
         </div>
         {view === 'stats' && (
           <div className="min-h-0 flex-1 overflow-y-auto">
-            <UsageSettings />
+            <StatsPage />
           </div>
         )}
         {view === 'settings' && <SettingsPage />}

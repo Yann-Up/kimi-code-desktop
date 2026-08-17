@@ -5,7 +5,7 @@ export function Section(props: { title: string; desc?: string; children: ReactNo
   return (
     <div className={props.fill ? 'flex h-full min-h-0 flex-col px-8 py-6' : 'px-8 py-6'}>
       <h2 className="text-xl font-semibold">{props.title}</h2>
-      {props.desc && <p className="mb-5 mt-1 text-[13px] text-text-tertiary">{props.desc}</p>}
+      {props.desc && <p className="mb-5 mt-1 whitespace-pre-line text-[13px] text-text-tertiary">{props.desc}</p>}
       <div className={props.fill ? 'mt-4 flex min-h-0 flex-1 flex-col space-y-3' : 'mt-4 space-y-3'}>
         {props.children}
       </div>
