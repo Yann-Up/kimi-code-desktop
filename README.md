@@ -47,6 +47,7 @@ Tauri Rust 后端(src-tauri/)
 ### 关键实现细节(踩过的坑,供参考)
 - **iframe 直嵌可行**:loopback 下官方服务端不发 CSP frame-ancestors / X-Frame-Options,无需反代;壳在 healthz 通过后会 HEAD `/` 做一次预警检查
 - **token 时序竞争**:前端拿 `web_ui_url` 带重试,后端未就绪时不白屏
+- **端口稳定(源即身份)**:web UI 的"新浏览器"验证状态按 iframe 源(`http://127.0.0.1:<port>`)存 localStorage,端口漂移就会重弹验证;故固定从 58666 起,且启动前先回收同 home 的残留实例(应用崩溃/强杀留下的孤儿,POST shutdown + 注册表 pid 强杀兜底)保证该端口可用
 - **崩溃自愈**:kimi web 意外退出时壳会清理连接状态并广播 `server:exited`,可就地重启服务
 - token 统计口径:`usage.record` ≈ `step.end`(交叉验证差 1%),输入/输出/缓存分开记账
 

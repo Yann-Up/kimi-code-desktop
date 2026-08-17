@@ -110,6 +110,19 @@ pub(crate) fn sq(s: &str) -> String {
     format!("'{}'", s.replace('\'', "'\\''"))
 }
 
+/// 解析实例注册表内容(多个单行 JSON 首尾拼接)为 (port, pid) 列表;损坏条目跳过
+fn parse_server_instances(text: &str) -> Vec<(u16, u32)> {
+    serde_json::Deserializer::from_str(text)
+        .into_iter::<Value>()
+        .filter_map(|item| {
+            let v = item.ok()?;
+            let port = u16::try_from(v.get("port")?.as_u64()?).ok()?;
+            let pid = u32::try_from(v.get("pid")?.as_u64()?).ok()?;
+            Some((port, pid))
+        })
+        .collect()
+}
+
 /// 远端(WSL/SSH)kimi 可执行文件路径缓存(key = 目标 Debug 串,set_connection_target 时清空)
 static REMOTE_KIMI_BIN: std::sync::LazyLock<std::sync::RwLock<HashMap<String, String>>> =
     std::sync::LazyLock::new(|| std::sync::RwLock::new(HashMap::new()));
@@ -1000,6 +1013,92 @@ impl ConnectionTarget {
         }
     }
 
+    /// 列举 kimi web 实例注册表(server/instances/*.json)中登记的 (port, pid)。
+    /// 供 server.rs 启动前回收残留实例(稳定 iframe 端口、避免孤儿累积)。
+    /// Local 直读目录;WSL 经 wsl.exe cat;SSH 恒空(远端进程随 pty 断连收 SIGHUP,无孤儿)。
+    /// 损坏/`.tmp` 文件静默忽略;任何通道错误都返回空——回收是尽力而为,不阻塞启动
+    pub(crate) async fn list_server_instances(&self) -> Vec<(u16, u32)> {
+        let text = match self {
+            ConnectionTarget::Local => {
+                let dir = kimi_home().join("server").join("instances");
+                let mut entries = match tokio::fs::read_dir(&dir).await {
+                    Ok(e) => e,
+                    Err(_) => return Vec::new(),
+                };
+                let mut buf = String::new();
+                while let Ok(Some(entry)) = entries.next_entry().await {
+                    let name = entry.file_name().to_string_lossy().into_owned();
+                    // 只收正式 .json:崩溃残留的 *.json.tmp.* 半写文件跳过
+                    if !name.ends_with(".json") {
+                        continue;
+                    }
+                    if let Ok(content) = tokio::fs::read_to_string(entry.path()).await {
+                        buf.push_str(&content);
+                        buf.push('\n');
+                    }
+                }
+                buf
+            }
+            ConnectionTarget::Wsl { distro } => {
+                let home = match self.kimi_home_str().await {
+                    Ok(h) => h,
+                    Err(_) => return Vec::new(),
+                };
+                let cmd = format!("cat {}/server/instances/*.json 2>/dev/null || true", sq(&home));
+                let out = match tokio::time::timeout(
+                    Duration::from_secs(10),
+                    Self::wsl_shell_command(distro, &cmd)
+                        .kill_on_drop(true)
+                        .output(),
+                )
+                .await
+                {
+                    Ok(Ok(o)) => o,
+                    _ => return Vec::new(),
+                };
+                String::from_utf8_lossy(&out.stdout).into_owned()
+            }
+            ConnectionTarget::Ssh { .. } => return Vec::new(),
+        };
+        parse_server_instances(&text)
+    }
+
+    /// 按注册表登记的 pid 强杀目标环境内的进程:回收残留 kimi web 的兜底
+    /// (POST shutdown 超过等待仍未退出时使用;pid 来自实例注册表,非运行时猜测)
+    pub(crate) async fn kill_pid(&self, pid: u32) {
+        match self {
+            ConnectionTarget::Local => {
+                // 与 kill_child_tree 同理:Windows 下 /T 杀整棵树(npm shim 下壳进程≠服务进程)
+                #[cfg(windows)]
+                {
+                    let _ = hidden_command("taskkill")
+                        .args(["/PID", &pid.to_string(), "/T", "/F"])
+                        .kill_on_drop(true)
+                        .output()
+                        .await;
+                }
+                #[cfg(not(windows))]
+                {
+                    let _ = hidden_command("kill")
+                        .args(["-9", &pid.to_string()])
+                        .kill_on_drop(true)
+                        .output()
+                        .await;
+                }
+            }
+            ConnectionTarget::Wsl { distro } => {
+                let _ = tokio::time::timeout(
+                    Duration::from_secs(10),
+                    Self::wsl_shell_command(distro, &format!("kill -9 {pid} 2>/dev/null || true"))
+                        .kill_on_drop(true)
+                        .output(),
+                )
+                .await;
+            }
+            ConnectionTarget::Ssh { .. } => {}
+        }
+    }
+
     /// 读取 server.token 的兜底途径:CLI 0.29.2+ 只打印 banner 不写文件,
     /// 正常流程应由 server.rs 先等 banner token;此处是旧 CLI 的回退
     /// (本机读文件;WSL/SSH 反复执行 cat 命令,每次 ~10s 超时防挂死)。
@@ -1007,7 +1106,7 @@ impl ConnectionTarget {
     pub async fn read_token(&self) -> Result<String, String> {
         let mut last_err = String::new();
         for _ in 0..25 {
-            match self.try_read_token().await {
+            match self.read_token_once().await {
                 Ok(Some(token)) => return Ok(token),
                 Ok(None) => {}
                 Err(e) => {
@@ -1042,8 +1141,9 @@ impl ConnectionTarget {
         }
     }
 
-    /// 单次尝试读 token:Ok(None) 表示文件尚不存在(继续轮询);Err 记录原因后继续轮询
-    async fn try_read_token(&self) -> Result<Option<String>, String> {
+    /// 单次读 server.token:Ok(None) 表示文件不存在/为空。
+    /// 回收残留实例(server.rs reclaim)与 read_token 轮询共用此单次读取。
+    pub(crate) async fn read_token_once(&self) -> Result<Option<String>, String> {
         let parse = |out: std::process::Output| -> Result<Option<String>, String> {
             if !out.status.success() {
                 // 文件未生成(cat 退出 1)与认证失败都走这里,记录 stderr 供最终报错

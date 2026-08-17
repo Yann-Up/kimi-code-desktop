@@ -1,5 +1,8 @@
 //! server-manager: 管理 `kimi web` 服务进程的生命周期(本机 / WSL / SSH 三种连接目标)。
 //! - 检测 kimi CLI 是否存在及版本
+//! - 启动前回收同 home 的残留实例(崩溃/强杀留下的孤儿,POST shutdown + pid 强杀兜底),
+//!   让端口恒定为 58666:iframe 源(origin)稳定,web UI 按源存 localStorage 的
+//!   "新浏览器"验证才不会每次启动重弹
 //! - 选择空闲端口,按连接目标启动 `kimi web --no-open --port <p>`
 //!   (Local/WSL 为本地子进程;SSH 为 russh exec_keepalive + 进程内端口转发)
 //! - 读取 token:先解析启动 banner(CLI 0.29.2+ 只在 banner 打印 Token 行),
@@ -18,7 +21,9 @@ use tauri::AppHandle;
 use crate::ssh::SshProcess;
 use crate::target::ConnectionTarget;
 
-pub const START_PORT: u16 = 58627;
+/// 固定起始端口:配合启动前的残留实例回收(reclaim_stale_instances),iframe 源恒定为此端口;
+/// 仅当被 kimi 以外的程序占用时才 +1 顺延(free_port 兜底)
+pub const START_PORT: u16 = 58666;
 const HEALTH_TIMEOUT: Duration = Duration::from_secs(45);
 /// 等待启动 banner 打印 token 的超时(CLI 0.29.2+ 只打印、不写 server.token);
 /// 超时后回退旧 CLI 的 server.token 文件轮询
@@ -113,6 +118,57 @@ pub struct ServerInfo {
     pub meta: Option<serde_json::Value>,
 }
 
+/// 启动前回收同 home 的残留 kimi web 实例(仅 Local/WSL):
+/// 上次运行未优雅关停(应用崩溃/强杀;WSL 下 wsl.exe 会话结束、Linux 侧进程被 /init 收养)
+/// 会留下孤儿占住低端口,新实例被迫端口漂移 → iframe 源(origin)变化 →
+/// web UI 存于 localStorage 的"新浏览器"验证状态每次启动都失效。
+/// 同 home 实例共享同一 token 与会话数据,残留实例纯冗余:先 POST shutdown 优雅关停,
+/// 端口 8s 内不还则按注册表登记的 pid 兜底强杀。
+/// token 读不到(server.token 缺失)时整体跳过——回收是尽力而为,不阻塞启动
+async fn reclaim_stale_instances(http: &reqwest::Client, target: &ConnectionTarget) {
+    if matches!(target, ConnectionTarget::Ssh { .. }) {
+        return;
+    }
+    let token = match target.read_token_once().await {
+        Ok(Some(t)) => t,
+        _ => return,
+    };
+    for (port, pid) in target.list_server_instances().await {
+        let base = format!("http://127.0.0.1:{port}");
+        let healthy = http
+            .get(format!("{base}/api/v1/healthz"))
+            .bearer_auth(&token)
+            .timeout(Duration::from_millis(1500))
+            .send()
+            .await
+            .map(|r| r.status().is_success())
+            .unwrap_or(false);
+        if !healthy {
+            continue; // 进程已死、仅注册表残留,跳过
+        }
+        eprintln!("[kimi-web] 回收残留实例 port={port} pid={pid}");
+        let _ = http
+            .post(format!("{base}/api/v1/shutdown"))
+            .bearer_auth(&token)
+            .timeout(Duration::from_secs(3))
+            .send()
+            .await;
+        // 轮询等端口释放(进程退出后监听 socket 关闭),最多 8s,超时兜底强杀
+        let deadline = Instant::now() + Duration::from_secs(8);
+        loop {
+            if std::net::TcpListener::bind(("127.0.0.1", port)).is_ok() {
+                break;
+            }
+            if Instant::now() > deadline {
+                eprintln!("[kimi-web] 残留实例 port={port} 未在 8s 内退出,按注册表 pid={pid} 强杀");
+                target.kill_pid(pid).await;
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(300)).await;
+        }
+    }
+}
+
 /// 从 from 起连续试 50 个端口,返回第一个可绑定的(保真实现,不用端口 0)
 fn free_port(from: u16) -> Result<u16, String> {
     for p in from..from + 50 {
@@ -202,6 +258,9 @@ impl ServerManager {
         mgr.stopping = Arc::new(AtomicBool::new(false));
         // 连接目标决定启动/读 token/检测 CLI 的方式;REST/WS 永远连 127.0.0.1:port
         let cli_version = target.detect_cli().await?;
+        // 回收残留实例(崩溃/强杀留下的孤儿),把 58666 等低端口还回来,
+        // 保证 iframe 源跨启动稳定(web UI 的"新浏览器"验证状态按源存 localStorage)
+        reclaim_stale_instances(http, target).await;
         let port = free_port(START_PORT)?;
 
         // 退出探针:Process 用 try_wait,Ssh 探测通道活性(远端关闭/断连时翻 false)
