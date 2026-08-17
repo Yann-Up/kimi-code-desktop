@@ -11,7 +11,8 @@ import type {
   KimiApi,
   ServerErrorInfo,
   ServerReadyInfo,
-  TurnEndedInfo
+  TurnEndedInfo,
+  WebServerOptions
 } from './kimi-api'
 
 type Unsubscribe = () => void
@@ -108,6 +109,13 @@ const api: KimiApi = {
     invoke<ApiCallsResult>('local_api_calls', { page, pageSize, channel }),
   experimentalGet: () => invoke<Record<string, boolean>>('experimental_get'),
   experimentalSet: (flags) => invoke('experimental_set', { flags }),
+  webServerGet: () => invoke<WebServerOptions>('web_server_get'),
+  webServerSet: (opts) =>
+    invoke<WebServerOptions>('web_server_set', {
+      port: opts.port,
+      openHost: opts.openHost,
+      allowedHosts: opts.allowedHosts
+    }),
   localDrives: () => invoke('local_drives')
 }
 

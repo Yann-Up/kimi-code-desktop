@@ -977,13 +977,19 @@ impl ConnectionTarget {
 
     // ---------- 服务启停 ----------
 
-    /// 构造启动 kimi web 的子进程命令;local_port 为本地端口。
+    /// 构造启动 kimi web 的子进程命令;local_port 为本地端口,
+    /// opts 为设置页可配的启动参数(--host 0.0.0.0 / --allowed-host)。
     /// 仅 Local/WSL 走本地 spawn;SSH 由 server.rs 经 russh exec_keepalive + forward 启动
-    pub async fn web_command(&self, local_port: u16) -> Result<Command, String> {
+    pub async fn web_command(
+        &self,
+        local_port: u16,
+        opts: &crate::server::WebOptions,
+    ) -> Result<Command, String> {
         match self {
             ConnectionTarget::Local => {
                 let mut cmd = hidden_command(&kimi_bin());
                 cmd.args(["web", "--no-open", "--port", &local_port.to_string()])
+                    .args(opts.cli_args())
                     // 显式传入数据目录:保证 CLI 与桌面端读取同一份(自定义工作区/默认一致)
                     .env("KIMI_CODE_HOME", kimi_home());
                 // 实验性功能开关(设置页可配;二级模型默认开)
@@ -1001,9 +1007,10 @@ impl ConnectionTarget {
                 Ok(Self::wsl_shell_command(
                     distro,
                     &format!(
-                        "{}{} web --no-open --port {local_port}",
+                        "{}{} web --no-open --port {local_port}{}",
                         experimental_env_prefix(),
-                        sq(&bin)
+                        sq(&bin),
+                        opts.shell_suffix()
                     ),
                 ))
             }

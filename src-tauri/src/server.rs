@@ -21,13 +21,78 @@ use tauri::AppHandle;
 use crate::ssh::SshProcess;
 use crate::target::ConnectionTarget;
 
-/// 固定起始端口:配合启动前的残留实例回收(reclaim_stale_instances),iframe 源恒定为此端口;
-/// 仅当被 kimi 以外的程序占用时才 +1 顺延(free_port 兜底)
+/// 默认起始端口:配合启动前的残留实例回收(reclaim_stale_instances),iframe 源恒定为此端口;
+/// 仅当被 kimi 以外的程序占用时才 +1 顺延(free_port 兜底)。设置页可改(web_server_set)
 pub const START_PORT: u16 = 58666;
 const HEALTH_TIMEOUT: Duration = Duration::from_secs(45);
 /// 等待启动 banner 打印 token 的超时(CLI 0.29.2+ 只打印、不写 server.token);
 /// 超时后回退旧 CLI 的 server.token 文件轮询
 const BANNER_TOKEN_TIMEOUT: Duration = Duration::from_secs(12);
+
+/// kimi web 启动参数(设置页「服务启动参数」可配;改动经 web_server_set 落盘并重启服务生效)
+#[derive(Clone)]
+pub struct WebOptions {
+    /// 首选端口(默认 58666;被占时 free_port 顺延)
+    pub port: u16,
+    /// 绑定 0.0.0.0 允许局域网访问(--host 0.0.0.0);默认 false = 仅 127.0.0.1
+    pub open_host: bool,
+    /// 追加 --allowed-host:非 loopback 的 Host 头默认被 DNS-rebinding 检查拦截,
+    /// 局域网内用 IP/域名访问时必须把对应主机名加进来
+    pub allowed_hosts: Vec<String>,
+}
+
+impl Default for WebOptions {
+    fn default() -> Self {
+        Self {
+            port: START_PORT,
+            open_host: false,
+            allowed_hosts: Vec::new(),
+        }
+    }
+}
+
+impl WebOptions {
+    /// Local/WSL 子进程的命令行参数形态
+    pub fn cli_args(&self) -> Vec<String> {
+        let mut args = Vec::new();
+        if self.open_host {
+            args.push("--host".into());
+            args.push("0.0.0.0".into());
+        }
+        for h in &self.allowed_hosts {
+            args.push("--allowed-host".into());
+            args.push(h.clone());
+        }
+        args
+    }
+
+    /// SSH/WSL 拼接进 shell 命令串的形态(host 值过单引号转义)
+    pub fn shell_suffix(&self) -> String {
+        let mut s = String::new();
+        if self.open_host {
+            s.push_str(" --host 0.0.0.0");
+        }
+        for h in &self.allowed_hosts {
+            s.push_str(&format!(" --allowed-host {}", crate::target::sq(h)));
+        }
+        s
+    }
+}
+
+/// 当前生效的启动参数(启动时从 desktop-config.json 加载,web_server_set 更新)
+static WEB_OPTIONS: std::sync::RwLock<WebOptions> = std::sync::RwLock::new(WebOptions {
+    port: START_PORT,
+    open_host: false,
+    allowed_hosts: Vec::new(),
+});
+
+pub fn set_web_options(opts: WebOptions) {
+    *WEB_OPTIONS.write().unwrap() = opts;
+}
+
+pub fn web_options() -> WebOptions {
+    WEB_OPTIONS.read().unwrap().clone()
+}
 
 pub type SharedServer = Arc<tokio::sync::Mutex<ServerManager>>;
 
@@ -258,10 +323,12 @@ impl ServerManager {
         mgr.stopping = Arc::new(AtomicBool::new(false));
         // 连接目标决定启动/读 token/检测 CLI 的方式;REST/WS 永远连 127.0.0.1:port
         let cli_version = target.detect_cli().await?;
-        // 回收残留实例(崩溃/强杀留下的孤儿),把 58666 等低端口还回来,
+        // 启动参数(设置页可配):首选端口 / --host 0.0.0.0 / --allowed-host
+        let opts = web_options();
+        // 回收残留实例(崩溃/强杀留下的孤儿),把首选端口还回来,
         // 保证 iframe 源跨启动稳定(web UI 的"新浏览器"验证状态按源存 localStorage)
         reclaim_stale_instances(http, target).await;
-        let port = free_port(START_PORT)?;
+        let port = free_port(opts.port)?;
 
         // 退出探针:Process 用 try_wait,Ssh 探测通道活性(远端关闭/断连时翻 false)
         #[derive(Clone)]
@@ -285,9 +352,10 @@ impl ServerManager {
                 let bin = target.kimi_bin_resolved().await?;
                 let mut proc = client
                     .exec_keepalive(&format!(
-                        "{}{} web --no-open --port {port}",
+                        "{}{} web --no-open --port {port}{}",
                         crate::target::experimental_env_prefix(),
-                        crate::target::sq(&bin)
+                        crate::target::sq(&bin),
+                        opts.shell_suffix()
                     ))
                     .await?;
                 // pty drain 内部捕获启动 banner 的 token,此处取出槽位供等待
@@ -299,7 +367,7 @@ impl ServerManager {
             }
             _ => {
                 let token_slot = TokenSlot::new();
-                let mut cmd = target.web_command(port).await?;
+                let mut cmd = target.web_command(port, &opts).await?;
                 cmd.stdin(std::process::Stdio::null())
                     // stdout 改 piped 由 drain 逐行读:直接 null 会丢 banner 的 token
                     // (CLI 0.29.2+ 只在 banner 打印),且必须持续排空避免 64KB 管道写满阻塞

@@ -614,6 +614,57 @@ async fn experimental_set(
     Ok(())
 }
 
+/// 读取 kimi web 启动参数(端口 / 局域网开放 / allowed-host,未配置项回默认)
+#[tauri::command]
+fn web_server_get(app: AppHandle) -> Value {
+    let opts = config::load(&app).web_options();
+    json!({
+        "port": opts.port,
+        "openHost": opts.open_host,
+        "allowedHosts": opts.allowed_hosts,
+    })
+}
+
+/// 保存 kimi web 启动参数:持久化到 desktop-config.json 并更新运行时;
+/// 激活通道后端运行中则自动重启(端口/host 是进程启动参数,需重启生效)
+#[tauri::command]
+async fn web_server_set(
+    app: AppHandle,
+    state: State<'_, Arc<AppState>>,
+    port: u16,
+    open_host: bool,
+    allowed_hosts: Option<Vec<String>>,
+) -> Result<Value, String> {
+    if port == 0 {
+        return Err("端口必须大于 0".to_string());
+    }
+    // 过滤空白项,逗号分隔也顺手拆开(设置页以逗号分隔输入)
+    let hosts: Vec<String> = allowed_hosts
+        .unwrap_or_default()
+        .iter()
+        .flat_map(|h| h.split(','))
+        .map(|h| h.trim().to_string())
+        .filter(|h| !h.is_empty())
+        .collect();
+    let mut cfg = config::load(&app);
+    cfg.web_port = Some(port);
+    cfg.web_open_host = Some(open_host);
+    cfg.web_allowed_hosts = Some(hosts);
+    config::save(&app, &cfg)?;
+    server::set_web_options(cfg.web_options());
+    let channel = cli::active_channel();
+    let running = {
+        let map = state.backends.lock().await;
+        map.get(&channel)
+            .map(|bs| bs.backend_running.load(Ordering::SeqCst))
+            .unwrap_or(false)
+    };
+    if running {
+        restart_backend(&app, &state).await?;
+    }
+    Ok(web_server_get(app))
+}
+
 /// 添加通道:复用 set_connection_target 的保存/密码落 keyring 逻辑,但只追加,
 /// 不切换激活通道、不重启任何服务。id 按目标自动生成,重复报错;本机不可添加。
 /// label 省略时按目标展示名(本机 / WSL (Ubuntu) / user@host)生成
@@ -1262,6 +1313,8 @@ pub fn run() {
             local_api_calls,
             experimental_get,
             experimental_set,
+            web_server_get,
+            web_server_set,
             local_mcp_read,
             local_mcp_write,
             local_cli_config_read,
@@ -1289,6 +1342,8 @@ pub fn run() {
             apply_active_remote_bin(&cfg);
             // 实验性功能开关加载(启动 kimi web 时经 experimental_envs 注入为环境变量)
             cli::set_experimental_flags(cfg.experimental.clone().unwrap_or_default());
+            // kimi web 启动参数(端口/--host/--allowed-host)加载
+            server::set_web_options(cfg.web_options());
             // 用量缓存后台预热:统计页首开直接命中缓存,避免冷扫描卡顿
             warm_usage_cache();
             // 程序化建窗(参数与原 config app.windows 一致):config 声明的窗口挂不上

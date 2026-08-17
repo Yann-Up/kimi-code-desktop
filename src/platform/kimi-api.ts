@@ -69,6 +69,16 @@ export interface ChannelsState {
   active: string
 }
 
+/** kimi web 启动参数(与 Rust 侧 WebOptions 对应;改动后运行中的服务会自动重启) */
+export interface WebServerOptions {
+  /** 首选端口(默认 58666;被占时顺延) */
+  port: number
+  /** 绑定 0.0.0.0 允许局域网访问(--host 0.0.0.0) */
+  openHost: boolean
+  /** 追加 --allowed-host(局域网内用 IP/域名访问必需) */
+  allowedHosts: string[]
+}
+
 /** server:ready 事件载荷:cliVersion/port/meta 之外新增 token(拼 iframe src 用)与 channel */
 export interface ServerReadyInfo {
   channel: string
@@ -219,6 +229,10 @@ export interface KimiApi {
   experimentalGet(): Promise<Record<string, boolean>>
   /** 保存实验性开关;激活通道后端运行中会自动重启使环境变量生效 */
   experimentalSet(flags: Record<string, boolean>): Promise<void>
+  /** 读 kimi web 启动参数(端口 / 局域网开放 / allowed-host) */
+  webServerGet(): Promise<WebServerOptions>
+  /** 保存 kimi web 启动参数;激活通道后端运行中会自动重启生效 */
+  webServerSet(opts: WebServerOptions): Promise<WebServerOptions>
   localDrives(): Promise<any>
 }
 
