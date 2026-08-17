@@ -23,13 +23,11 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
-use base64::Engine as _;
 use serde_json::{json, Value};
 use tauri::menu::{MenuBuilder, MenuItemBuilder, PredefinedMenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::webview::NewWindowResponse;
 use tauri::{AppHandle, Emitter, Manager, State};
-use tauri_plugin_notification::NotificationExt;
 use tauri_plugin_opener::OpenerExt;
 
 use rest::RestClient;
@@ -236,33 +234,10 @@ async fn app_open_logs(app: AppHandle) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
-/// 打开外部链接:仅允许 http/https scheme(javascript:/file: 等一律拒绝,防链接劫持)
-#[tauri::command]
-fn open_external(app: AppHandle, target: String) -> Result<(), String> {
-    let lower = target.trim().to_lowercase();
-    if !(lower.starts_with("https://") || lower.starts_with("http://")) {
-        return Err(format!("不允许的链接协议(仅支持 http/https): {target}"));
-    }
-    app.opener()
-        .open_url(target, None::<&str>)
-        .map_err(|e| e.to_string())
-}
-
 /// 前端在退出确认弹窗中点"退出"后调用:直接退出(仍走 ExitRequested 优雅关停)
 #[tauri::command]
 fn confirm_close(app: AppHandle) {
     app.exit(0);
-}
-
-/// app:notify 等价物
-#[tauri::command]
-fn notify(app: AppHandle, title: String, body: String) -> Result<(), String> {
-    app.notification()
-        .builder()
-        .title(title)
-        .body(body)
-        .show()
-        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -594,6 +569,48 @@ async fn set_active_channel(app: AppHandle, id: String) -> Result<(), String> {
     cli::refresh_channels(&cfg.extra_channels(), cfg.active());
     // 远端 CLI 覆盖随激活通道走
     apply_active_remote_bin(&cfg);
+    // 新通道的用量缓存后台预热(统计页首开直接命中)
+    warm_usage_cache();
+    Ok(())
+}
+
+/// 后台预热激活通道的用量扫描缓存:统计页(用量概览/API 调用)首开直接命中,
+/// 避免冷缓存全量扫描卡顿;失败静默(统计页自己会再扫)
+fn warm_usage_cache() {
+    tauri::async_runtime::spawn(async move {
+        let t = cli::connection_target_for(&cli::active_channel());
+        let _ = t.usage_record_lines().await;
+    });
+}
+
+/// 实验性功能开关(返回各注册项的有效值:用户设置 > 桌面默认 > CLI 默认)
+#[tauri::command]
+fn experimental_get() -> HashMap<String, bool> {
+    target::experimental_effective().into_iter().collect()
+}
+
+/// 保存实验性功能开关:持久化到 desktop-config.json 并更新运行时;
+/// 激活通道后端运行中则自动重启(环境变量需重启进程生效)
+#[tauri::command]
+async fn experimental_set(
+    app: AppHandle,
+    state: State<'_, Arc<AppState>>,
+    flags: HashMap<String, bool>,
+) -> Result<(), String> {
+    let mut cfg = config::load(&app);
+    cfg.experimental = Some(flags.clone());
+    config::save(&app, &cfg)?;
+    cli::set_experimental_flags(flags);
+    let channel = cli::active_channel();
+    let running = {
+        let map = state.backends.lock().await;
+        map.get(&channel)
+            .map(|bs| bs.backend_running.load(Ordering::SeqCst))
+            .unwrap_or(false)
+    };
+    if running {
+        restart_backend(&app, &state).await?;
+    }
     Ok(())
 }
 
@@ -681,6 +698,13 @@ async fn remove_channel(
     }
     ServerManager::stop(&server, &state.http).await;
     state.backends.lock().await.remove(&id);
+
+    // SSH 通道:连同系统凭据管理器中的密码一起清除(账号名归一化与保存时同走 ssh_config)
+    if let Some(ch) = cfg.extra_channels().into_iter().find(|c| c.id == id) {
+        if let Ok(c) = target::ConnectionTarget::from(ch.config).ssh_config() {
+            ssh::delete_password(&c.user, &c.host, c.port);
+        }
+    }
 
     cfg.channels = Some(cfg.extra_channels().into_iter().filter(|c| c.id != id).collect());
     if cfg.active() == id {
@@ -958,127 +982,10 @@ async fn rest_request(
         .map_err(|e| e.to_string())
 }
 
-/// 拉取服务端文件(图片等),字节转 base64 返回(桥接层解码)
-#[tauri::command(rename_all = "snake_case")]
-async fn rest_file(
-    state: State<'_, Arc<AppState>>,
-    file_id: String,
-    channel: Option<String>,
-) -> Result<String, String> {
-    let channel = channel.unwrap_or_else(cli::active_channel);
-    // 同 rest_request:clone 后即释放锁
-    let rest = {
-        let map = state.backends.lock().await;
-        match map.get(&channel) {
-            Some(bs) => bs.rest.lock().await.clone(),
-            None => None,
-        }
-    }
-    .ok_or("server not ready")?;
-    let bytes = rest.download_file(&file_id).await.map_err(|e| e.to_string())?;
-    Ok(base64::engine::general_purpose::STANDARD.encode(bytes))
-}
-
-#[tauri::command(rename_all = "snake_case")]
-async fn rest_upload(
-    state: State<'_, Arc<AppState>>,
-    bytes_base64: String,
-    name: String,
-    media_type: String,
-    channel: Option<String>,
-) -> Result<Value, String> {
-    let channel = channel.unwrap_or_else(cli::active_channel);
-    let bytes = base64::engine::general_purpose::STANDARD
-        .decode(bytes_base64)
-        .map_err(|e| e.to_string())?;
-    // 同 rest_request:clone 后即释放锁
-    let rest = {
-        let map = state.backends.lock().await;
-        match map.get(&channel) {
-            Some(bs) => bs.rest.lock().await.clone(),
-            None => None,
-        }
-    }
-    .ok_or("server not ready")?;
-    rest.upload_file(bytes, &name, &media_type)
-        .await
-        .map_err(|e| e.to_string())
-}
-
-// ---------- providers ----------
-
-/// 拉取自定义提供商的模型列表:GET {base_url}/models(OpenAI 风格),Bearer 认证 + 自定义请求头。
-/// 不走 webview fetch:避开 CORS 与内网自签证书限制。
-#[tauri::command(rename_all = "snake_case")]
-async fn fetch_provider_models(
-    state: State<'_, Arc<AppState>>,
-    base_url: String,
-    api_key: Option<String>,
-    headers: Option<HashMap<String, String>>,
-) -> Result<Vec<String>, String> {
-    let base = base_url.trim().trim_end_matches('/');
-    if base.is_empty() {
-        return Err("base_url 为空".into());
-    }
-    let url = format!("{base}/models");
-    let mut req = state.http.get(&url);
-    if let Some(key) = api_key.as_deref().map(str::trim).filter(|k| !k.is_empty()) {
-        req = req.bearer_auth(key);
-    }
-    if let Some(h) = headers {
-        for (k, v) in h {
-            if !k.trim().is_empty() {
-                req = req.header(k.trim(), v);
-            }
-        }
-    }
-    let resp = req.send().await.map_err(|e| format!("请求失败:{e}"))?;
-    let status = resp.status();
-    let body: Value = resp
-        .json()
-        .await
-        .map_err(|e| format!("响应不是合法 JSON:{e}"))?;
-    if !status.is_success() {
-        // chars().take:truncate(200) 切断 UTF-8 字符边界会 panic(非 ASCII 错误响应)
-        let raw = body.to_string();
-        let mut s: String = raw.chars().take(200).collect();
-        if raw.chars().count() > 200 {
-            s.push('…');
-        }
-        return Err(format!("HTTP {status}:{s}"));
-    }
-    // OpenAI 风格 {data:[{id}]};容错 {models:[...]} 或裸数组,元素可为字符串或带 id/name 的对象
-    let list = body.get("data").or_else(|| body.get("models")).unwrap_or(&body);
-    let arr = list.as_array().ok_or("响应中未找到模型列表")?;
-    let mut out: Vec<String> = arr
-        .iter()
-        .filter_map(|m| {
-            m.as_str().or_else(|| {
-                m.get("id")
-                    .or_else(|| m.get("name"))
-                    .and_then(|v| v.as_str())
-            })
-        })
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
-        .collect();
-    out.sort();
-    out.dedup();
-    if out.is_empty() {
-        return Err("模型列表为空".into());
-    }
-    Ok(out)
-}
-
 // ---------- local ----------
 
 /// local_* 系列:按通道解析出对应 ConnectionConfig 再路由(缺省=激活通道);
 /// local_drives 只对本机有意义,忽略 channel 参数
-
-#[tauri::command]
-async fn local_plugins(channel: Option<String>) -> Vec<local_store::PluginEntry> {
-    local_store::list_plugins(&channel.unwrap_or_else(cli::active_channel)).await
-}
 
 #[tauri::command]
 async fn local_skills(channel: Option<String>) -> Vec<local_store::SkillEntry> {
@@ -1088,11 +995,6 @@ async fn local_skills(channel: Option<String>) -> Vec<local_store::SkillEntry> {
 #[tauri::command]
 async fn local_agents(channel: Option<String>) -> Vec<local_store::AgentProfile> {
     local_store::list_agent_profiles(&channel.unwrap_or_else(cli::active_channel)).await
-}
-
-#[tauri::command]
-async fn local_cron(channel: Option<String>) -> Vec<local_store::CronEntry> {
-    local_store::list_cron_jobs(&channel.unwrap_or_else(cli::active_channel)).await
 }
 
 #[tauri::command]
@@ -1111,6 +1013,21 @@ async fn local_usage_daily(
 #[tauri::command]
 async fn local_usage_today(channel: Option<String>) -> local_store::UsageTodayResult {
     local_store::aggregate_usage_today(&channel.unwrap_or_else(cli::active_channel)).await
+}
+
+/// API 调用明细分页(step.end 口径,含 TTFT/TPS,API 调用统计页用)
+#[tauri::command]
+async fn local_api_calls(
+    page: Option<u32>,
+    page_size: Option<u32>,
+    channel: Option<String>,
+) -> local_store::ApiCallsResult {
+    local_store::aggregate_api_calls(
+        &channel.unwrap_or_else(cli::active_channel),
+        page.unwrap_or(1),
+        page_size.unwrap_or(20),
+    )
+    .await
 }
 
 #[tauri::command]
@@ -1241,7 +1158,6 @@ async fn run_bootstrap(app: AppHandle, state: Arc<AppState>, channel: String) {
             if version.is_none() {
                 return Err("CLI 安装后仍不可用,请手动执行: irm https://code.kimi.com/kimi-code/install.ps1 | iex".to_string());
             }
-            let _ = app.emit("cli:installed", version.clone().unwrap());
         }
         let Some(version) = version else {
             return Err(format!(
@@ -1318,9 +1234,7 @@ pub fn run() {
             app_info,
             web_ui_url,
             app_open_logs,
-            open_external,
             confirm_close,
-            notify,
             cli_upgrade,
             cli_npm_upgrade,
             cli_check_update,
@@ -1341,15 +1255,13 @@ pub fn run() {
             set_cli_bin,
             set_remote_bin,
             rest_request,
-            rest_file,
-            rest_upload,
-            fetch_provider_models,
-            local_plugins,
             local_skills,
             local_agents,
-            local_cron,
             local_usage_daily,
             local_usage_today,
+            local_api_calls,
+            experimental_get,
+            experimental_set,
             local_mcp_read,
             local_mcp_write,
             local_cli_config_read,
@@ -1375,6 +1287,10 @@ pub fn run() {
             // 通道映射(含本机):active 决定连接目标路由;远端 CLI 覆盖随激活通道走
             cli::refresh_channels(&cfg.extra_channels(), cfg.active());
             apply_active_remote_bin(&cfg);
+            // 实验性功能开关加载(启动 kimi web 时经 experimental_envs 注入为环境变量)
+            cli::set_experimental_flags(cfg.experimental.clone().unwrap_or_default());
+            // 用量缓存后台预热:统计页首开直接命中缓存,避免冷扫描卡顿
+            warm_usage_cache();
             // 程序化建窗(参数与原 config app.windows 一致):config 声明的窗口挂不上
             // on_new_window(builder 级钩子),iframe 内 window.open/target=_blank 必须接管
             // 转系统浏览器,否则官方 UI 外链会被 WebView2 静默吞掉

@@ -110,6 +110,19 @@ pub fn remote_bin_override() -> Option<String> {
     REMOTE_BIN_OVERRIDE.read().unwrap().clone()
 }
 
+/// 实验性功能开关(desktop-config.json 的 experimental 字段;启动 kimi web 时注入为环境变量)
+static EXPERIMENTAL_FLAGS: std::sync::LazyLock<RwLock<HashMap<String, bool>>> =
+    std::sync::LazyLock::new(|| RwLock::new(HashMap::new()));
+
+/// 设置实验性开关(启动加载与设置页 experimental_set 用)
+pub fn set_experimental_flags(flags: HashMap<String, bool>) {
+    *EXPERIMENTAL_FLAGS.write().unwrap() = flags;
+}
+
+pub fn experimental_flags() -> HashMap<String, bool> {
+    EXPERIMENTAL_FLAGS.read().unwrap().clone()
+}
+
 /// 用户 home 目录(优先 USERPROFILE,避免引入 dirs 依赖)
 pub fn home_dir() -> PathBuf {
     if let Ok(p) = std::env::var("USERPROFILE") {
@@ -173,7 +186,36 @@ pub fn kimi_bin() -> String {
             }
         }
     }
-    "kimi".to_string()
+    // PATH 兜底:Windows 上 CreateProcess 只自动补 .exe,裸 "kimi" 永远找不到 npm 全局
+    // 安装的 kimi.cmd shim,先用 where.exe 解析出实际路径(.cmd 由 hidden_command 走
+    // cmd /c 包装);解析失败才回退裸名(Unix 的 execvp 自己会搜 PATH)
+    resolve_on_path("kimi").unwrap_or_else(|| "kimi".to_string())
+}
+
+/// 在 PATH 上解析可执行文件的实际路径:Windows 用 where.exe(按 PATHEXT 命中多行,
+/// 优先 .exe,其次 .cmd/.bat shim),Unix 用 which;找不到返回 None。
+/// 同步短探测(毫秒级),用 std::process 以便 kimi_bin 保持同步签名
+fn resolve_on_path(name: &str) -> Option<String> {
+    let probe = if cfg!(windows) { "where.exe" } else { "which" };
+    let mut cmd = std::process::Command::new(probe);
+    cmd.arg(name);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+    }
+    let out = cmd.output().ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let lines: Vec<&str> = stdout.lines().map(str::trim).filter(|l| !l.is_empty()).collect();
+    let pick = |pred: fn(&str) -> bool| {
+        lines.iter().find(|l| pred(l)).map(|s| (*s).to_string())
+    };
+    pick(|l| l.to_lowercase().ends_with(".exe"))
+        .or_else(|| pick(|l| l.to_lowercase().ends_with(".cmd") || l.to_lowercase().ends_with(".bat")))
+        .or_else(|| lines.first().map(|s| (*s).to_string()))
 }
 
 /// 当前 CLI 二进制来源(设置页展示/升级守卫用):

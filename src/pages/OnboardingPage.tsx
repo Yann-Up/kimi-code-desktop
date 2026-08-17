@@ -93,6 +93,8 @@ export function OnboardingPage({
 
   /** 完成:switch 模式调 connectionTargetSet(持久化 + 重启,由调用方启动);add 模式调 addChannel(只追加) */
   const finish = async (t: Target) => {
+    // 双击/连点守卫:本机卡片的"完成并启动"是 span 无 disabled,重复触发会连续重启后端
+    if (finishing) return
     setFinishing(true)
     setFinishError('')
     try {

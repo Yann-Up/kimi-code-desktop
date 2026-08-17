@@ -18,7 +18,7 @@
 - **用量统计 tab**:时间范围、统计卡、GitHub 式活跃热力图、按天模型堆叠趋势、实时曲线(数据源为 wire.jsonl 的 usage.record,已与 step.end 交叉验证无重复计数)
 - **额度条**:Token/MCP 额度实时展示
 - **桌面通知**:窗口失焦时,任务完成 / 待审批 / 待回答会发桌面通知
-- **设置**:常规(数据目录自定义、CLI 来源选择、默认权限模式、日志)/ MCP(可视化 + JSON 编辑,写盘自动备份)/ 技能 / 子智能体 / 定时任务 / 命令 / 引导
+- **设置**:常规(数据目录自定义、CLI 来源选择、日志)/ CLI 配置(模型与供应商、通用行为[默认模型/权限模式/plan 模式等]、循环与后台、服务与图像、思考、身份、实验开关)/ MCP(可视化 + JSON 编辑,写盘自动备份)/ 技能 / 子智能体 / 命令 / 通道
 - **桌面集成**:系统托盘、单实例、无边框窗口自定义标题栏
 
 ### 远端后端
@@ -35,7 +35,7 @@ Tauri Rust 后端(src-tauri/)
   ├── WS 通知订阅器 → /api/v1/ws(壳内部订阅,不转发给渲染层)
   │     枚举会话订阅 turn.ended / work_changed → 失焦时发桌面通知
   ├── REST 客户端 → /api/v1/*(Bearer 认证,额度/统计等壳自身功能使用)
-  └── 本地数据   → ~/.kimi-code 直读(技能/子代理/cron/mcp.json/usage 聚合/盘符)
+  └── 本地数据   → ~/.kimi-code 直读(技能/子代理/mcp.json/usage 聚合/盘符)
 渲染进程(React + zustand,src/)
   ├── components/ShellHome.tsx  三 tab 壳:对话(iframe)/ 统计 / 设置
   ├── components/QuotaStrip.tsx 额度条
@@ -119,7 +119,7 @@ A desktop client for [Kimi Code CLI](https://github.com/moonshotai/kimi-code), b
 
 This is a **desktop shell, not an AI runtime**: the chat UI embeds the official `kimi web` Web UI directly via iframe (`http://127.0.0.1:<port>/#token=<token>`, token injected by the shell), so sessions, models, tools and the Git changes panel all come from the official UI and upgrade in lockstep with the CLI. The app auto-installs the CLI on first launch and offers in-app upgrades. The backend can run on the local machine, in WSL, or on a remote host over SSH (built-in SSH client with port forwarding; host keys are verified TOFU-style; passwords live in the OS credential manager).
 
-What the shell itself adds: a usage-statistics tab (heatmap / per-day model trends / realtime curves), a quota strip, desktop notifications when the window is unfocused (turn finished / pending approval / pending question), settings (general / MCP / skills / sub-agents / cron / commands), system tray, and single-instance.
+What the shell itself adds: a usage-statistics tab (heatmap / per-day model trends / realtime curves), a quota strip, desktop notifications when the window is unfocused (turn finished / pending approval / pending question), settings (general / CLI config / MCP / skills / sub-agents / commands / channels), system tray, and single-instance.
 
 ```bash
 npm install

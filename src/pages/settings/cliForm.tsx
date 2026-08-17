@@ -10,14 +10,25 @@ import { Section, Empty } from '../../components/settings/common'
 import { FolderPickerDialog } from '../../components/FolderPickerDialog'
 import type { CliConfig } from '../../hooks/useCliConfig'
 
-/** 按路径取嵌套值;路径段可为 string 或候选键数组(兼容 snake/camel 差异),取到即返回 */
+/**
+ * 单键的 snake_case ↔ camelCase 变体候选(原键优先)。
+ * 在线 REST 返回顶层 snake、嵌套块 camelCase;离线直读 config.toml 为纯 snake_case,
+ * 因此每个路径段都要同时兼容两种命名,否则离线模式会读成默认值并在保存时覆盖真实配置。
+ */
+function keyVariants(k: string): string[] {
+  const snake = k.replace(/[A-Z]/g, (c) => `_${c.toLowerCase()}`)
+  const camel = k.replace(/_([a-z])/g, (_, c: string) => c.toUpperCase())
+  return [...new Set([k, snake, camel])]
+}
+
+/** 按路径取嵌套值;路径段可为 string 或候选键数组,每键自动兼容 snake/camel 变体,取到即返回 */
 export function nested(cfg: CliConfig | null, ...path: (string | string[])[]): unknown {
   if (!cfg) return undefined
   let cur: unknown = cfg
   for (const seg of path) {
     if (cur === null || typeof cur !== 'object') return undefined
     const obj = cur as Record<string, unknown>
-    const keys = Array.isArray(seg) ? seg : [seg]
+    const keys = (Array.isArray(seg) ? seg : [seg]).flatMap(keyVariants)
     const hit = keys.find((k) => k in obj)
     if (hit === undefined) return undefined
     cur = obj[hit]
@@ -233,11 +244,11 @@ export function PathListField(props: {
   )
 }
 
-/** 保存栏:保存按钮 + 短暂"已保存"反馈 / 错误文案 */
-export function SaveBar(props: { saving: boolean; saved: boolean; error: string; onSave: () => void }) {
+/** 保存栏:保存按钮 + 短暂"已保存"反馈 / 错误文案;savedText 可定制成功文案(如离线直写时提示重启生效) */
+export function SaveBar(props: { saving: boolean; saved: boolean; error: string; onSave: () => void; savedText?: string }) {
   return (
     <div className="flex items-center justify-end gap-3 border-t border-border-light pt-3">
-      {props.saved && <span className="text-[12px] text-success">已保存</span>}
+      {props.saved && <span className="text-[12px] text-success">{props.savedText ?? '已保存'}</span>}
       {props.error && (
         <span className="min-w-0 flex-1 truncate text-right text-[12px] text-danger">{props.error}</span>
       )}
@@ -290,13 +301,23 @@ export function isServerOffline(error: string): boolean {
   return error.toLowerCase().includes('server not ready')
 }
 
-/** CLI 配置页门面:加载中 / 服务未启动 / 加载失败 三态,通过后渲染表单内容 */
+/** 离线直写提醒:服务未启动时 useCliConfig 降级为直读直写 config.toml,保存需重启服务生效 */
+export function OfflineNotice() {
+  return (
+    <p className="rounded-lg border border-warning/20 bg-warning-soft px-3 py-2 text-[12px] text-warning">
+      服务未启动,当前直接读写 config.toml 配置文件;保存的内容将在重启服务后对新会话生效
+    </p>
+  )
+}
+
+/** CLI 配置页门面:加载中 / 加载失败 两态拦截,通过后渲染表单内容;offline 时在顶部展示直写提醒 */
 export function CliConfigGate(props: {
   title: string
   desc: string
   loading: boolean
   error: string
   onRetry: () => void
+  offline?: boolean
   children: ReactNode
 }) {
   if (props.loading) {
@@ -313,7 +334,7 @@ export function CliConfigGate(props: {
         <Empty
           text={
             offline
-              ? '服务未启动,CLI 配置不可编辑,请先在对话页启动服务'
+              ? '服务未启动且 config.toml 直读失败,请先在对话页启动服务后重试'
               : `配置加载失败:${props.error}`
           }
         />
@@ -330,6 +351,7 @@ export function CliConfigGate(props: {
   }
   return (
     <Section title={props.title} desc={props.desc}>
+      {props.offline && <OfflineNotice />}
       {props.children}
     </Section>
   )

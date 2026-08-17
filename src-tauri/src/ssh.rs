@@ -65,6 +65,14 @@ pub fn has_password(user: &str, host: &str, port: u16) -> bool {
     load_password(user, host, port).is_some()
 }
 
+/// 删除已保存的 SSH 密码(删除通道/替换目标时调用,避免凭据在系统凭据管理器残留);
+/// 不存在或删除失败均静默(不阻塞主流程)
+pub fn delete_password(user: &str, host: &str, port: u16) {
+    if let Ok(entry) = keyring::Entry::new(KEYRING_SERVICE, &keyring_account(user, host, port)) {
+        let _ = entry.delete_credential();
+    }
+}
+
 /// host key 策略:TOFU(trust on first use)——首次连接记录指纹,之后指纹变更即拒绝
 struct SshHandler {
     host: String,

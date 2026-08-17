@@ -34,6 +34,8 @@ export function ChannelsSettings() {
   const setActiveChannel = useUi((s) => s.setActiveChannel)
   const [busyId, setBusyId] = useState<string | null>(null)
   const [error, setError] = useState('')
+  /** 删除二次确认:第一次点击进入确认态(3 秒自动复原),再点才真正删除 */
+  const [confirmDel, setConfirmDel] = useState<string | null>(null)
 
   /** 重新拉取通道列表填充 store */
   const refresh = () => {
@@ -126,12 +128,24 @@ export function ChannelsSettings() {
                   </button>
                   {c.id !== 'local' && (
                     <button
-                      className="rounded-lg border border-border p-1 text-text-tertiary hover:border-danger-soft hover:bg-danger-soft hover:text-danger disabled:opacity-50"
-                      title="删除该通道(服务在跑会先停止)"
+                      className={`rounded-lg border p-1 disabled:opacity-50 ${
+                        confirmDel === c.id
+                          ? 'border-danger bg-danger-soft px-2 text-[12px] text-danger'
+                          : 'border-border text-text-tertiary hover:border-danger-soft hover:bg-danger-soft hover:text-danger'
+                      }`}
+                      title="删除该通道(服务在跑会先停止,SSH 密码一并从凭据管理器清除)"
                       disabled={busy}
-                      onClick={() => void remove(c)}
+                      onClick={() => {
+                        if (confirmDel !== c.id) {
+                          setConfirmDel(c.id)
+                          setTimeout(() => setConfirmDel((v) => (v === c.id ? null : v)), 3000)
+                          return
+                        }
+                        setConfirmDel(null)
+                        void remove(c)
+                      }}
                     >
-                      <Trash2 size={14} />
+                      {confirmDel === c.id ? '确认删除' : <Trash2 size={14} />}
                     </button>
                   )}
                 </div>

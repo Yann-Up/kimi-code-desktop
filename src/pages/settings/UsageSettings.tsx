@@ -696,18 +696,8 @@ export function UsageSettings() {
     return (data?.days ?? []).filter((d) => d.date >= startKey)
   }, [data, range])
 
-  /** 连续活跃天数:从今天(或昨天)往回数,与后端 streak 口径一致 */
-  const streak = useMemo(() => {
-    const active = new Set(rangeDays.map((d) => d.date))
-    const cursor = todayZero()
-    if (!active.has(toKey(cursor))) cursor.setDate(cursor.getDate() - 1)
-    let n = 0
-    while (active.has(toKey(cursor))) {
-      n += 1
-      cursor.setDate(cursor.getDate() - 1)
-    }
-    return n
-  }, [rangeDays])
+  /** 连续活跃天数:直接用 364 天全量请求返回的后端 streak(按全窗口计算,不受当前 range 截断) */
+  const streak = data?.streak ?? 0
 
   /** 当前 range 的模型汇总(由 rangeDays 的逐日 models 累加,等价后端 model_totals) */
   const modelEntries = useMemo(() => {

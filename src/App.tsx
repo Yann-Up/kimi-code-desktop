@@ -43,7 +43,9 @@ export default function App() {
       }),
       window.kimiApi.onCliInstalling(() => {
         setInstalling(true)
-        setPhase('starting')
+        // 已在主页面(从对话页占位图触发安装)时保持 ready:翻相会卸载 ShellHome,
+        // 销毁所有通道的常驻 iframe,丢失会话现场;安装进度由 WebFrame 按通道自行呈现
+        setPhase((p) => (p === 'ready' ? p : 'starting'))
       }),
       window.kimiApi.onCliUpdateAvailable((info) => setUpdateInfo(info)),
       window.kimiApi.onCloseRequested(() => setCloseConfirm(true)),

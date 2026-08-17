@@ -1,8 +1,6 @@
 //! local-store: 读取 ~/.kimi-code 下的数据(无 REST 的部分),三种连接目标统一经 target 工厂路由。
-//! - 插件:plugins/installed.json
 //! - 技能:skills 目录扫描
 //! - 子代理 profile:agents 目录扫描(markdown frontmatter)
-//! - 定时任务:sessions 下各会话 cron 目录扫描
 //! - 使用统计:解析 sessions 下各会话 agents/*/wire.jsonl(含 subagent)中的 usage 记录
 //! (解析/聚合逻辑与原实现逐字一致;Local 逐文件读,WSL/SSH 一条命令批量带回)
 
@@ -14,19 +12,6 @@ use std::path::Path;
 
 use crate::cli;
 use crate::target::ConnectionTarget;
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct PluginEntry {
-    pub id: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub version: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub source: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub installed_at: Option<String>,
-    pub raw: Value,
-}
 
 #[derive(Serialize)]
 pub struct SkillEntry {
@@ -48,14 +33,9 @@ pub struct AgentProfile {
     pub path: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub builtin: Option<bool>,
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CronEntry {
-    pub session_id: String,
-    pub file: String,
-    pub data: Value,
+    /// 来源目录:"user" = <kimi_home>/agents,"agents" = ~/.agents/agents;内置项无此字段
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scope: Option<String>,
 }
 
 /// 指定通道的连接目标 + 其 kimi 数据目录(失败返回 None,调用方按空数据处理)
@@ -272,48 +252,6 @@ mod tests {
     }
 }
 
-pub async fn list_plugins(channel: &str) -> Vec<PluginEntry> {
-    let Some((t, home)) = target_and_home(channel).await else {
-        return vec![];
-    };
-    let Some(raw) = safe_read_json(&t, &t.join(&t.join(&home, "plugins"), "installed.json")).await
-    else {
-        return vec![];
-    };
-    let mut out = Vec::new();
-    let mut push = |id: String, v: &Value| {
-        let obj = if v.is_object() { v.clone() } else { json!({}) };
-        out.push(PluginEntry {
-            id,
-            version: obj.get("version").and_then(|x| x.as_str()).map(String::from),
-            source: obj.get("source").and_then(|x| x.as_str()).map(String::from),
-            installed_at: obj
-                .get("installed_at")
-                .and_then(|x| x.as_str())
-                .map(String::from),
-            raw: obj,
-        });
-    };
-    if let Some(arr) = raw.as_array() {
-        for item in arr {
-            let id = item
-                .get("id")
-                .or_else(|| item.get("name"))
-                .map(|x| match x {
-                    Value::String(s) => s.clone(),
-                    other => other.to_string(),
-                })
-                .unwrap_or_else(|| "unknown".to_string());
-            push(id, item);
-        }
-    } else if let Some(obj) = raw.as_object() {
-        for (k, v) in obj {
-            push(k.clone(), v);
-        }
-    }
-    out
-}
-
 /// markdown frontmatter:--- 块内 key: value,去引号
 fn parse_frontmatter(content: &str) -> HashMap<String, String> {
     let mut out = HashMap::new();
@@ -366,24 +304,40 @@ fn parse_frontmatter(content: &str) -> HashMap<String, String> {
     out
 }
 
+/// 用户级技能扫描:品牌目录 <kimi_home>/skills 优先,通用目录 ~/.agents/skills 其次;
+/// 同名技能品牌目录优先(与 CLI 的 USER_BRAND_DIRS/USER_GENERIC_DIRS 口径一致)
 pub async fn list_skills(channel: &str) -> Vec<SkillEntry> {
     let Some((t, home)) = target_and_home(channel).await else {
         return vec![];
     };
+    let generic_base = t
+        .user_home_str()
+        .await
+        .ok()
+        .map(|h| t.join(&t.join(&h, ".agents"), "skills"));
     let mut out = Vec::new();
-    let base = t.join(&home, "skills");
-    for dir in t.list_dir(&base).await {
-        let skill_md = t.join(&t.join(&base, &dir), "SKILL.md");
-        let Ok(content) = t.read_text(&skill_md).await else {
-            continue; // 无 SKILL.md
-        };
-        let fm = parse_frontmatter(&content);
-        out.push(SkillEntry {
-            name: fm.get("name").cloned().unwrap_or_else(|| dir.clone()),
-            description: fm.get("description").cloned(),
-            path: t.join(&base, &dir),
-            scope: "user".to_string(),
-        });
+    let mut seen: HashSet<String> = HashSet::new();
+    for (base, scope) in [(t.join(&home, "skills"), "user")]
+        .into_iter()
+        .chain(generic_base.into_iter().map(|b| (b, "agents")))
+    {
+        for dir in t.list_dir(&base).await {
+            let skill_md = t.join(&t.join(&base, &dir), "SKILL.md");
+            let Ok(content) = t.read_text(&skill_md).await else {
+                continue; // 无 SKILL.md
+            };
+            let fm = parse_frontmatter(&content);
+            let name = fm.get("name").cloned().unwrap_or_else(|| dir.clone());
+            if !seen.insert(name.clone()) {
+                continue; // 同名:先扫到的(品牌目录)优先
+            }
+            out.push(SkillEntry {
+                name,
+                description: fm.get("description").cloned(),
+                path: t.join(&base, &dir),
+                scope: scope.to_string(),
+            });
+        }
     }
     out
 }
@@ -395,55 +349,56 @@ fn builtin_agents() -> Vec<AgentProfile> {
         tools: None,
         path: None,
         builtin: Some(true),
+        scope: None,
     };
+    // 与官方文档一致:内置 subagent 只有 coder / explore / plan 三种;
+    // "agent" 是主 agent 默认类型,不是可委派的 subagent,不在此列出
     vec![
         b("plan", "Read-only implementation planning and architecture design."),
-        b("agent", "Default Kimi Code agent."),
         b("coder", "General software engineering agent with file-editing tools."),
         b("explore", "Fast read-only codebase exploration agent."),
     ]
 }
 
+/// 用户级子代理 profile 扫描:品牌目录 <kimi_home>/agents 优先,通用目录 ~/.agents/agents 其次;
+/// 同名 profile 品牌目录优先(与 CLI 的 USER_BRAND_DIRS/USER_GENERIC_DIRS 口径一致)
 pub async fn list_agent_profiles(channel: &str) -> Vec<AgentProfile> {
     let mut out = builtin_agents();
     let Some((t, home)) = target_and_home(channel).await else {
         return out;
     };
-    let dir = t.join(&home, "agents");
-    for f in t.list_dir(&dir).await {
-        if !f.ends_with(".md") {
-            continue;
-        }
-        let Ok(content) = t.read_text(&t.join(&dir, &f)).await else {
-            continue;
-        };
-        let fm = parse_frontmatter(&content);
-        out.push(AgentProfile {
-            name: fm
+    let generic_dir = t
+        .user_home_str()
+        .await
+        .ok()
+        .map(|h| t.join(&t.join(&h, ".agents"), "agents"));
+    let mut seen: HashSet<String> = HashSet::new();
+    for (dir, scope) in [(t.join(&home, "agents"), "user")]
+        .into_iter()
+        .chain(generic_dir.into_iter().map(|d| (d, "agents")))
+    {
+        for f in t.list_dir(&dir).await {
+            if !f.ends_with(".md") {
+                continue;
+            }
+            let Ok(content) = t.read_text(&t.join(&dir, &f)).await else {
+                continue;
+            };
+            let fm = parse_frontmatter(&content);
+            let name = fm
                 .get("name")
                 .cloned()
-                .unwrap_or_else(|| f.trim_end_matches(".md").to_string()),
-            description: fm.get("description").cloned(),
-            tools: None,
-            path: Some(t.join(&dir, &f)),
-            builtin: None,
-        });
-    }
-    out
-}
-
-pub async fn list_cron_jobs(channel: &str) -> Vec<CronEntry> {
-    let t = cli::connection_target_for(channel);
-    let mut out = Vec::new();
-    for f in t.cron_files().await {
-        let Ok(data) = serde_json::from_str::<Value>(&f.content) else {
-            continue;
-        };
-        if data.is_object() {
-            out.push(CronEntry {
-                session_id: f.sid,
-                file: f.file,
-                data,
+                .unwrap_or_else(|| f.trim_end_matches(".md").to_string());
+            if !seen.insert(name.clone()) {
+                continue; // 同名:先扫到的(品牌目录)优先
+            }
+            out.push(AgentProfile {
+                name,
+                description: fm.get("description").cloned(),
+                tools: None,
+                path: Some(t.join(&dir, &f)),
+                builtin: None,
+                scope: Some(scope.to_string()),
             });
         }
     }
@@ -640,6 +595,132 @@ pub async fn aggregate_usage_today(channel: &str) -> UsageTodayResult {
         });
     }
     result
+}
+
+// ---------- API 调用明细(step.end 口径,含 TTFT/TPS,API 调用统计页用) ----------
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ApiCallItem {
+    pub time: i64, // 毫秒时间戳
+    pub model: String,
+    pub session_id: String,
+    pub agent_id: String,
+    pub workspace: String,
+    pub input_other: i64,
+    pub input_cache_read: i64,
+    pub input_cache_creation: i64,
+    pub output: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ttft_ms: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stream_ms: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub finish_reason: Option<String>,
+}
+
+/// 全量汇总(不分页):平均 TTFT/TPS 只统计有耗时字段的调用
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ApiCallsSummary {
+    pub total_calls: usize,
+    pub total_output: i64,
+    pub avg_ttft_ms: Option<f64>,
+    /// 平均输出 TPS(不含首 token 时间):output / stream
+    pub avg_tps_excl_first: Option<f64>,
+    /// 平均输出 TPS(含首 token 时间):output / (ttft + stream)
+    pub avg_tps_incl_first: Option<f64>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ApiCallsResult {
+    pub total: usize,
+    pub page: u32,
+    pub page_size: u32,
+    pub items: Vec<ApiCallItem>,
+    pub summary: ApiCallsSummary,
+}
+
+/// 逐次 API 调用明细分页:按时间倒序,page 从 1 开始,越界回空页
+pub async fn aggregate_api_calls(channel: &str, page: u32, page_size: u32) -> ApiCallsResult {
+    let t = cli::connection_target_for(channel);
+    let page = page.max(1);
+    let page_size = page_size.clamp(1, 500);
+
+    let mut calls: Vec<crate::target::ApiCallRecord> = Vec::new();
+    for sw in t.usage_record_lines().await {
+        calls.extend(sw.api_calls);
+    }
+    calls.sort_by(|a, b| b.time.cmp(&a.time));
+
+    // 全量汇总
+    let mut total_output: i64 = 0;
+    let mut ttft_sum: f64 = 0.0;
+    let mut ttft_n: usize = 0;
+    let mut tps_excl_sum: f64 = 0.0;
+    let mut tps_excl_n: usize = 0;
+    let mut tps_incl_sum: f64 = 0.0;
+    let mut tps_incl_n: usize = 0;
+    for c in &calls {
+        total_output += c.output;
+        if let Some(ttft) = c.ttft_ms {
+            ttft_sum += ttft as f64;
+            ttft_n += 1;
+        }
+        if let Some(stream) = c.stream_ms {
+            if stream > 0 && c.output > 0 {
+                tps_excl_sum += c.output as f64 / (stream as f64 / 1000.0);
+                tps_excl_n += 1;
+                if let Some(ttft) = c.ttft_ms {
+                    let total_ms = ttft + stream;
+                    if total_ms > 0 {
+                        tps_incl_sum += c.output as f64 / (total_ms as f64 / 1000.0);
+                        tps_incl_n += 1;
+                    }
+                }
+            }
+        }
+    }
+    let summary = ApiCallsSummary {
+        total_calls: calls.len(),
+        total_output,
+        avg_ttft_ms: (ttft_n > 0).then(|| ttft_sum / ttft_n as f64),
+        avg_tps_excl_first: (tps_excl_n > 0).then(|| tps_excl_sum / tps_excl_n as f64),
+        avg_tps_incl_first: (tps_incl_n > 0).then(|| tps_incl_sum / tps_incl_n as f64),
+    };
+
+    let total = calls.len();
+    let start = ((page - 1) * page_size) as usize;
+    let items: Vec<ApiCallItem> = if start >= total {
+        Vec::new()
+    } else {
+        calls[start..(start + page_size as usize).min(total)]
+            .iter()
+            .map(|c| ApiCallItem {
+                time: c.time,
+                model: c.model.clone(),
+                session_id: c.session_id.clone(),
+                agent_id: c.agent_id.clone(),
+                workspace: c.workspace.clone(),
+                input_other: c.input_other,
+                input_cache_read: c.input_cache_read,
+                input_cache_creation: c.input_cache_creation,
+                output: c.output,
+                ttft_ms: c.ttft_ms,
+                stream_ms: c.stream_ms,
+                finish_reason: c.finish_reason.clone(),
+            })
+            .collect()
+    };
+
+    ApiCallsResult {
+        total,
+        page,
+        page_size,
+        items,
+        summary,
+    }
 }
 
 /// Windows 盘符检测:C:\ 到 Z:\ 存在性
