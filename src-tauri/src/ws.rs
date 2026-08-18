@@ -3,8 +3,11 @@
 //! - server_hello 心跳(ping→pong)
 //! - client_hello / subscribe(不走 subscribe_v2:它会抑制 v1 会话事件)
 //! - seq/epoch 游标跟踪,断线指数退避重连,重连后带游标恢复
-//! - 周期枚举会话并逐个订阅(协议无通配符);turn.ended / event.session.work_changed
-//!   转为桌面通知与 session:turn-ended 事件,不再向前端转发全量事件
+//! - 周期枚举会话并逐个订阅(协议无通配符);subscribe/client_hello 的 ack 做
+//!   not_found/resync_required 对账——服务端只对存活会话接受订阅,被拒的移出
+//!   本地订阅集合待重试;全局事件(meta.updated/event.session.*)到达即触发补订。
+//!   turn.ended / event.session.work_changed 转为桌面通知与 session:turn-ended 事件,
+//!   不再向前端转发全量事件
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -47,6 +50,8 @@ pub struct WsClient {
     generation: u64,
     subscriptions: tokio::sync::Mutex<HashSet<String>>,
     cursors: tokio::sync::Mutex<HashMap<String, Cursor>>,
+    /// 已发出但未收到 ack 的 subscribe 帧:请求 id → 会话 id 列表(ack  reconciliation 用)
+    pending_subs: tokio::sync::Mutex<HashMap<String, Vec<String>>>,
     next_id: AtomicU64,
     closed: AtomicBool,
     /// 出站帧通道:连接存活期间由 run 循环持有接收端
@@ -71,6 +76,7 @@ impl WsClient {
             generation,
             subscriptions: tokio::sync::Mutex::new(HashSet::new()),
             cursors: tokio::sync::Mutex::new(HashMap::new()),
+            pending_subs: tokio::sync::Mutex::new(HashMap::new()),
             next_id: AtomicU64::new(1),
             closed: AtomicBool::new(false),
             tx: tokio::sync::Mutex::new(None),
@@ -216,10 +222,14 @@ impl WsClient {
                 if let Some(nonce) = payload.and_then(|p| p.get("nonce")) {
                     p.insert("nonce".to_string(), nonce.clone());
                 }
-                self.send("pong", Value::Object(p)).await;
+                let _ = self.send("pong", Value::Object(p)).await;
                 return;
             }
-            "server_hello" | "ack" => return,
+            "server_hello" => return,
+            "ack" => {
+                self.handle_ack(&frame).await;
+                return;
+            }
             "error" => {
                 // 连接级错误,暂只忽略(会话级 error 事件有 session_id,走下方事件分支)
                 if frame.get("session_id").is_none() {
@@ -300,8 +310,17 @@ impl WsClient {
             evt.insert("timestamp".to_string(), ts.clone());
         }
         self.dbg(&format!("EVT {ftype} {session_id}"));
+        // 存活会话补订钩子:全局事件(session.meta.updated / event.session.*)无需订阅
+        // 即可收到,它的到达本身证明会话此刻在服务端存活(createSessionState 成功),
+        // 是补订的最佳时机——新会话(event.session.created)与曾被 not_found 拒掉的
+        // 历史会话(用户重新打开时)都靠它即时挂上,不必等 30s 枚举周期
+        if ftype == "session.meta.updated" || ftype.starts_with("event.session.") {
+            self.ensure_subscribed(session_id).await;
+        }
         // 不再向前端转发全量事件,只做内部通知拦截
         self.handle_notify(ftype, &evt, session_id).await;
+        // 桌宠状态机(内部聚合,只在跃迁时 emit pet:state)
+        crate::pet::on_session_event(&self.app, ftype, session_id, &evt);
     }
 
     /// 内部通知拦截:
@@ -392,17 +411,72 @@ impl WsClient {
         }
     }
 
-    /// 发送帧:连接未 OPEN 时静默丢弃(与 TS 的 readyState 检查一致)
-    async fn send(&self, r#type: &str, payload: Value) {
+    /// 发送帧:连接未 OPEN 时静默丢弃(与 TS 的 readyState 检查一致)。
+    /// 返回实际发出的请求 id(未发送为 None),供 subscribe 登记 pending 待 ack 对账
+    async fn send(&self, r#type: &str, payload: Value) -> Option<String> {
         let tx = self.tx.lock().await;
-        if let Some(tx) = tx.as_ref() {
-            let id = self.next_id.fetch_add(1, Ordering::SeqCst);
-            let frame = json!({
-                "type": r#type,
-                "id": format!("c{id}"),
-                "payload": payload,
-            });
-            let _ = tx.send(frame.to_string());
+        let tx = tx.as_ref()?;
+        let id = self.next_id.fetch_add(1, Ordering::SeqCst);
+        let id = format!("c{id}");
+        let frame = json!({
+            "type": r#type,
+            "id": id,
+            "payload": payload,
+        });
+        let _ = tx.send(frame.to_string());
+        Some(id)
+    }
+
+    /// 订阅 ack 对账:服务端只对存活会话接受订阅(createSessionState 走
+    /// getLiveSessionById,历史会话未打开时返回 not_found;hello 恢复失败则进
+    /// resync_required)。被拒的会话必须从本地订阅集合移除,否则 subscribe 的
+    /// 去重会让它永远不再重试,该会话只剩全局广播事件(桌宠/通知随之静默)。
+    /// (实测 08-18 16:17:重启后枚举订阅历史会话被拒,执行任务全程只有
+    /// work_changed/meta.updated 两条全局广播)
+    async fn handle_ack(&self, frame: &Value) {
+        let id = frame.get("id").and_then(|v| v.as_str()).unwrap_or("");
+        let Some(payload) = frame.get("payload") else { return };
+        let list = |key: &str| -> Vec<String> {
+            payload
+                .get(key)
+                .and_then(|v| v.as_array())
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|v| v.as_str().map(String::from))
+                        .collect()
+                })
+                .unwrap_or_default()
+        };
+        // subscribe 的 ack:{accepted, not_found, resync_required};
+        // client_hello 的 ack:{accepted_subscriptions, resync_required}(无 not_found,
+        // 未找到也并入 resync_required)
+        let failed: Vec<String> = if payload.get("accepted_subscriptions").is_some() {
+            list("resync_required")
+        } else {
+            // 只处理发出过的 subscribe 帧的 ack(unsubscribe 等其余 ack 忽略)
+            if self.pending_subs.lock().await.remove(id).is_none() {
+                return;
+            }
+            let mut f = list("not_found");
+            f.extend(list("resync_required"));
+            f
+        };
+        if failed.is_empty() {
+            return;
+        }
+        {
+            let mut subs = self.subscriptions.lock().await;
+            for sid in &failed {
+                subs.remove(sid);
+            }
+        }
+        self.dbg(&format!("ACK {id} failed:{}", failed.join(",")));
+    }
+
+    /// 若本地未标记订阅则立即订阅(供全局事件钩子;subscribe 内部仍有去重)
+    async fn ensure_subscribed(&self, session_id: &str) {
+        if !self.subscriptions.lock().await.contains(session_id) {
+            self.subscribe(session_id, None).await;
         }
     }
 
@@ -434,11 +508,20 @@ impl WsClient {
             Some(c) => json!({ session_id: c }),
             None => json!({}),
         };
-        self.send(
-            "subscribe",
-            json!({ "session_ids": [session_id], "cursors": cursors }),
-        )
-        .await;
+        if let Some(id) = self
+            .send(
+                "subscribe",
+                json!({ "session_ids": [session_id], "cursors": cursors }),
+            )
+            .await
+        {
+            // 登记 pending:服务端在 ack 里回 accepted/not_found/resync_required,
+            // handle_ack 据此对账(被拒的移出订阅集合,否则去重逻辑会让它永远不再重试)
+            self.pending_subs
+                .lock()
+                .await
+                .insert(id, vec![session_id.to_string()]);
+        }
     }
 
     pub async fn unsubscribe(&self, session_id: &str) {
@@ -448,7 +531,8 @@ impl WsClient {
                 return;
             }
         }
-        self.send("unsubscribe", json!({ "session_ids": [session_id] }))
+        let _ = self
+            .send("unsubscribe", json!({ "session_ids": [session_id] }))
             .await;
     }
 

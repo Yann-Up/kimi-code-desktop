@@ -11,6 +11,7 @@
 mod cli;
 mod config;
 mod local_store;
+mod pet;
 mod rest;
 mod server;
 mod ssh;
@@ -661,6 +662,69 @@ async fn web_server_set(
     Ok(web_server_get(app))
 }
 
+/// 桌宠配置(实验性):enabled 缺省关;slug 为当前激活宠物(缺省 "kimi" 即内置)
+#[tauri::command]
+fn pet_config_get(app: AppHandle) -> Value {
+    json!({ "enabled": pet::enabled(&app), "slug": pet::active_slug(&app) })
+}
+
+/// 开关桌宠:持久化到 desktop-config.json 并即时创建/销毁悬浮窗。
+/// 必须是 async:同步命令跑在主线程,而 build() 依赖主线程事件循环初始化
+/// WebView2,同步命令里建窗会死锁(2026-08 实测:enter 后无返回)。
+#[tauri::command]
+async fn pet_set_enabled(app: AppHandle, enabled: bool) -> Result<(), String> {
+    let mut cfg = config::load(&app);
+    cfg.pet_enabled = Some(enabled);
+    config::save(&app, &cfg)?;
+    if enabled {
+        pet::show(&app)?;
+    } else {
+        pet::hide(&app);
+    }
+    // 广播配置变化:右键关宠等路径也能让设置页开关保持同步(载荷为完整 PetConfig)
+    let _ = app.emit(
+        "pet:config-changed",
+        json!({ "enabled": enabled, "slug": pet::active_slug(&app) }),
+    );
+    Ok(())
+}
+
+/// 宠物列表(M3):内置排第一,其后为扫描到的外部宠物(kimi-code 目录优先于 petdex)。
+/// 不建窗,仅读盘扫描,sync 即可
+#[tauri::command]
+fn pet_list() -> Vec<pet::PetInfo> {
+    let mut list = vec![pet::builtin_pet().info()];
+    list.extend(pet::scan_pets().into_iter().map(|p| p.info()));
+    list
+}
+
+/// 当前激活宠物完整元信息(M3):按 desktop-config.json 的 pet_slug 在扫描结果里找,
+/// 找不到/未设置回退内置宠物。不建窗,sync 即可
+#[tauri::command]
+fn pet_active_get(app: AppHandle) -> pet::PetMeta {
+    pet::resolve_pet(&pet::active_slug(&app))
+}
+
+/// 切换激活宠物(M3):校验 slug 存在(内置 "kimi" 或扫描到)→ 持久化 pet_slug →
+/// 广播 pet:config-changed(载荷为完整 PetConfig)。不建窗,sync 即可
+#[tauri::command]
+fn pet_set_active(app: AppHandle, slug: String) -> Result<(), String> {
+    if !pet::valid_slug(&slug) {
+        return Err(format!("非法宠物标识: {slug}"));
+    }
+    if slug != pet::BUILTIN_SLUG && !pet::scan_pets().iter().any(|p| p.slug == slug) {
+        return Err(format!("宠物不存在: {slug}"));
+    }
+    let mut cfg = config::load(&app);
+    cfg.pet_slug = Some(slug.clone());
+    config::save(&app, &cfg)?;
+    let _ = app.emit(
+        "pet:config-changed",
+        json!({ "enabled": cfg.pet_enabled.unwrap_or(false), "slug": slug }),
+    );
+    Ok(())
+}
+
 /// 添加通道:复用 set_connection_target 的保存/密码落 keyring 逻辑,但只追加,
 /// 不切换激活通道、不重启任何服务。id 按目标自动生成,重复报错;本机不可添加。
 /// label 省略时按目标展示名(本机 / WSL (Ubuntu) / user@host)生成
@@ -1277,6 +1341,33 @@ pub fn run() {
         }))
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_opener::init())
+        // 外部宠物精灵图协议(M3):前端 URL 形态 http://pet.localhost/<slug>
+        // (Tauri v2 在 Windows 上自定义 scheme 的访问形态)。按 slug 定位宠物目录下的
+        // 精灵图(优先 webp 其次 png)返回字节;slug 白名单校验防路径穿越;找不到 404
+        .register_uri_scheme_protocol("pet", |_ctx, request| {
+            let slug = request.uri().path().trim_start_matches('/');
+            let err = |status: u16| {
+                tauri::http::Response::builder()
+                    .status(status)
+                    .body(Vec::new())
+                    .expect("pet 协议错误响应构建失败")
+            };
+            if !pet::valid_slug(slug) {
+                return err(400);
+            }
+            match pet::load_spritesheet(slug) {
+                // ACAO:* 放行跨源读像素:PetWindow 的帧探测要对这张图 getImageData,
+                // 窗口源(dev: localhost:5188 / 打包: tauri.localhost)与 pet.localhost 不同源,
+                // 没有此头 canvas 会被污染、getImageData 抛 SecurityError
+                Some((bytes, mime)) => tauri::http::Response::builder()
+                    .status(200)
+                    .header("Content-Type", mime)
+                    .header("Access-Control-Allow-Origin", "*")
+                    .body(bytes)
+                    .expect("pet 协议响应构建失败"),
+                None => err(404),
+            }
+        })
         .manage(state)
         .invoke_handler(tauri::generate_handler![
             app_info,
@@ -1313,6 +1404,11 @@ pub fn run() {
             experimental_set,
             web_server_get,
             web_server_set,
+            pet_config_get,
+            pet_set_enabled,
+            pet_list,
+            pet_active_get,
+            pet_set_active,
             local_mcp_read,
             local_mcp_write,
             local_cli_config_read,
@@ -1366,6 +1462,12 @@ pub fn run() {
                 })
                 .build()?;
             create_tray(app.handle())?;
+            // 桌宠状态机巡检(一次性动作到期回基底 / 事件流断裂复位)
+            pet::init(app.handle());
+            // 桌宠(实验性):配置开启时启动即显示悬浮窗
+            if cfg.pet_enabled.unwrap_or(false) {
+                let _ = pet::show(app.handle());
+            }
             // 关闭拦截:任一通道后端运行中时不直接关窗,通知前端弹退出确认框(确认后走 confirm_close);
             // 覆盖标题栏关闭按钮、Alt+F4、任务栏关闭等所有关窗路径
             if let Some(win) = app.get_webview_window("main") {

@@ -16,7 +16,7 @@ Kimi Code Desktop:基于 [Kimi Code CLI](https://github.com/moonshotai/kimi-code
 
 ```
 src/                    渲染进程(React)
-  components/           壳组件:ShellHome(三 tab 主页)/ QuotaStrip / TitleBar / settings/
+  components/           壳组件:ShellHome(三 tab 主页)/ QuotaStrip / TitleBar / settings/ / pet/(桌宠窗口)
   pages/                Onboarding / Settings / stats
   platform/kimi-api.ts  壳与渲染层的 API 契约(window.kimiApi)
   platform/tauri.ts     契约的 Tauri 实现(invoke / 事件监听)
@@ -28,6 +28,7 @@ src-tauri/src/          Rust 后端
   cli.rs                CLI 自检测 / 安装 / 升级
   ssh.rs                进程内 SSH 客户端与端口转发
   config.rs / local_store.rs / target.rs   配置、本地数据直读、运行目标(本机/WSL/SSH)
+  pet.rs                桌宠悬浮窗(实验性):透明置顶小窗 + 状态机(ws.rs 事件驱动);M3 起扫描 <kimi_home>/pets 与 ~/.petdex/pets(兼容 kimi-pet.v0/petdex 布局),外部精灵图经 pet:// 自定义协议供图;开关存 desktop-config.json 的 pet_enabled/pet_slug
 build/                  图标等资源;design/ 设计稿;docs/ 评审与跟踪文档;out/renderer 前端构建产物
 ```
 
@@ -45,7 +46,8 @@ cd src-tauri && cargo check   # Rust 侧检查(提交前必过)
 ## 约定
 
 - **API 契约先行**:渲染层不直接 invoke;新增壳能力时先扩展 `platform/kimi-api.ts` 接口,再在 `platform/tauri.ts` 实现,Rust 侧在 `lib.rs` 注册命令,三处保持同步。
-- **本地数据直读 `~/.kimi-code`**(技能/子代理/mcp.json/usage 聚合);配额、统计等走 REST(Bearer 认证)。
+- **本地数据直读 kimi_home 目录**(技能/子代理/mcp.json/usage 聚合);配额、统计等走 REST(Bearer 认证)。
+  ⚠️ kimi_home **不一定是 `~/.kimi-code`**:`cli::kimi_home()` 的解析顺序是 用户自定义(desktop-config.json 的 kimi_home)> `KIMI_CODE_HOME` 环境变量 > 默认 `~/.kimi-code`。任何读写 kimi-code 数据目录的代码都必须走 `cli::kimi_home()`,严禁硬编码 `~/.kimi-code`(M3 实测:本机设了 `KIMI_CODE_HOME=D:\Administrator\kimi-code`,写默认目录会导致功能静默失效)。
 - **配置原子写**:`desktop-config.json` / `mcp.json` 先写临时文件再替换;mcp.json 写盘前留 `.kimi-desktop-bak` 备份。
 - **config.toml 合并写用 `toml_edit`** 以保留注释/格式;只读解析用 `toml`。
 - 注释和文档用中文(README 中英双语),代码标识符用英文。
@@ -64,3 +66,4 @@ cd src-tauri && cargo check   # Rust 侧检查(提交前必过)
 - 仅 Windows(NSIS)验证过;改动尽量保持跨平台可行,但不要为未测试平台做投机性适配。
 - 许可证 AGPL-3.0-only,勿引入不兼容许可证的运行时依赖。
 - `token 时序竞争`、`崩溃自愈(server:exited)` 等时序逻辑见 README「关键实现细节」,改动前先读。
+- **运行期建窗/关窗的命令必须是 async**:同步命令占住主线程,`WebviewWindowBuilder::build()` 等事件循环初始化 WebView2 会死锁(桌宠 M1 实测踩过,见 docs/desktop-pet-design.md)。

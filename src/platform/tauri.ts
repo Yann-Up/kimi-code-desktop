@@ -9,6 +9,10 @@ import type {
   ApiCallsResult,
   ChannelsState,
   KimiApi,
+  PetConfig,
+  PetInfo,
+  PetMeta,
+  PetState,
   ServerErrorInfo,
   ServerReadyInfo,
   TurnEndedInfo,
@@ -112,7 +116,17 @@ const api: KimiApi = {
   experimentalSet: (flags) => invoke('experimental_set', { flags }),
   webServerGet: () => invoke<WebServerOptions>('web_server_get'),
   webServerSet: (opts) => invoke<WebServerOptions>('web_server_set', { port: opts.port }),
-  localDrives: () => invoke('local_drives')
+  localDrives: () => invoke('local_drives'),
+
+  // pet
+  petConfigGet: () => invoke<PetConfig>('pet_config_get'),
+  petSetEnabled: (enabled) => invoke('pet_set_enabled', { enabled }),
+  onPetState: (cb) => on<PetState>('pet:state', cb),
+  onPetTool: (cb) => on<{ kind: string }>('pet:tool', (p) => cb(p.kind)),
+  onPetConfigChanged: (cb) => on<PetConfig>('pet:config-changed', cb),
+  petList: () => invoke<PetInfo[]>('pet_list'),
+  petActiveGet: () => invoke<PetMeta>('pet_active_get'),
+  petSetActive: (slug) => invoke('pet_set_active', { slug })
 }
 
 /** 安装到 window.kimiApi */

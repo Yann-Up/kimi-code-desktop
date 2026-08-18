@@ -33,6 +33,10 @@ pub struct DesktopConfig {
     pub experimental: Option<std::collections::HashMap<String, bool>>,
     /// kimi web 首选端口(None = 默认 58666;被占时仍 +1 顺延)
     pub web_port: Option<u16>,
+    /// 桌宠悬浮窗开关(实验性,缺省关;见 pet.rs)
+    pub pet_enabled: Option<bool>,
+    /// 当前激活宠物 slug(缺省 "kimi" 即内置;外部宠物为目录名,见 pet.rs 扫描逻辑)
+    pub pet_slug: Option<String>,
 }
 
 impl DesktopConfig {

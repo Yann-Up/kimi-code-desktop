@@ -108,6 +108,61 @@ export interface TurnEndedInfo {
   session_id: string
 }
 
+/** 桌宠配置(实验性功能;设计见 docs/desktop-pet-design.md) */
+export interface PetConfig {
+  enabled: boolean
+  /** 当前激活宠物 slug(缺省 "kimi" 即内置) */
+  slug: string
+}
+
+/** 桌宠状态(pet:state 事件载荷;M2 起由 Rust 侧状态机驱动)。
+ * running-left/running-right 仅前端拖拽时本地使用,Rust 不 emit */
+export type PetState =
+  | 'idle'
+  | 'running'
+  | 'waiting'
+  | 'jumping'
+  | 'failed'
+  | 'review'
+  | 'running-left'
+  | 'running-right'
+
+/** 单个状态的动画参数(与 Rust 侧 PetAnim 对应,serde camelCase) */
+export interface PetAnim {
+  /** 精灵图内所在行(从 0 起) */
+  row: number
+  /** 该行帧数 */
+  frames: number
+  /** 播放帧率 */
+  fps: number
+  /** 是否循环播放(false 播完停末帧) */
+  loop: boolean
+}
+
+/** 宠物完整元信息(与 Rust 侧 PetMeta 对应;states 以 idle/running/waiting/jumping/failed 为 key) */
+export interface PetMeta {
+  /** 唯一标识(内置为 "kimi",外部为目录名) */
+  slug: string
+  /** 展示名 */
+  name: string
+  /** 来源:builtin(内置)/ kimi-code(~/.kimi-code/pets)/ petdex(~/.petdex/pets) */
+  source: string
+  /** 单帧宽度(px) */
+  frameW: number
+  /** 单帧高度(px) */
+  frameH: number
+  /** 各状态动画参数(key 为 PetState) */
+  states: Record<string, PetAnim>
+}
+
+/** 宠物列表项(pet_list 返回;内置排第一) */
+export interface PetInfo {
+  slug: string
+  name: string
+  /** 来源:builtin / kimi-code / petdex */
+  source: string
+}
+
 /** 单次 API 调用明细(step.end 口径,serde camelCase;ttftMs/streamMs 缺字段时省略) */
 export interface ApiCallItem {
   time: number // 毫秒时间戳
@@ -234,6 +289,24 @@ export interface KimiApi {
   /** 保存 kimi web 启动参数;激活通道后端运行中会自动重启生效 */
   webServerSet(opts: WebServerOptions): Promise<WebServerOptions>
   localDrives(): Promise<any>
+
+  // pet(桌宠,实验性)
+  /** 桌宠配置(enabled 缺省关) */
+  petConfigGet(): Promise<PetConfig>
+  /** 开关桌宠悬浮窗:持久化并即时创建/销毁 */
+  petSetEnabled(enabled: boolean): Promise<void>
+  /** 桌宠状态变化(pet:state;仅桌宠窗口使用,M2 接入驱动) */
+  onPetState(cb: (state: PetState) => void): Unsubscribe
+  /** 工具调用脉冲(pet:tool,载荷 {kind};M4 起驱动差异化动作与气泡文案,同类 1s 节流) */
+  onPetTool(cb: (kind: string) => void): Unsubscribe
+  /** 桌宠配置变化(pet:config-changed;切换开关/宠物后同步其他页面) */
+  onPetConfigChanged(cb: (cfg: PetConfig) => void): Unsubscribe
+  /** 宠物列表(内置排第一,外部宠物按目录扫描去重,kimi-code 优先) */
+  petList(): Promise<PetInfo[]>
+  /** 当前激活宠物完整元信息(未设置或找不到时回退内置) */
+  petActiveGet(): Promise<PetMeta>
+  /** 切换激活宠物:校验 slug 存在后持久化并发 pet:config-changed */
+  petSetActive(slug: string): Promise<void>
 }
 
 declare global {

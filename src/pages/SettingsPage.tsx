@@ -8,6 +8,7 @@ import {
   FlaskConical,
   Globe,
   Network,
+  PawPrint,
   Repeat,
   Settings2,
   SlidersHorizontal,
@@ -17,6 +18,7 @@ import {
 import { useUi } from '../stores/ui'
 import { GeneralSettings } from './settings/GeneralSettings'
 import { ChannelsSettings } from './settings/ChannelsSettings'
+import { DesktopExperimentalSettings } from './settings/DesktopExperimentalSettings'
 import { CliGeneralSettings } from './settings/CliGeneralSettings'
 import { CliModelsSettings } from './settings/CliModelsSettings'
 import { CliThinkingSettings } from './settings/CliThinkingSettings'
@@ -40,7 +42,8 @@ const GROUPS: { label: string; items: SectionDef[] }[] = [
     label: '桌面',
     items: [
       { id: 'general', label: '常规', icon: Settings2 },
-      { id: 'channels', label: '通道', icon: Network }
+      { id: 'channels', label: '通道', icon: Network },
+      { id: 'desktop-experimental', label: '实验性功能', icon: PawPrint }
     ]
   },
   {
@@ -77,6 +80,8 @@ export function SettingsPage() {
         return <GeneralSettings />
       case 'channels':
         return <ChannelsSettings />
+      case 'desktop-experimental':
+        return <DesktopExperimentalSettings />
       case 'cli-general':
         return <CliGeneralSettings />
       case 'cli-models':
