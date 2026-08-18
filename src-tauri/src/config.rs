@@ -33,10 +33,6 @@ pub struct DesktopConfig {
     pub experimental: Option<std::collections::HashMap<String, bool>>,
     /// kimi web 首选端口(None = 默认 58666;被占时仍 +1 顺延)
     pub web_port: Option<u16>,
-    /// 绑定 0.0.0.0 允许局域网访问(默认 false = 仅 127.0.0.1)
-    pub web_open_host: Option<bool>,
-    /// 追加 --allowed-host(局域网内用 IP/域名访问时过 DNS-rebinding 检查用)
-    pub web_allowed_hosts: Option<Vec<String>>,
 }
 
 impl DesktopConfig {
@@ -52,12 +48,10 @@ impl DesktopConfig {
             .unwrap_or_else(|| "local".to_string())
     }
 
-    /// kimi web 启动参数(未配置的项取默认:端口 58666、不开放局域网、无 allowed-host)
+    /// kimi web 启动参数(未配置时取默认:端口 58666)
     pub fn web_options(&self) -> crate::server::WebOptions {
         crate::server::WebOptions {
             port: self.web_port.unwrap_or(crate::server::START_PORT),
-            open_host: self.web_open_host.unwrap_or(false),
-            allowed_hosts: self.web_allowed_hosts.clone().unwrap_or_default(),
         }
     }
 }

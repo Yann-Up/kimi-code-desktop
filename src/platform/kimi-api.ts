@@ -73,10 +73,6 @@ export interface ChannelsState {
 export interface WebServerOptions {
   /** 首选端口(默认 58666;被占时顺延) */
   port: number
-  /** 绑定 0.0.0.0 允许局域网访问(--host 0.0.0.0) */
-  openHost: boolean
-  /** 追加 --allowed-host(局域网内用 IP/域名访问必需) */
-  allowedHosts: string[]
 }
 
 /** server:ready 事件载荷:cliVersion/port/meta 之外新增 token(拼 iframe src 用)与 channel */
@@ -86,6 +82,8 @@ export interface ServerReadyInfo {
   port: number
   meta: unknown
   token: string
+  /** 服务端下发了 frame-ancestors/X-Frame-Options(--host 0.0.0.0 会触发),iframe 将被浏览器拦截 */
+  frameBlocked?: boolean
 }
 
 /** server:stopped 事件载荷 */
@@ -195,6 +193,8 @@ export interface KimiApi {
   onServerError(cb: (info: ServerErrorInfo) => void): Unsubscribe
   /** 后端运行中用户请求关窗(标题栏/Alt+F4 等)时触发,前端应弹退出确认框 */
   onCloseRequested(cb: () => void): Unsubscribe
+  /** 系统浏览器打开 http/https 链接(iframe 被 frame-ancestors 拦截时的降级入口) */
+  openExternal(url: string): Promise<void>
   /** 确认退出:真正关闭应用(后端会被优雅关停) */
   confirmClose(): Promise<any>
 

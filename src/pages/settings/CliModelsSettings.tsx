@@ -5,8 +5,9 @@
  * 密钥以密码形式回显(默认掩码,可点眼睛查看明文),清空 = 保持不变;其他可选项留空 = 删除该键(null 合并语义)。
  */
 import { useCallback, useEffect, useState } from 'react'
-import { Boxes, ChevronDown, ChevronRight, Cpu, Eye, EyeOff, Pencil, Plus, Star, Trash2 } from 'lucide-react'
+import { Bot, Boxes, ChevronDown, ChevronRight, Cpu, Eye, EyeOff, Pencil, Plus, Star, Trash2 } from 'lucide-react'
 import { Card, Empty, GroupLabel, Section } from '../../components/settings/common'
+import { ToggleField } from './cliForm'
 
 /* ---------------- 数据提取小工具(config.toml 解析结果为 snake_case) ---------------- */
 
@@ -167,20 +168,27 @@ interface ModelDraft {
   default_effort: string
 }
 
+/** 子智能体模型池条目草稿:alias 引用 models 中的模型别名,description 是主 agent 的挑选依据 */
+interface SecModelDraft {
+  alias: string
+  description: string
+}
+
 export function CliModelsSettings() {
   const [config, setConfig] = useState<Rec | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
 
-  const reload = useCallback(async () => {
-    setLoading(true)
+  /** silent = true 时后台刷新(保存后调用):不卸载表单,避免页面高度塌陷导致滚动跳顶 */
+  const reload = useCallback(async (silent = false) => {
+    if (!silent) setLoading(true)
     setError('')
     try {
       setConfig(await window.kimiApi.cliConfigParsed())
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {
-      setLoading(false)
+      if (!silent) setLoading(false)
     }
   }, [])
 
@@ -191,7 +199,7 @@ export function CliModelsSettings() {
   return (
     <Section
       title="模型与供应商"
-      desc="可视化管理 config.toml 的 providers / models / default_model;直接写文件(保留注释、自动备份),不依赖服务运行"
+      desc="可视化管理 config.toml 的 providers / models / default_model / secondary_model;直接写文件(保留注释、自动备份),不依赖服务运行"
     >
       {loading ? (
         <Empty text="加载中…" />
@@ -214,10 +222,20 @@ export function CliModelsSettings() {
   )
 }
 
-function ModelsForm({ config, reload }: { config: Rec; reload: () => Promise<void> }) {
+function ModelsForm({ config, reload }: { config: Rec; reload: (silent?: boolean) => Promise<void> }) {
   const providers = asRec(config.providers)
   const models = asRec(config.models)
   const defaultModel = strOf(config.default_model)
+  // 子智能体模型池:[secondary_model] default_model + [secondary_model.models] 别名 → 描述 + force
+  // 官方语义:仅写 default_model(无 models 表)= 隐式单条目池;有 models 表时 default_model 必填且必须是池中 key;
+  // force = true 收回主 agent 选择权(需 default_model,与 models 表互斥);primary 为保留字,不能作池中 key
+  const secModel = asRec(config.secondary_model)
+  const secModels = asRec(secModel.models)
+  const secDefault = strOf(secModel.default_model)
+  const secForce = secModel.force === true
+  // 非规范键(model / default_effort 不在官方 secondary_model 字段中),提示用户迁移
+  const secLegacyModel = strOf(secModel.model)
+  const secLegacyEffort = strOf(secModel.default_effort)
 
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
@@ -227,19 +245,21 @@ function ModelsForm({ config, reload }: { config: Rec; reload: () => Promise<voi
   const [providerDraft, setProviderDraft] = useState<ProviderDraft | null>(null)
   const [editModel, setEditModel] = useState<string | null>(null)
   const [modelDraft, setModelDraft] = useState<ModelDraft | null>(null)
+  const [editSecModel, setEditSecModel] = useState<string | null>(null)
+  const [secDraft, setSecDraft] = useState<SecModelDraft | null>(null)
   // 二次确认删除
   const [confirmDel, setConfirmDel] = useState('')
   // 模型分组的折叠状态(按供应商名)
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
 
-  /** 统一保存入口:合并写 → 重读文件 → 提示 */
+  /** 统一保存入口:合并写 → 静默重读文件(不卸载表单,保持滚动位置)→ 提示 */
   const apply = async (patch: Rec, okText: string) => {
     setSaving(true)
     setError('')
     setSavedMsg('')
     try {
       await window.kimiApi.cliConfigMerge(patch)
-      await reload()
+      await reload(true)
       setSavedMsg(`${okText};新会话生效(如未生效请重启服务)`)
       setTimeout(() => setSavedMsg(''), 4000)
       return true
@@ -348,6 +368,80 @@ function ModelsForm({ config, reload }: { config: Rec; reload: () => Promise<voi
 
   const setDefault = async (alias: string) => {
     await apply({ default_model: alias }, `默认模型已切换为 ${alias}`)
+  }
+
+  /* ---------------- 子智能体模型池(secondary_model) ---------------- */
+
+  const startEditSecModel = (alias: string) => {
+    setEditSecModel(alias)
+    setSecDraft({ alias, description: strOf(secModels[alias]) })
+    setConfirmDel('')
+  }
+
+  const saveSecModel = async () => {
+    const d = secDraft
+    if (!d) return
+    const alias = d.alias.trim()
+    if (!alias) return setError('模型别名不能为空')
+    if (alias === 'primary') return setError('primary 是保留字(始终绑定调用方模型),不能作为池条目')
+    if (!models[alias]) return setError(`模型别名 ${alias} 未在上方 models 中配置,请先添加该模型`)
+    if (editSecModel === '__add__' && secModels[alias] !== undefined)
+      return setError(`模型池已包含 ${alias}`)
+    const pool: Rec = { [alias]: d.description.trim() }
+    // 从隐式单条目池(仅 default_model)扩建时,给默认模型补一条空描述,保持 default_model 是池中 key(同 /secondary-model 行为)
+    if (Object.keys(secModels).length === 0 && secDefault && secDefault !== alias && models[secDefault])
+      pool[secDefault] = ''
+    const sec: Rec = { models: pool }
+    // 此前连 default_model 也未配置时,池内第一个模型自动成为默认,避免 default_model 缺失导致启动报错
+    if (Object.keys(secModels).length === 0 && !secDefault) sec.default_model = alias
+    // force 与 models 表互斥,建表时清除
+    if (secForce) sec.force = null
+    // 顺带清掉非规范键
+    if (secLegacyModel) sec.model = null
+    if (secLegacyEffort) sec.default_effort = null
+    if (await apply({ secondary_model: sec }, `子智能体模型 ${alias} 已加入模型池`)) {
+      setEditSecModel(null)
+      setSecDraft(null)
+    }
+  }
+
+  const removeSecModel = async (alias: string) => {
+    if (confirmDel !== `s:${alias}`) return setConfirmDel(`s:${alias}`)
+    const remaining = Object.keys(secModels).filter((a) => a !== alias)
+    // 有 models 表时 default_model 必须是池中 key:删默认项须先切换默认
+    if (alias === secDefault && remaining.length > 0) {
+      setConfirmDel('')
+      return setError(`${alias} 是子智能体默认模型,请先把默认切换为池中其他模型`)
+    }
+    // 删除最后一个条目:整表移除;若 default_model 指向它,保留 default_model 即降级为合法的隐式单条目池
+    const patch: Rec =
+      remaining.length === 0
+        ? { secondary_model: { models: null } }
+        : { secondary_model: { models: { [alias]: null } } }
+    if (await apply(patch, `子智能体模型 ${alias} 已移出模型池`)) setConfirmDel('')
+  }
+
+  const setSecDefault = async (alias: string) => {
+    await apply({ secondary_model: { default_model: alias } }, `子智能体默认模型已切换为 ${alias}`)
+  }
+
+  /** force 开关:固定所有 subagent 到 default_model,主 agent 不可改选(需 default_model,与 models 表互斥) */
+  const toggleForce = async (on: boolean) => {
+    if (on && !secDefault) return setError('开启 force 前请先配置子智能体默认模型')
+    await apply(
+      { secondary_model: { force: on ? true : null } },
+      on ? '已固定所有 subagent 到默认模型' : '已取消强制绑定'
+    )
+  }
+
+  /** 非规范键迁移:default_model 单写即为合法的单条目隐式池 */
+  const migrateLegacy = async () => {
+    if (!models[secLegacyModel])
+      return setError(`${secLegacyModel} 未在上方 models 中配置,请先添加该模型再迁移`)
+    await apply(
+      { secondary_model: { default_model: secLegacyModel, model: null, default_effort: null } },
+      '已迁移为标准 secondary_model 配置'
+    )
   }
 
   /* ---------------- 渲染 ---------------- */
@@ -622,6 +716,210 @@ function ModelsForm({ config, reload }: { config: Rec; reload: () => Promise<voi
             }}
           >
             <Plus size={12} /> 添加模型
+          </button>
+        )}
+      </Card>
+
+      <GroupLabel>子智能体模型池(secondary_model)</GroupLabel>
+      <Card className="space-y-3">
+        <p className="text-[12px] text-text-tertiary">
+          实验功能(需 KIMI_CODE_EXPERIMENTAL_SECONDARY_MODEL=1 或 KIMI_CODE_EXPERIMENTAL_FLAG=1
+          启用):池内每个模型配一句描述(可留空),主 agent 派生子任务时按描述挑选;保留字 "primary"
+          始终可选(绑定调用方模型)
+        </p>
+        {Object.keys(secModels).length > 0 && !secDefault && (
+          <p className="rounded-lg border border-danger/20 bg-danger-soft px-3 py-2 text-[12px] text-danger">
+            已配置 models 表但缺少 default_model,会话启动会报错;请点池中某个模型的星标设为默认
+          </p>
+        )}
+        {Object.keys(secModels).length > 0 && secDefault && !(secDefault in secModels) && (
+          <p className="rounded-lg border border-danger/20 bg-danger-soft px-3 py-2 text-[12px] text-danger">
+            default_model(<span className="font-mono">{secDefault}</span>
+            )不在 models 表中,会话启动会报错;请把它加入模型池或改设为池中别名
+          </p>
+        )}
+        {secForce && Object.keys(secModels).length > 0 && (
+          <p className="rounded-lg border border-danger/20 bg-danger-soft px-3 py-2 text-[12px] text-danger">
+            force 与 models 表不能同时使用,会话启动会报错;请清空模型池或关闭 force
+          </p>
+        )}
+        {Object.keys(secModels).length === 0 &&
+          editSecModel !== '__add__' &&
+          (secLegacyModel ? (
+            <div className="rounded-lg border border-warning/20 bg-warning-soft px-3 py-2">
+              <p className="text-[12.5px] text-warning">
+                存在非规范键:
+                <span className="font-mono">model = "{secLegacyModel}"</span>
+                {secLegacyEffort && <span className="font-mono">、default_effort = "{secLegacyEffort}"</span>}
+                (不在官方 secondary_model 字段中)
+              </p>
+              <p className="mt-1 text-[12px] text-text-tertiary">
+                官方格式为 default_model + 可选 models 表;迁移会把该模型写为
+                default_model(即单条目隐式池)并清除非规范键
+              </p>
+              <button
+                className="mt-2 inline-flex items-center gap-1 rounded-lg border border-border bg-surface px-2.5 py-1 text-[12.5px] text-text-secondary transition-colors hover:border-primary hover:text-primary"
+                disabled={saving}
+                onClick={() => void migrateLegacy()}
+              >
+                <Plus size={12} /> 迁移为标准配置
+              </button>
+            </div>
+          ) : secDefault ? (
+            <div className="rounded-lg border border-border-light p-3">
+              <div className="flex items-center gap-2">
+                <Bot size={14} className="shrink-0 text-primary" />
+                <span className="truncate font-mono text-[13px] font-medium">{secDefault}</span>
+                <span className="rounded bg-primary px-1.5 py-0.5 text-[11px] font-medium text-white">默认</span>
+                {!models[secDefault] && (
+                  <span
+                    className="rounded bg-danger-soft px-1.5 py-0.5 text-[11px] text-danger"
+                    title="该别名未在上方 models 中配置,子智能体调用会失败"
+                  >
+                    模型未配置
+                  </span>
+                )}
+              </div>
+              <p className="mt-1 text-[12px] text-text-tertiary">
+                隐式单条目池(仅 default_model,无 models 表);添加更多模型时会自动为它补一条空描述
+              </p>
+            </div>
+          ) : (
+            <p className="text-[12.5px] text-text-tertiary">未配置:subagent 继承主 agent 正在运行的模型</p>
+          ))}
+        {Object.keys(secModels).length === 0 && (
+          <ToggleField
+            label="固定到默认模型(force)"
+            desc="所有 subagent 强制使用默认模型,主 agent 派生时不能改选;需先配置默认模型,与 models 表互斥"
+            checked={secForce}
+            onChange={(v) => void toggleForce(v)}
+          />
+        )}
+        {Object.entries(secModels).map(([alias, desc]) => {
+          const isDefault = alias === secDefault
+          const editing = editSecModel === alias && secDraft
+          const missing = !models[alias]
+          return (
+            <div key={alias} className="rounded-lg border border-border-light p-3">
+              <div className="flex items-center gap-2">
+                <Bot size={14} className="shrink-0 text-primary" />
+                <span className="truncate font-mono text-[13px] font-medium">{alias}</span>
+                {isDefault && (
+                  <span className="rounded bg-primary px-1.5 py-0.5 text-[11px] font-medium text-white">默认</span>
+                )}
+                {missing && (
+                  <span
+                    className="rounded bg-danger-soft px-1.5 py-0.5 text-[11px] text-danger"
+                    title="该别名未在上方 models 中配置,子智能体调用会失败"
+                  >
+                    模型未配置
+                  </span>
+                )}
+                <div className="ml-auto flex shrink-0 gap-1.5">
+                  {!isDefault && (
+                    <button
+                      className="rounded-lg border border-border p-1.5 text-text-tertiary hover:border-primary-border hover:text-primary"
+                      title="设为子智能体默认模型"
+                      disabled={saving}
+                      onClick={() => void setSecDefault(alias)}
+                    >
+                      <Star size={13} />
+                    </button>
+                  )}
+                  <button
+                    className="rounded-lg border border-border p-1.5 text-text-tertiary hover:bg-surface-tertiary"
+                    title="编辑描述"
+                    onClick={() => (editing ? setEditSecModel(null) : startEditSecModel(alias))}
+                  >
+                    <Pencil size={13} />
+                  </button>
+                  <button
+                    className={`rounded-lg border p-1.5 transition-colors ${
+                      confirmDel === `s:${alias}`
+                        ? 'border-danger bg-danger-soft text-danger'
+                        : 'border-border text-text-tertiary hover:bg-danger-soft hover:text-danger'
+                    }`}
+                    title={confirmDel === `s:${alias}` ? '再点一次确认移出' : '移出模型池'}
+                    onClick={() => void removeSecModel(alias)}
+                  >
+                    <Trash2 size={13} />
+                  </button>
+                </div>
+              </div>
+              {!editing && (
+                <p className="mt-1 text-[12px] text-text-tertiary">{strOf(desc) || '(无描述)'}</p>
+              )}
+              {editing && (
+                <div className="mt-3 space-y-2 border-t border-border-light pt-3">
+                  <Row label="模型别名">
+                    <span className="font-mono text-[12.5px] text-text-secondary">{secDraft.alias}</span>
+                  </Row>
+                  <Row label="描述">
+                    <TextInput
+                      value={secDraft.description}
+                      onChange={(v) => setSecDraft({ ...secDraft, description: v })}
+                      placeholder="主 agent 的挑选依据,如:快速便宜,适合日常重构(可留空)"
+                    />
+                  </Row>
+                  <div className="flex justify-end gap-2 pt-1">
+                    <button className="rounded-lg border border-border px-3 py-1 text-[12.5px] text-text-secondary hover:bg-surface-tertiary" onClick={() => setEditSecModel(null)}>
+                      取消
+                    </button>
+                    <button className="rounded-lg bg-primary px-3 py-1 text-[12.5px] font-medium text-white hover:bg-primary-hover disabled:opacity-50" disabled={saving} onClick={() => void saveSecModel()}>
+                      {saving ? '保存中…' : '保存'}
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )
+        })}
+        {editSecModel === '__add__' && secDraft && (
+          <div className="rounded-lg border border-dashed border-primary-border bg-primary-soft/40 p-3">
+            <div className="space-y-2">
+              <Row label="模型别名">
+                <Select
+                  value={secDraft.alias}
+                  onChange={(v) => setSecDraft({ ...secDraft, alias: v })}
+                  options={Object.keys(models).filter((a) => !(a in secModels))}
+                />
+              </Row>
+              <Row label="描述">
+                <TextInput
+                  value={secDraft.description}
+                  onChange={(v) => setSecDraft({ ...secDraft, description: v })}
+                  placeholder="主 agent 的挑选依据,如:擅长复杂推理与深度调试,难题选它(可留空)"
+                />
+              </Row>
+              <div className="flex justify-end gap-2 pt-1">
+                <button className="rounded-lg border border-border px-3 py-1 text-[12.5px] text-text-secondary hover:bg-surface-tertiary" onClick={() => setEditSecModel(null)}>
+                  取消
+                </button>
+                <button className="rounded-lg bg-primary px-3 py-1 text-[12.5px] font-medium text-white hover:bg-primary-hover disabled:opacity-50" disabled={saving} onClick={() => void saveSecModel()}>
+                  {saving ? '保存中…' : '添加'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+        {editSecModel !== '__add__' && (
+          <button
+            className="inline-flex items-center gap-1 rounded-lg border border-dashed border-border px-2.5 py-1 text-[12.5px] text-text-secondary transition-colors hover:border-primary hover:bg-primary-soft hover:text-primary disabled:opacity-50"
+            disabled={Object.keys(models).filter((a) => !(a in secModels)).length === 0}
+            title={
+              Object.keys(models).length === 0
+                ? '请先在上方添加模型'
+                : Object.keys(models).filter((a) => !(a in secModels)).length === 0
+                  ? '所有模型都已在池中'
+                  : ''
+            }
+            onClick={() => {
+              setEditSecModel('__add__')
+              setSecDraft({ alias: Object.keys(models).filter((a) => !(a in secModels))[0] ?? '', description: '' })
+              setConfirmDel('')
+            }}
+          >
+            <Plus size={12} /> 添加子智能体模型
           </button>
         )}
       </Card>

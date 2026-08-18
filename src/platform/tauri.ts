@@ -76,6 +76,7 @@ const api: KimiApi = {
   onServerError: (cb) => on<ServerErrorInfo>('server:error', cb),
   onCloseRequested: (cb) => on('app:close-requested', cb),
   confirmClose: () => invoke('confirm_close'),
+  openExternal: (url) => invoke<void>('open_external', { url }),
 
   // web ui
   webUiUrl: (channel) => invoke<string>('web_ui_url', { channel }),
@@ -110,12 +111,7 @@ const api: KimiApi = {
   experimentalGet: () => invoke<Record<string, boolean>>('experimental_get'),
   experimentalSet: (flags) => invoke('experimental_set', { flags }),
   webServerGet: () => invoke<WebServerOptions>('web_server_get'),
-  webServerSet: (opts) =>
-    invoke<WebServerOptions>('web_server_set', {
-      port: opts.port,
-      openHost: opts.openHost,
-      allowedHosts: opts.allowedHosts
-    }),
+  webServerSet: (opts) => invoke<WebServerOptions>('web_server_set', { port: opts.port }),
   localDrives: () => invoke('local_drives')
 }
 

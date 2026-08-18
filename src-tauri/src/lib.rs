@@ -234,6 +234,17 @@ async fn app_open_logs(app: AppHandle) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
+/// 系统浏览器打开 http/https 链接(iframe 被 frame-ancestors 拦截时的降级入口);
+/// 与 on_new_window 同一红线:仅 http/https,其他 scheme 拒绝
+#[tauri::command]
+fn open_external(url: String) -> Result<(), String> {
+    let lower = url.to_lowercase();
+    if !lower.starts_with("http://") && !lower.starts_with("https://") {
+        return Err("仅允许 http/https 链接".to_string());
+    }
+    tauri_plugin_opener::open_url(&url, None::<&str>).map_err(|e| e.to_string())
+}
+
 /// 前端在退出确认弹窗中点"退出"后调用:直接退出(仍走 ExitRequested 优雅关停)
 #[tauri::command]
 fn confirm_close(app: AppHandle) {
@@ -478,6 +489,7 @@ async fn restart_backend(app: &AppHandle, state: &AppState) -> Result<(), String
                     "port": info.port,
                     "token": info.token,
                     "meta": info.meta,
+                    "frameBlocked": info.frame_blocked,
                 }),
             );
             Ok(())
@@ -614,42 +626,26 @@ async fn experimental_set(
     Ok(())
 }
 
-/// 读取 kimi web 启动参数(端口 / 局域网开放 / allowed-host,未配置项回默认)
+/// 读取 kimi web 启动参数(首选端口,未配置回默认)
 #[tauri::command]
 fn web_server_get(app: AppHandle) -> Value {
     let opts = config::load(&app).web_options();
-    json!({
-        "port": opts.port,
-        "openHost": opts.open_host,
-        "allowedHosts": opts.allowed_hosts,
-    })
+    json!({ "port": opts.port })
 }
 
 /// 保存 kimi web 启动参数:持久化到 desktop-config.json 并更新运行时;
-/// 激活通道后端运行中则自动重启(端口/host 是进程启动参数,需重启生效)
+/// 激活通道后端运行中则自动重启(端口是进程启动参数,需重启生效)
 #[tauri::command]
 async fn web_server_set(
     app: AppHandle,
     state: State<'_, Arc<AppState>>,
     port: u16,
-    open_host: bool,
-    allowed_hosts: Option<Vec<String>>,
 ) -> Result<Value, String> {
     if port == 0 {
         return Err("端口必须大于 0".to_string());
     }
-    // 过滤空白项,逗号分隔也顺手拆开(设置页以逗号分隔输入)
-    let hosts: Vec<String> = allowed_hosts
-        .unwrap_or_default()
-        .iter()
-        .flat_map(|h| h.split(','))
-        .map(|h| h.trim().to_string())
-        .filter(|h| !h.is_empty())
-        .collect();
     let mut cfg = config::load(&app);
     cfg.web_port = Some(port);
-    cfg.web_open_host = Some(open_host);
-    cfg.web_allowed_hosts = Some(hosts);
     config::save(&app, &cfg)?;
     server::set_web_options(cfg.web_options());
     let channel = cli::active_channel();
@@ -1253,6 +1249,7 @@ async fn run_bootstrap(app: AppHandle, state: Arc<AppState>, channel: String) {
                 "port": info.port,
                 "token": info.token,
                 "meta": info.meta,
+                "frameBlocked": info.frame_blocked,
             }),
         );
         Ok::<(), String>(())
@@ -1285,6 +1282,7 @@ pub fn run() {
             app_info,
             web_ui_url,
             app_open_logs,
+            open_external,
             confirm_close,
             cli_upgrade,
             cli_npm_upgrade,

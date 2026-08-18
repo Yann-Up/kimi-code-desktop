@@ -1,8 +1,8 @@
 //! server-manager: 管理 `kimi web` 服务进程的生命周期(本机 / WSL / SSH 三种连接目标)。
 //! - 检测 kimi CLI 是否存在及版本
-//! - 启动前回收同 home 的残留实例(崩溃/强杀留下的孤儿,POST shutdown + pid 强杀兜底),
-//!   让端口恒定为 58666:iframe 源(origin)稳定,web UI 按源存 localStorage 的
-//!   "新浏览器"验证才不会每次启动重弹
+//! - 启动前回收首选端口(默认 58666)上的残留实例(崩溃/强杀留下的孤儿,POST shutdown +
+//!   pid 强杀兜底;其他端口上用户另开的 kimi web 不动),让端口恒定:iframe 源(origin)稳定,
+//!   web UI 按源存 localStorage 的"新浏览器"验证才不会每次启动重弹
 //! - 选择空闲端口,按连接目标启动 `kimi web --no-open --port <p>`
 //!   (Local/WSL 为本地子进程;SSH 为 russh exec_keepalive + 进程内端口转发)
 //! - 读取 token:先解析启动 banner(CLI 0.29.2+ 只在 banner 打印 Token 行),
@@ -34,57 +34,17 @@ const BANNER_TOKEN_TIMEOUT: Duration = Duration::from_secs(12);
 pub struct WebOptions {
     /// 首选端口(默认 58666;被占时 free_port 顺延)
     pub port: u16,
-    /// 绑定 0.0.0.0 允许局域网访问(--host 0.0.0.0);默认 false = 仅 127.0.0.1
-    pub open_host: bool,
-    /// 追加 --allowed-host:非 loopback 的 Host 头默认被 DNS-rebinding 检查拦截,
-    /// 局域网内用 IP/域名访问时必须把对应主机名加进来
-    pub allowed_hosts: Vec<String>,
 }
 
 impl Default for WebOptions {
     fn default() -> Self {
-        Self {
-            port: START_PORT,
-            open_host: false,
-            allowed_hosts: Vec::new(),
-        }
-    }
-}
-
-impl WebOptions {
-    /// Local/WSL 子进程的命令行参数形态
-    pub fn cli_args(&self) -> Vec<String> {
-        let mut args = Vec::new();
-        if self.open_host {
-            args.push("--host".into());
-            args.push("0.0.0.0".into());
-        }
-        for h in &self.allowed_hosts {
-            args.push("--allowed-host".into());
-            args.push(h.clone());
-        }
-        args
-    }
-
-    /// SSH/WSL 拼接进 shell 命令串的形态(host 值过单引号转义)
-    pub fn shell_suffix(&self) -> String {
-        let mut s = String::new();
-        if self.open_host {
-            s.push_str(" --host 0.0.0.0");
-        }
-        for h in &self.allowed_hosts {
-            s.push_str(&format!(" --allowed-host {}", crate::target::sq(h)));
-        }
-        s
+        Self { port: START_PORT }
     }
 }
 
 /// 当前生效的启动参数(启动时从 desktop-config.json 加载,web_server_set 更新)
-static WEB_OPTIONS: std::sync::RwLock<WebOptions> = std::sync::RwLock::new(WebOptions {
-    port: START_PORT,
-    open_host: false,
-    allowed_hosts: Vec::new(),
-});
+static WEB_OPTIONS: std::sync::RwLock<WebOptions> =
+    std::sync::RwLock::new(WebOptions { port: START_PORT });
 
 pub fn set_web_options(opts: WebOptions) {
     *WEB_OPTIONS.write().unwrap() = opts;
@@ -181,16 +141,19 @@ pub struct ServerInfo {
     pub token: String,
     pub cli_version: String,
     pub meta: Option<serde_json::Value>,
+    /// 服务端下发了 CSP frame-ancestors / X-Frame-Options(官方禁止嵌入),
+    /// 壳内 iframe 将被浏览器拦截;前端据此显示引导而非空白 iframe
+    pub frame_blocked: bool,
 }
 
-/// 启动前回收同 home 的残留 kimi web 实例(仅 Local/WSL):
+/// 启动前回收占用首选端口的残留 kimi web 实例(仅 Local/WSL):
 /// 上次运行未优雅关停(应用崩溃/强杀;WSL 下 wsl.exe 会话结束、Linux 侧进程被 /init 收养)
-/// 会留下孤儿占住低端口,新实例被迫端口漂移 → iframe 源(origin)变化 →
+/// 会留下孤儿占住首选端口,新实例被迫端口漂移 → iframe 源(origin)变化 →
 /// web UI 存于 localStorage 的"新浏览器"验证状态每次启动都失效。
-/// 同 home 实例共享同一 token 与会话数据,残留实例纯冗余:先 POST shutdown 优雅关停,
-/// 端口 8s 内不还则按注册表登记的 pid 兜底强杀。
+/// 只处理首选端口上的实例:其他端口上的 kimi web 可能是用户有意开着的另一个 CLI 实例,不动。
+/// 先 POST shutdown 优雅关停,端口 8s 内不还则按注册表登记的 pid 兜底强杀。
 /// token 读不到(server.token 缺失)时整体跳过——回收是尽力而为,不阻塞启动
-async fn reclaim_stale_instances(http: &reqwest::Client, target: &ConnectionTarget) {
+async fn reclaim_stale_instances(http: &reqwest::Client, target: &ConnectionTarget, preferred: u16) {
     if matches!(target, ConnectionTarget::Ssh { .. }) {
         return;
     }
@@ -199,6 +162,9 @@ async fn reclaim_stale_instances(http: &reqwest::Client, target: &ConnectionTarg
         _ => return,
     };
     for (port, pid) in target.list_server_instances().await {
+        if port != preferred {
+            continue; // 其他端口的实例不归本服务管(可能是另一个 kimi CLI 在跑)
+        }
         let base = format!("http://127.0.0.1:{port}");
         let healthy = http
             .get(format!("{base}/api/v1/healthz"))
@@ -323,11 +289,12 @@ impl ServerManager {
         mgr.stopping = Arc::new(AtomicBool::new(false));
         // 连接目标决定启动/读 token/检测 CLI 的方式;REST/WS 永远连 127.0.0.1:port
         let cli_version = target.detect_cli().await?;
-        // 启动参数(设置页可配):首选端口 / --host 0.0.0.0 / --allowed-host
+        // 启动参数(设置页可配):首选端口
         let opts = web_options();
-        // 回收残留实例(崩溃/强杀留下的孤儿),把首选端口还回来,
-        // 保证 iframe 源跨启动稳定(web UI 的"新浏览器"验证状态按源存 localStorage)
-        reclaim_stale_instances(http, target).await;
+        // 回收首选端口上的残留实例(崩溃/强杀留下的孤儿),把首选端口还回来,
+        // 保证 iframe 源跨启动稳定(web UI 的"新浏览器"验证状态按源存 localStorage);
+        // 其他端口上的 kimi web 实例不动(可能是用户另开的 CLI)
+        reclaim_stale_instances(http, target, opts.port).await;
         let port = free_port(opts.port)?;
 
         // 退出探针:Process 用 try_wait,Ssh 探测通道活性(远端关闭/断连时翻 false)
@@ -352,10 +319,9 @@ impl ServerManager {
                 let bin = target.kimi_bin_resolved().await?;
                 let mut proc = client
                     .exec_keepalive(&format!(
-                        "{}{} web --no-open --port {port}{}",
+                        "{}{} web --no-open --port {port}",
                         crate::target::experimental_env_prefix(),
                         crate::target::sq(&bin),
-                        opts.shell_suffix()
                     ))
                     .await?;
                 // pty drain 内部捕获启动 banner 的 token,此处取出槽位供等待
@@ -367,7 +333,7 @@ impl ServerManager {
             }
             _ => {
                 let token_slot = TokenSlot::new();
-                let mut cmd = target.web_command(port, &opts).await?;
+                let mut cmd = target.web_command(port).await?;
                 cmd.stdin(std::process::Stdio::null())
                     // stdout 改 piped 由 drain 逐行读:直接 null 会丢 banner 的 token
                     // (CLI 0.29.2+ 只在 banner 打印),且必须持续排空避免 64KB 管道写满阻塞
@@ -552,8 +518,10 @@ impl ServerManager {
             tokio::time::sleep(Duration::from_millis(400)).await;
         }
 
-        // 保险:官方未来若对 loopback 也下发 frame 拒绝头,iframe 内嵌会失效。
-        // 一次性 HEAD / 检查响应头,命中则 warn 预警(不阻断启动)
+        // 保险:官方若下发 frame 拒绝头(如 --host 0.0.0.0 模式实测会带 frame-ancestors 'self',
+        // 故壳不提供局域网开放选项),iframe 内嵌即被浏览器拦截。
+        // 一次性 HEAD / 检查响应头,命中则标记 frame_blocked 交给前端引导(不阻断启动)
+        let mut frame_blocked = false;
         if let Ok(res) = http
             .head(format!("{base_url}/"))
             .bearer_auth(&token)
@@ -567,8 +535,9 @@ impl ServerManager {
                 .map(|s| s.to_ascii_lowercase())
                 .unwrap_or_default();
             if csp.contains("frame-ancestors") || res.headers().contains_key("x-frame-options") {
+                frame_blocked = true;
                 eprintln!(
-                    "[kimi-web] 警告:官方 kimi web 已返回 frame-ancestors/x-frame-options 头,未来版本可能禁止 iframe 嵌入,请留意升级"
+                    "[kimi-web] 警告:服务端返回了 frame-ancestors/x-frame-options 头,壳内 iframe 无法嵌入,已转为浏览器访问引导"
                 );
             }
         }
@@ -594,6 +563,7 @@ impl ServerManager {
             token,
             cli_version,
             meta,
+            frame_blocked,
         };
         mgr.info = Some(info.clone());
         Ok(info)

@@ -10,7 +10,8 @@ import {
   Gauge,
   MessageSquare,
   RadioTower,
-  Settings2
+  Settings2,
+  TriangleAlert
 } from 'lucide-react'
 import { QuotaStrip } from './QuotaStrip'
 import { SettingsPage } from '../pages/SettingsPage'
@@ -29,6 +30,8 @@ function WebFrame() {
   const [states, setStates] = useState<Record<string, FrameState>>({})
   const [srcs, setSrcs] = useState<Record<string, string | undefined>>({})
   const [errors, setErrors] = useState<Record<string, string | undefined>>({})
+  // 服务端下发 frame-ancestors/X-Frame-Options → iframe 会被浏览器拦截,改显示引导页
+  const [frameBlocked, setFrameBlocked] = useState<Record<string, boolean>>({})
   const [installing, setInstalling] = useState(false)
   // 本机缺 CLI 时的安装确认(避免未经同意下载安装;仅 local 通道生效)
   const [installConfirm, setInstallConfirm] = useState(false)
@@ -57,6 +60,7 @@ function WebFrame() {
         setStates((s) => ({ ...s, [info.channel]: 'on' }))
         setSrcs((s) => ({ ...s, [info.channel]: undefined }))
         setErrors((e) => ({ ...e, [info.channel]: undefined }))
+        setFrameBlocked((m) => ({ ...m, [info.channel]: info.frameBlocked ?? false }))
       }),
       // 手动停止:该通道回占位页
       window.kimiApi.onServerStopped((info) => {
@@ -64,6 +68,7 @@ function WebFrame() {
         setInstalling(false)
         setStates((s) => ({ ...s, [info.channel]: 'off' }))
         setErrors((e) => ({ ...e, [info.channel]: undefined }))
+        setFrameBlocked((m) => ({ ...m, [info.channel]: false }))
       }),
       // 意外退出:该通道回占位页并提示原因
       window.kimiApi.onServerExited((info) => {
@@ -71,6 +76,7 @@ function WebFrame() {
         setInstalling(false)
         setStates((s) => ({ ...s, [info.channel]: 'off' }))
         setErrors((e) => ({ ...e, [info.channel]: `后端服务意外退出:${info.detail}` }))
+        setFrameBlocked((m) => ({ ...m, [info.channel]: false }))
       }),
       window.kimiApi.onCliInstalling(() => setInstalling(true))
     ]
@@ -207,6 +213,27 @@ function WebFrame() {
       return (
         <div className="flex flex-1 items-center justify-center bg-surface-secondary">
           <div className="h-6 w-6 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+        </div>
+      )
+    }
+    // 服务端禁止 iframe 嵌入(官方下发 frame-ancestors):空白 iframe 无提示,改显示引导
+    if (frameBlocked[ch]) {
+      return (
+        <div className="flex flex-1 items-center justify-center bg-surface-secondary">
+          <div className="flex max-w-[420px] flex-col items-center px-6">
+            <TriangleAlert size={32} className="text-warning" />
+            <p className="mt-4 text-[15px] font-semibold">官方服务端禁止了 iframe 嵌入</p>
+            <p className="mt-2 text-center text-[12.5px] leading-relaxed text-text-tertiary">
+              检测到响应头 CSP frame-ancestors,当前版本的官方服务端不允许被嵌入,
+              对话界面无法在壳内显示。可改用系统浏览器访问,或留意官方更新说明。
+            </p>
+            <button
+              className="mt-5 rounded-lg bg-primary px-4 py-1.5 text-[13px] font-medium text-white hover:bg-primary-hover"
+              onClick={() => void window.kimiApi.openExternal(src)}
+            >
+              在系统浏览器打开
+            </button>
+          </div>
         </div>
       )
     }

@@ -2,7 +2,6 @@ import { useEffect, useState } from 'react'
 import { Section, Card, GroupLabel } from '../../components/settings/common'
 import { FolderPickerDialog } from '../../components/FolderPickerDialog'
 import type { ConnectionTargetInfo, WebServerOptions } from '../../platform/kimi-api'
-import { ToggleField } from './cliForm'
 import { useUi } from '../../stores/ui'
 
 interface AppInfo {
@@ -196,10 +195,9 @@ export function GeneralSettings() {
   const [cliUpgrading, setCliUpgrading] = useState(false)
   // 连接目标信息(本机 / WSL / SSH),仅用于条件渲染存储位置与 CLI 卡片;编辑入口已迁移至「通道」页
   const [connInfo, setConnInfo] = useState<ConnectionTargetInfo | null>(null)
-  // kimi web 启动参数(端口 / 局域网开放 / allowed-host);保存后运行中的服务由后端自动重启
+  // kimi web 启动参数(首选端口);保存后运行中的服务由后端自动重启
   const [webOpts, setWebOpts] = useState<WebServerOptions | null>(null)
   const [webPortText, setWebPortText] = useState('')
-  const [webHostsText, setWebHostsText] = useState('')
   const [webSaving, setWebSaving] = useState(false)
   const [webMsg, setWebMsg] = useState<{ ok: boolean; text: string } | null>(null)
   // 本页所有服务信息/事件跟随激活通道:切换通道后重探
@@ -228,7 +226,6 @@ export function GeneralSettings() {
       .then((o) => {
         setWebOpts(o)
         setWebPortText(String(o.port))
-        setWebHostsText(o.allowedHosts.join(', '))
       })
       .catch(() => {})
     const refreshInfo = () => {
@@ -338,29 +335,19 @@ export function GeneralSettings() {
       })
   }
 
-  /** 保存 kimi web 启动参数(端口/host/allowed-host);patch 用于开关即时保存 */
-  const saveWebOpts = async (patch?: Partial<WebServerOptions>) => {
+  /** 保存 kimi web 启动参数(首选端口) */
+  const saveWebOpts = async () => {
     const port = parseInt(webPortText, 10)
     if (!Number.isFinite(port) || port <= 0 || port > 65535) {
       setWebMsg({ ok: false, text: '端口需为 1-65535 的数字' })
       return
     }
-    const next: WebServerOptions = {
-      port,
-      openHost: webOpts?.openHost ?? false,
-      allowedHosts: webHostsText
-        .split(',')
-        .map((s) => s.trim())
-        .filter(Boolean),
-      ...patch
-    }
     setWebSaving(true)
     setWebMsg(null)
     try {
-      const saved = await window.kimiApi.webServerSet(next)
+      const saved = await window.kimiApi.webServerSet({ port })
       setWebOpts(saved)
       setWebPortText(String(saved.port))
-      setWebHostsText(saved.allowedHosts.join(', '))
       setWebMsg({
         ok: true,
         text: svcRunning ? '已保存,运行中的服务已自动重启生效' : '已保存,下次启动服务时生效'
@@ -563,35 +550,6 @@ export function GeneralSettings() {
               }}
             />
           </div>
-          <ToggleField
-            label="允许局域网访问(--host 0.0.0.0)"
-            desc="绑定 0.0.0.0 后,局域网设备可通过 本机IP:端口 打开 web UI;访问仍需 token 验证,请勿在不可信网络开启"
-            checked={webOpts?.openHost ?? false}
-            onChange={(v) => {
-              if (webOpts && !webSaving) void saveWebOpts({ openHost: v })
-            }}
-          />
-          {webOpts?.openHost && (
-            <div className="flex items-center justify-between gap-3">
-              <div className="min-w-0">
-                <p className="text-[13.5px] font-medium">额外允许的 Host</p>
-                <p className="mt-0.5 text-[12px] text-text-tertiary">
-                  用 IP/域名访问时需把对应主机名加进来(逗号分隔,如 192.168.1.10,
-                  my-pc.local),否则会被 DNS-rebinding 检查拦截
-                </p>
-              </div>
-              <input
-                className="w-56 shrink-0 rounded-lg border border-border bg-surface px-2.5 py-1.5 font-mono text-[12px] outline-none placeholder:font-sans placeholder:text-text-tertiary disabled:opacity-50"
-                placeholder="留空则仅回环地址"
-                value={webHostsText}
-                disabled={webSaving}
-                onChange={(e) => setWebHostsText(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') void saveWebOpts()
-                }}
-              />
-            </div>
-          )}
           <div className="flex items-center justify-end gap-3">
             {webMsg && (
               <p className={`text-[12px] ${webMsg.ok ? 'text-success' : 'text-danger'}`}>
