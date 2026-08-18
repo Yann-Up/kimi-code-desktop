@@ -123,14 +123,19 @@ interface LiveMetrics {
   tpsIncl?: number
 }
 
-/** 实时指标块:单行胶囊,TTFT + 输出速度;悬浮显示模型与两种 TPS 口径 */
-function LiveMetricsBlock({ m }: { m: LiveMetrics }) {
-  const tip = `${m.model} · ${new Date(m.time).toLocaleTimeString()}\n输出 TPS(不含首 token):${
-    m.tpsExcl !== undefined ? m.tpsExcl.toFixed(1) : '—'
-  } tok/s\n输出 TPS(含首 token):${m.tpsIncl !== undefined ? m.tpsIncl.toFixed(1) : '—'} tok/s`
+/** 实时指标块:单行胶囊,TTFT + 输出速度;悬浮显示模型与两种 TPS 口径。
+ *  active=false(服务在跑但无活跃会话)时降透明度、输出速率归零 */
+function LiveMetricsBlock({ m, active }: { m: LiveMetrics; active: boolean }) {
+  const tip = active
+    ? `${m.model} · ${new Date(m.time).toLocaleTimeString()}\n输出 TPS(不含首 token):${
+        m.tpsExcl !== undefined ? m.tpsExcl.toFixed(1) : '—'
+      } tok/s\n输出 TPS(含首 token):${m.tpsIncl !== undefined ? m.tpsIncl.toFixed(1) : '—'} tok/s`
+    : `${m.model} · 当前无进行中会话`
   return (
     <div
-      className="flex shrink-0 items-center gap-2.5 rounded-lg bg-surface-secondary px-3 py-1.5"
+      className={`flex shrink-0 items-center gap-2.5 rounded-lg bg-surface-secondary px-3 py-1.5 transition-opacity ${
+        active ? '' : 'opacity-55'
+      }`}
       title={tip}
     >
       <Zap size={12} className="shrink-0 text-primary" />
@@ -144,7 +149,7 @@ function LiveMetricsBlock({ m }: { m: LiveMetrics }) {
       <span className="flex items-baseline gap-1.5">
         <span className="text-[11px] text-text-tertiary">输出</span>
         <span className="text-[13px] font-semibold tabular-nums text-text">
-          {m.tpsExcl !== undefined ? `${m.tpsExcl.toFixed(1)} tok/s` : '—'}
+          {active ? (m.tpsExcl !== undefined ? `${m.tpsExcl.toFixed(1)} tok/s` : '—') : '0.0 tok/s'}
         </span>
       </span>
     </div>
@@ -202,6 +207,10 @@ export function QuotaStrip() {
     }
   }, [activeChannel])
 
+  // 指标胶囊:服务运行期间常驻;最近一次调用距今 ≤ 5 分钟视为有活跃会话(全亮),
+  // 超过则降透明度、输出速率归零;服务未运行/从未有过调用时隐藏
+  const liveActive = live !== null && Date.now() - live.time < 5 * 60_000
+
   useEffect(() => {
     window.kimiApi
       .appInfo(activeChannel)
@@ -217,12 +226,14 @@ export function QuotaStrip() {
         setSvcRunning(false)
         setWindows([])
         setWallet(null)
+        setLive(null)
       }),
       window.kimiApi.onServerExited((info) => {
         if (info.channel !== activeChannel) return
         setSvcRunning(false)
         setWindows([])
         setWallet(null)
+        setLive(null)
       })
     ]
     return () => offs.forEach((off) => off())
@@ -263,7 +274,7 @@ export function QuotaStrip() {
   return (
     <div className="flex min-h-12 shrink-0 items-center justify-between gap-4 px-4 py-1.5">
       <div className="flex min-w-0 items-center gap-6">
-        {live && <LiveMetricsBlock m={live} />}
+        {svcRunning && live && <LiveMetricsBlock m={live} active={liveActive} />}
         {windows.map((w, i) => (
           <QuotaMeter key={i} w={w} />
         ))}
