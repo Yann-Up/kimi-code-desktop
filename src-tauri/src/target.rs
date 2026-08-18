@@ -220,6 +220,7 @@ pub struct ApiCallRecord {
 /// api_calls 为 step.end 口径的逐次 API 调用(API 调用统计页用)
 pub struct SessionUsage {
     pub sid: String,
+    pub wd: String, // sessions 下的 wd 目录名(按项目聚合用)
     pub records: Vec<UsageRecord>,
     pub api_calls: Vec<ApiCallRecord>,
 }
@@ -918,6 +919,7 @@ impl ConnectionTarget {
                         }
                         out.push(SessionUsage {
                             sid: sid.file_name().to_string_lossy().into_owned(),
+                            wd: wd.file_name().to_string_lossy().into_owned(),
                             records,
                             api_calls,
                         });
@@ -966,6 +968,7 @@ impl ConnectionTarget {
                         let (records, api_calls) = map.remove(&key).unwrap_or_default();
                         SessionUsage {
                             sid: key.1.clone(),
+                            wd: key.0.clone(),
                             records,
                             api_calls,
                         }
@@ -977,19 +980,13 @@ impl ConnectionTarget {
 
     // ---------- 服务启停 ----------
 
-    /// 构造启动 kimi web 的子进程命令;local_port 为本地端口,
-    /// opts 为设置页可配的启动参数(--host 0.0.0.0 / --allowed-host)。
+    /// 构造启动 kimi web 的子进程命令;local_port 为本地端口。
     /// 仅 Local/WSL 走本地 spawn;SSH 由 server.rs 经 russh exec_keepalive + forward 启动
-    pub async fn web_command(
-        &self,
-        local_port: u16,
-        opts: &crate::server::WebOptions,
-    ) -> Result<Command, String> {
+    pub async fn web_command(&self, local_port: u16) -> Result<Command, String> {
         match self {
             ConnectionTarget::Local => {
                 let mut cmd = hidden_command(&kimi_bin());
                 cmd.args(["web", "--no-open", "--port", &local_port.to_string()])
-                    .args(opts.cli_args())
                     // 显式传入数据目录:保证 CLI 与桌面端读取同一份(自定义工作区/默认一致)
                     .env("KIMI_CODE_HOME", kimi_home());
                 // 实验性功能开关(设置页可配;二级模型默认开)
@@ -1007,10 +1004,9 @@ impl ConnectionTarget {
                 Ok(Self::wsl_shell_command(
                     distro,
                     &format!(
-                        "{}{} web --no-open --port {local_port}{}",
+                        "{}{} web --no-open --port {local_port}",
                         experimental_env_prefix(),
                         sq(&bin),
-                        opts.shell_suffix()
                     ),
                 ))
             }

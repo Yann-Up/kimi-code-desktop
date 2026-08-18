@@ -1,11 +1,16 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { CalendarDays, Coins, Cpu, Flame, Layers, MessagesSquare } from 'lucide-react'
 import { Section, Card, GroupLabel, Empty } from '../../components/settings/common'
+import { shortWorkspace } from '../stats/ApiCallsTable'
 
 interface DailyUsage {
   date: string // YYYY-MM-DD
   models: Record<string, number>
   total: number
+  input: number // 新增输入
+  output: number // 输出
+  cacheRead: number // 缓存命中
+  cacheCreation: number // 缓存创建
 }
 
 interface UsageDailyReport {
@@ -15,9 +20,10 @@ interface UsageDailyReport {
   streak: number
   turns: number
   sessions: number
+  workspaceTotals: Record<string, number> // wd 目录名 → 窗口内 tokens
 }
 
-type RangeDays = 7 | 30
+type RangeDays = 1 | 7 | 30
 
 const HEATMAP_WEEKS = 52
 const HEATMAP_DAYS = HEATMAP_WEEKS * 7
@@ -25,6 +31,14 @@ const HEATMAP_DAYS = HEATMAP_WEEKS * 7
 const MODEL_COLORS = ['#2563eb', '#16a34a', '#ea580c', '#7c3aed', '#0891b2', '#64748b']
 /** 热力图 5 档:灰(无)→浅蓝→深蓝 */
 const HEAT_COLORS = ['#f1f5f9', '#dbeafe', '#93c5fd', '#3b82f6', '#1e40af']
+
+/** 按天趋势「按 Token 类型」模式系列(配色对齐今日实时趋势) */
+const TOKEN_TYPE_SERIES = [
+  { key: 'input', name: '输入', color: '#2563eb' },
+  { key: 'output', name: '输出', color: '#16a34a' },
+  { key: 'cacheRead', name: '缓存命中', color: '#7c3aed' },
+  { key: 'cacheCreation', name: '缓存创建', color: '#ea580c' }
+] as const
 
 /** tokens 人性化:亿 / 万 / 原值 */
 function fmtTokens(n: number): string {
@@ -264,7 +278,7 @@ function Donut({
   const gap = rows.length > 1 ? 2.5 : 0
   let acc = 0
   return (
-    <div className="flex items-center gap-6">
+    <div className="flex w-full items-center gap-6">
       <div className="relative aspect-square w-1/3 min-w-40 max-w-60 shrink-0">
         <svg viewBox="0 0 160 160" className="h-full w-full">
           <circle cx="80" cy="80" r={R} fill="none" stroke="var(--color-surface-tertiary)" strokeWidth="16" />
@@ -322,6 +336,31 @@ function Donut({
           </div>
         ))}
       </div>
+    </div>
+  )
+}
+
+/** 按项目(workspace)用量排行:横向条形 */
+function WorkspaceRank({ entries }: { entries: [string, number][] }) {
+  const max = Math.max(1, ...entries.map(([, v]) => v))
+  return (
+    <div className="space-y-2">
+      {entries.map(([wd, v]) => (
+        <div key={wd} className="flex items-center gap-2.5" title={wd}>
+          <span className="w-28 shrink-0 truncate text-[12px] text-text-secondary">
+            {shortWorkspace(wd)}
+          </span>
+          <div className="h-3.5 min-w-0 flex-1 overflow-hidden rounded-sm bg-surface-tertiary">
+            <div
+              className="h-full rounded-sm bg-primary transition-all"
+              style={{ width: `${(v / max) * 100}%` }}
+            />
+          </div>
+          <span className="w-14 shrink-0 text-right text-[12px] tabular-nums text-text-tertiary">
+            {fmtTokens(v)}
+          </span>
+        </div>
+      ))}
     </div>
   )
 }
@@ -653,10 +692,12 @@ export function UsageSettings() {
   const [err, setErr] = useState('')
   const [loading, setLoading] = useState(true)
   const [heatErr, setHeatErr] = useState('')
-  // turns/sessions 无法从 days 切片推导:按范围保留原请求(命中 Rust 缓存,开销可忽略)
+  // turns/sessions/workspaceTotals 无法从 days 切片推导:按范围保留原请求(命中 Rust 缓存,开销可忽略)
   const [rangeUsage, setRangeUsage] = useState<
-    Pick<UsageDailyReport, 'turns' | 'sessions'> | null
+    Pick<UsageDailyReport, 'turns' | 'sessions' | 'workspaceTotals'> | null
   >(null)
+  // 按天趋势的堆叠维度:按模型 | 按 Token 类型
+  const [trendMode, setTrendMode] = useState<'model' | 'type'>('model')
 
   // 全量数据一次拉取:热力图 + 统计卡推导共用,不随 range 切换重扫
   useEffect(() => {
@@ -718,7 +759,7 @@ export function UsageSettings() {
     return list
   }, [modelEntries])
 
-  /** 按天补零的堆叠序列(后端只返回活跃日) */
+  /** 按天补零的堆叠序列(后端只返回活跃日);按模型 / 按 Token 类型两种堆叠维度 */
   const stackedDays = useMemo<StackDay[]>(() => {
     const map = new Map(rangeDays.map((d) => [d.date, d]))
     const topNames = new Set(chartModels.map((m) => m.name).filter((n) => n !== '其他'))
@@ -728,46 +769,77 @@ export function UsageSettings() {
     for (let i = 0; i < range; i++) {
       const key = toKey(cur)
       const day = map.get(key)
-      const parts: StackPart[] = chartModels.map((m) => {
-        if (!day) return { name: m.name, color: m.color, v: 0 }
-        if (m.name === '其他') {
-          const v = Object.entries(day.models).reduce(
-            (a, [name, val]) => (topNames.has(name) ? a : a + val),
-            0
-          )
-          return { name: m.name, color: m.color, v }
-        }
-        return { name: m.name, color: m.color, v: day.models[m.name] ?? 0 }
-      })
+      const parts: StackPart[] =
+        trendMode === 'type'
+          ? TOKEN_TYPE_SERIES.map((s) => ({
+              name: s.name,
+              color: s.color,
+              v: day ? day[s.key] : 0
+            }))
+          : chartModels.map((m) => {
+              if (!day) return { name: m.name, color: m.color, v: 0 }
+              if (m.name === '其他') {
+                const v = Object.entries(day.models).reduce(
+                  (a, [name, val]) => (topNames.has(name) ? a : a + val),
+                  0
+                )
+                return { name: m.name, color: m.color, v }
+              }
+              return { name: m.name, color: m.color, v: day.models[m.name] ?? 0 }
+            })
       out.push({ date: key, total: day?.total ?? 0, parts })
       cur.setDate(cur.getDate() + 1)
     }
     return out
-  }, [rangeDays, range, chartModels])
+  }, [rangeDays, range, chartModels, trendMode])
+
+  /** 趋势图图例:随堆叠维度切换 */
+  const trendLegend =
+    trendMode === 'model'
+      ? chartModels
+      : TOKEN_TYPE_SERIES.map((s) => ({ name: s.name, color: s.color }))
+
+  /** 当前 range 的项目用量排行(wd → tokens,列表内滚动,不截断) */
+  const workspaceEntries = useMemo(
+    () =>
+      Object.entries(rangeUsage?.workspaceTotals ?? {})
+        .filter(([, v]) => v > 0)
+        .sort((a, b) => b[1] - a[1]),
+    [rangeUsage]
+  )
 
   const topModel = modelEntries[0]
   const hasRangeData = totalTokens > 0
+
+  /** 窗口展示口径:range=1 时读作「今日」 */
+  const rangeLabel = range === 1 ? '今日' : `最近 ${range} 天`
+
+  /** 近一年累计(364 天全量窗口,长期区展示) */
+  const yearTotal = useMemo(
+    () => (data?.days ?? []).reduce((a, d) => a + d.total, 0),
+    [data]
+  )
 
   const stats: { icon: typeof Coins; label: string; value: string; sub?: string; color?: string }[] = [
     {
       icon: Coins,
       label: 'Token 用量',
       value: data ? fmtTokens(totalTokens) : '—',
-      sub: `最近 ${range} 天合计`,
+      sub: `${rangeLabel}合计`,
       color: '#2563eb'
     },
     {
       icon: Layers,
       label: '会话数量',
       value: rangeUsage ? fmtCount(rangeUsage.sessions) : '—',
-      sub: `最近 ${range} 天`,
+      sub: rangeLabel,
       color: '#16a34a'
     },
     {
       icon: MessagesSquare,
       label: '消息数量',
       value: rangeUsage ? fmtCount(rangeUsage.turns) : '—',
-      sub: `最近 ${range} 天`,
+      sub: rangeLabel,
       color: '#ea580c'
     },
     {
@@ -776,13 +848,6 @@ export function UsageSettings() {
       value: data ? fmtCount(rangeDays.length) : '—',
       sub: `/ ${range} 天`,
       color: '#7c3aed'
-    },
-    {
-      icon: Flame,
-      label: '当前连续天数',
-      value: data ? fmtCount(streak) : '—',
-      sub: data && streak > 0 ? '连续保持中' : '今天还未活跃',
-      color: '#e11d48'
     },
     {
       icon: Cpu,
@@ -798,10 +863,17 @@ export function UsageSettings() {
 
   return (
     <Section title="使用统计" desc="Token 用量、费用和额度概览">
-      <div className="flex items-center justify-between gap-3">
-        {err ? <p className="text-[12px] text-danger">{err}</p> : <span />}
+      {err && <p className="text-[12px] text-danger">{err}</p>}
+
+      {/* 今天:实时口径(30 分钟桶),不随下方筛选变化 */}
+      <GroupLabel>今天 · 实时</GroupLabel>
+      <LiveTrend />
+
+      {/* 近 N 天:时间筛选只作用于本分区 */}
+      <div className="mb-1 mt-5 flex items-center justify-between gap-3">
+        <h3 className="text-[13px] font-semibold text-primary">{rangeLabel}</h3>
         <div className="inline-flex shrink-0 rounded-lg border border-border bg-surface-tertiary p-0.5">
-          {([7, 30] as const).map((r) => (
+          {([1, 7, 30] as const).map((r) => (
             <button
               key={r}
               disabled={loading}
@@ -812,66 +884,114 @@ export function UsageSettings() {
                   : 'text-text-secondary hover:text-text'
               }`}
             >
-              最近 {r} 天
+              {r === 1 ? '今日' : `最近 ${r} 天`}
             </button>
           ))}
         </div>
       </div>
 
       <div className={`transition-opacity duration-200 ${loading ? 'opacity-60' : 'opacity-100'}`}>
-        <LiveTrend />
-
-        <GroupLabel>概览</GroupLabel>
-        <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
+        <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-5">
           {stats.map((s) => (
             <StatCard key={s.label} {...s} />
           ))}
         </div>
-
-        <GroupLabel>活跃热力图</GroupLabel>
-        {heatErr ? (
-          <p className="text-[12px] text-danger">{heatErr}</p>
-        ) : data === null ? (
-          <Empty text="加载中…" />
-        ) : data.days.length === 0 ? (
-          <Empty text="暂无使用记录" />
-        ) : (
-          <Card>
-            <Heatmap days={data.days} />
-            <div className="mt-3 flex items-center justify-end gap-1 text-[11px] text-text-tertiary">
-              较少
-              {HEAT_COLORS.map((c) => (
-                <span key={c} className="h-[11px] w-[11px] rounded-[2px]" style={{ background: c }} />
-              ))}
-              较多
-            </div>
-          </Card>
-        )}
 
         <GroupLabel>按天 Token 趋势</GroupLabel>
         {!hasRangeData ? (
           <Empty text="暂无使用记录" />
         ) : (
           <Card>
-            <div className="mb-2 flex items-baseline justify-between">
-              <p className="text-[12px] text-text-tertiary">按模型堆叠</p>
+            <div className="mb-2 flex items-center justify-between">
+              <div className="inline-flex rounded-lg border border-border bg-surface-tertiary p-0.5">
+                {(
+                  [
+                    ['model', '按模型'],
+                    ['type', '按 Token 类型']
+                  ] as const
+                ).map(([m, label]) => (
+                  <button
+                    key={m}
+                    onClick={() => setTrendMode(m)}
+                    className={`rounded-md px-2.5 py-0.5 text-[12px] transition-colors ${
+                      trendMode === m
+                        ? 'bg-surface font-medium text-primary shadow-sm'
+                        : 'text-text-secondary hover:text-text'
+                    }`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
               <p className="text-[12px] tabular-nums text-text-tertiary">
                 峰值 {fmtTokens(Math.max(...stackedDays.map((d) => d.total)))} / 天
               </p>
             </div>
-            <TrendChart days={stackedDays} models={chartModels} />
+            <TrendChart days={stackedDays} models={trendLegend} />
           </Card>
         )}
 
-        <GroupLabel>模型用量</GroupLabel>
-        {!hasRangeData ? (
-          <Empty text="暂无使用记录" />
-        ) : (
-          <Card>
-            <Donut rows={chartModels} total={totalTokens} />
-          </Card>
-        )}
+        <div className="mt-5 grid gap-x-3 gap-y-2 xl:grid-cols-2">
+          <div>
+            <h3 className="mb-1 text-[13px] font-semibold text-primary">模型用量</h3>
+            {!hasRangeData ? (
+              <Empty text="暂无使用记录" />
+            ) : (
+              <Card className="flex h-60 items-center">
+                <Donut rows={chartModels} total={totalTokens} />
+              </Card>
+            )}
+          </div>
+          <div>
+            <h3 className="mb-1 text-[13px] font-semibold text-primary">项目用量</h3>
+            {workspaceEntries.length === 0 ? (
+              <Empty text="暂无使用记录" />
+            ) : (
+              // 与模型用量卡同高;项目超多时列表内部滚动,卡片不再被撑高
+              <Card className="h-60 overflow-y-auto">
+                <WorkspaceRank entries={workspaceEntries} />
+              </Card>
+            )}
+          </div>
+        </div>
       </div>
+
+      {/* 长期:全历史口径(连续天数按全窗口计算,热力图固定 52 周) */}
+      <GroupLabel>长期 · 全部历史</GroupLabel>
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+        <StatCard
+          icon={Flame}
+          label="当前连续天数"
+          value={data ? fmtCount(streak) : '—'}
+          sub={data && streak > 0 ? '连续保持中' : '今天还未活跃'}
+          color="#e11d48"
+        />
+        <StatCard
+          icon={Coins}
+          label="近一年累计 Token"
+          value={data ? fmtTokens(yearTotal) : '—'}
+          sub="最近 364 天"
+          color="#2563eb"
+        />
+      </div>
+      {heatErr ? (
+        <p className="text-[12px] text-danger">{heatErr}</p>
+      ) : data === null ? (
+        <Empty text="加载中…" />
+      ) : data.days.length === 0 ? (
+        <Empty text="暂无使用记录" />
+      ) : (
+        <Card>
+          <Heatmap days={data.days} />
+          <div className="mt-3 flex items-center justify-end gap-1 text-[11px] text-text-tertiary">
+            较少
+            {HEAT_COLORS.map((c) => (
+              <span key={c} className="h-[11px] w-[11px] rounded-[2px]" style={{ background: c }} />
+            ))}
+            较多
+          </div>
+        </Card>
+      )}
     </Section>
   )
 }

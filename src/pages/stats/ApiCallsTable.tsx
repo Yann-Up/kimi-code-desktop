@@ -40,8 +40,8 @@ function shortModel(m: string): string {
   return m.split('/').pop() || m
 }
 
-/** workspace 目录名 wd_<name>_<hash> → name(会话列展示用) */
-function shortWorkspace(w: string): string {
+/** workspace 目录名 wd_<name>_<hash> → name(会话列/项目排行展示用) */
+export function shortWorkspace(w: string): string {
   const m = /^wd_(.+)_[0-9a-f]{12}$/.exec(w)
   return m ? m[1] : w
 }

@@ -406,10 +406,15 @@ pub async fn list_agent_profiles(channel: &str) -> Vec<AgentProfile> {
 }
 
 #[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct DailyUsage {
     pub date: String, // YYYY-MM-DD
     pub models: HashMap<String, i64>, // model → tokens(in+out+cache)
     pub total: i64,
+    pub input: i64,          // 新增输入(inputOther)
+    pub output: i64,         // 输出
+    pub cache_read: i64,     // 缓存命中(inputCacheRead)
+    pub cache_creation: i64, // 缓存创建(inputCacheCreation)
 }
 
 #[derive(Serialize)]
@@ -421,13 +426,8 @@ pub struct UsageDailyResult {
     pub streak: u32,
     pub turns: i64,
     pub sessions: usize,
-}
-
-fn day_key(ms: i64) -> Option<String> {
-    Local
-        .timestamp_millis_opt(ms)
-        .single()
-        .map(|d| d.format("%Y-%m-%d").to_string())
+    /// wd 目录名 → 窗口内 tokens(按项目排行用)
+    pub workspace_totals: HashMap<String, i64>,
 }
 
 /// 按天+按模型的用量聚合(使用统计页热力图/趋势/donut 用)
@@ -444,6 +444,7 @@ pub async fn aggregate_usage_daily(channel: &str, days: u32) -> UsageDailyResult
 
     let mut by_day: HashMap<String, DailyUsage> = HashMap::new();
     let mut model_totals: HashMap<String, i64> = HashMap::new();
+    let mut workspace_totals: HashMap<String, i64> = HashMap::new();
     let mut session_set: HashSet<String> = HashSet::new();
     let mut turns: i64 = 0;
 
@@ -458,17 +459,27 @@ pub async fn aggregate_usage_daily(channel: &str, days: u32) -> UsageDailyResult
                 + rec.output
                 + rec.input_cache_read
                 + rec.input_cache_creation;
-            let Some(key) = day_key(rec.time) else {
+            let Some(dt) = Local.timestamp_millis_opt(rec.time).single() else {
                 continue;
             };
+            let key = dt.format("%Y-%m-%d").to_string();
             let day = by_day.entry(key.clone()).or_insert_with(|| DailyUsage {
                 date: key,
                 models: HashMap::new(),
                 total: 0,
+                input: 0,
+                output: 0,
+                cache_read: 0,
+                cache_creation: 0,
             });
             *day.models.entry(rec.model.clone()).or_insert(0) += total;
             day.total += total;
+            day.input += rec.input_other;
+            day.output += rec.output;
+            day.cache_read += rec.input_cache_read;
+            day.cache_creation += rec.input_cache_creation;
             *model_totals.entry(rec.model.clone()).or_insert(0) += total;
+            *workspace_totals.entry(sw.wd.clone()).or_insert(0) += total;
             turns += 1;
             has_usage = true;
         }
@@ -502,6 +513,7 @@ pub async fn aggregate_usage_daily(channel: &str, days: u32) -> UsageDailyResult
         streak,
         turns,
         sessions: session_set.len(),
+        workspace_totals,
     }
 }
 
