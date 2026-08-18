@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { ChannelInfo, ConnectionTargetConfig } from '../platform/kimi-api'
+import type { AppUpdateInfo, ChannelInfo, ConnectionTargetConfig } from '../platform/kimi-api'
 
 /** 壳内视图:顶部导航的三个 tab(对话 / 统计 / 设置) */
 export type ShellView = 'chat' | 'stats' | 'settings'
@@ -26,6 +26,8 @@ interface UiState {
   quotaRefreshSecs: number
   /** 设置页字体缩放(百分比,100=标准;持久化 localStorage,经 CSS zoom 生效) */
   settingsZoom: number
+  /** 应用自身更新信息(启动静默自检/设置页手动检查写入;null=无更新或未检查) */
+  appUpdate: AppUpdateInfo | null
   /** 切换顶部导航 tab */
   setView: (v: ShellView) => void
   openSettings: (section?: string) => void
@@ -33,6 +35,7 @@ interface UiState {
   setSettingsSection: (s: string) => void
   setQuotaRefreshSecs: (secs: number) => void
   setSettingsZoom: (pct: number) => void
+  setAppUpdate: (info: AppUpdateInfo | null) => void
   setConnectionTarget: (t: ConnectionTargetConfig['target']) => void
   /** 填充通道列表与激活通道;connectionTarget 随之派生 */
   setChannels: (channels: ChannelInfo[], active: string) => void
@@ -53,6 +56,7 @@ export const useUi = create<UiState>((set) => ({
   onboardingOpen: false,
   onboardingMode: 'switch',
   onboardingTarget: null,
+  appUpdate: null,
   quotaRefreshSecs: (() => {
     const raw = localStorage.getItem('kimi.quotaRefreshSecs')
     if (raw === null) return 60 // 未设置过:默认 60s
@@ -78,6 +82,7 @@ export const useUi = create<UiState>((set) => ({
     localStorage.setItem('kimi.settingsZoom', String(pct))
     set({ settingsZoom: pct })
   },
+  setAppUpdate: (info) => set({ appUpdate: info }),
   setConnectionTarget: (t) => set({ connectionTarget: t }),
   setChannels: (channels, active) =>
     set((s) => ({

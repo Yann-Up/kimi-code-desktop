@@ -29,6 +29,7 @@ src-tauri/src/          Rust 后端
   ssh.rs                进程内 SSH 客户端与端口转发
   config.rs / local_store.rs / target.rs   配置、本地数据直读、运行目标(本机/WSL/SSH)
   pet.rs                桌宠悬浮窗(实验性):透明置顶小窗 + 状态机(ws.rs 事件驱动);M3 起扫描 <kimi_home>/pets 与 ~/.petdex/pets(兼容 kimi-pet.v0/petdex 布局),外部精灵图经 pet:// 自定义协议供图;开关存 desktop-config.json 的 pet_enabled/pet_slug
+  updater.rs            应用自动更新(tauri-plugin-updater + GitHub Releases latest.json,minisign 签名校验):app_update_check/app_update_install 命令 + 启动延迟静默自检(dev 跳过);签名公钥在 tauri.conf.json plugins.updater.pubkey,私钥 ~/.tauri/kimi-desktop.key 不入库(CI 走 TAURI_SIGNING_PRIVATE_KEY secret);发版见 .github/workflows/release.yml(push v* tag → 草稿 Release)
 build/                  图标等资源;design/ 设计稿;docs/ 评审与跟踪文档;out/renderer 前端构建产物
 ```
 
@@ -39,7 +40,8 @@ npm install
 npm run tauri:dev        # 开发(vite dev 5188 + cargo 增量编译)
 npm run typecheck        # 渲染层与 vite 配置的 TS 检查(提交前必过)
 npm run build:renderer   # 仅构建前端 → out/renderer
-npm run tauri:build      # 打包当前平台安装包(产物在 src-tauri/target/release/bundle/)
+npm run tauri:build      # 打包当前平台安装包(产物在 src-tauri/target/release/bundle/);
+                         # 已开启 updater 产物,需先 export TAURI_SIGNING_PRIVATE_KEY_PATH=~/.tauri/kimi-desktop.key
 cd src-tauri && cargo check   # Rust 侧检查(提交前必过)
 ```
 

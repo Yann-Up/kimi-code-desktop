@@ -7,6 +7,8 @@ import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import type {
   ApiCallsResult,
+  AppUpdateInfo,
+  AppUpdateProgress,
   ChannelsState,
   KimiApi,
   PetConfig,
@@ -60,6 +62,10 @@ const api: KimiApi = {
   remoteBinSet: (path) => invoke('set_remote_bin', { path }),
   cliNpmUpgrade: () => invoke('cli_npm_upgrade'),
   cliCheckUpdate: () => invoke('cli_check_update'),
+  appUpdateCheck: () => invoke<AppUpdateInfo | null>('app_update_check'),
+  appUpdateInstall: () => invoke<void>('app_update_install'),
+  onAppUpdateProgress: (cb) => on<AppUpdateProgress>('app:update-progress', cb),
+  onAppUpdateAvailable: (cb) => on<AppUpdateInfo>('app:update-available', cb),
   connectionTargetGet: () => invoke('get_connection_target'),
   connectionTargetSet: (cfg, password) => invoke('set_connection_target', { cfg, password }),
   connectionTargetTest: (cfg, password) => invoke('test_connection_target', { cfg, password }),

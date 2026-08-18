@@ -72,10 +72,27 @@ npm run typecheck      # 渲染层与 vite 配置的 TS 检查
 ## 打包
 
 ```bash
+# 已开启 updater 产物(createUpdaterArtifacts),本地打包需指向签名私钥:
+export TAURI_SIGNING_PRIVATE_KEY_PATH=~/.tauri/kimi-desktop.key   # Windows: set 或 $env:
 npm run tauri:build    # 产出当前平台的安装包(产物在 src-tauri/target/release/bundle/)
 ```
 
 目前在 Windows(NSIS 安装包)上验证;macOS / Linux 可按 Tauri 默认目标构建,尚未测试,欢迎反馈。
+
+## 发布与自动更新
+
+应用内置自动更新(tauri-plugin-updater):启动时静默检查 GitHub Releases 上的最新版本,发现新版发系统通知并在「设置」tab 显示红点;也可在 设置 → 常规 → 应用更新 手动检查。更新包经 minisign 签名校验,确认后自动下载、安装并重启。
+
+维护者发版流程(tag 触发 `.github/workflows/release.yml`):
+
+```bash
+# 1. 三处版本号保持一致:src-tauri/tauri.conf.json、src-tauri/Cargo.toml、package.json
+# 2. 提交后打 tag 并推送
+git tag v0.3.5 && git push --tags
+# 3. workflow 构建 + 签名 + 生成 latest.json,产出草稿 Release;确认后在 Releases 页发布为正式版
+```
+
+需要一次性配置仓库 Secrets:`TAURI_SIGNING_PRIVATE_KEY`(开发机 `~/.tauri/kimi-desktop.key` 的文件内容;该私钥无密码、不入库,丢失则无法继续签发更新)。签名公钥内嵌于 `src-tauri/tauri.conf.json` 的 `plugins.updater.pubkey`。
 
 ## 行为说明
 
@@ -120,7 +137,7 @@ A desktop client for [Kimi Code CLI](https://github.com/moonshotai/kimi-code), b
 
 This is a **desktop shell, not an AI runtime**: the chat UI embeds the official `kimi web` Web UI directly via iframe (`http://127.0.0.1:<port>/#token=<token>`, token injected by the shell), so sessions, models, tools and the Git changes panel all come from the official UI and upgrade in lockstep with the CLI. The app auto-installs the CLI on first launch and offers in-app upgrades. The backend can run on the local machine, in WSL, or on a remote host over SSH (built-in SSH client with port forwarding; host keys are verified TOFU-style; passwords live in the OS credential manager).
 
-What the shell itself adds: a usage-statistics tab (heatmap / per-day model trends / realtime curves), a quota strip, desktop notifications when the window is unfocused (turn finished / pending approval / pending question), settings (general / CLI config / MCP / skills / sub-agents / commands / channels), system tray, and single-instance.
+What the shell itself adds: a usage-statistics tab (heatmap / per-day model trends / realtime curves), a quota strip, desktop notifications when the window is unfocused (turn finished / pending approval / pending question), settings (general / CLI config / MCP / skills / sub-agents / commands / channels), system tray, single-instance, and self-update via signed GitHub Releases (Settings → General → App updates).
 
 ```bash
 npm install

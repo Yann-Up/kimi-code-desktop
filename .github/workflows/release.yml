@@ -1,0 +1,51 @@
+name: Release
+
+# 发版流程:改版本号(tauri.conf.json / Cargo.toml / package.json 三处保持一致)
+# → commit → git tag vX.Y.Z → git push --tags → 本 workflow 自动构建 NSIS 安装包、
+# 用 TAURI_SIGNING_PRIVATE_KEY 签名、生成 latest.json 并创建草稿 Release;
+# 在 Releases 页面确认后手动发布为正式版,旧版客户端即可自动检测到更新。
+#
+# 需要的一次性仓库 Secrets(Settings → Secrets and variables → Actions):
+#   TAURI_SIGNING_PRIVATE_KEY  本地私钥文件内容(开发机 ~/.tauri/kimi-desktop.key)
+#   (私钥未设密码,无需 TAURI_SIGNING_PRIVATE_KEY_PASSWORD)
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "发版 tag(需已存在,如 v0.3.5)"
+        required: true
+        type: string
+
+permissions:
+  contents: write # 创建 Release / 上传产物
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # tauri-action:构建(bundle.createUpdaterArtifacts 产出 .nsis.zip + .sig)
+      # → minisign 签名 → 生成 latest.json → 创建草稿 Release 并上传全部产物
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        with:
+          tagName: ${{ inputs.tag || github.ref_name }}
+          releaseName: "Kimi Code Desktop v__VERSION__"
+          releaseDraft: true
+          prerelease: false

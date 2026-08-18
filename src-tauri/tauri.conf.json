@@ -16,6 +16,7 @@
   },
   "bundle": {
     "active": true,
+    "createUpdaterArtifacts": true,
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -28,6 +29,14 @@
       "nsis": {
         "installMode": "perMachine"
       }
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEZBNTkyNDc5NTFDMUMxRkQKUldUOXdjRlJlU1JaK2prNHh3L3k5UUtlaUpqbzZDVVc1aDZWdW52NDRHeTliVkJYRDZhRklxM1AK",
+      "endpoints": [
+        "https://github.com/Yann-Up/kimi-code-desktop/releases/latest/download/latest.json"
+      ]
     }
   }
 }

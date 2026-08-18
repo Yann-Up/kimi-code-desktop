@@ -312,6 +312,10 @@ export function ShellHome() {
   const channels = useUi((s) => s.channels)
   const activeChannel = useUi((s) => s.activeChannel)
   const setActiveChannel = useUi((s) => s.setActiveChannel)
+  // 应用自身更新:启动静默自检发现新版时在「设置」tab 上加红点角标;
+  // 结果写入全局 store,设置页任何时候打开都能直接看到
+  const appUpdateAvailable = useUi((s) => s.appUpdate !== null)
+  useEffect(() => window.kimiApi.onAppUpdateAvailable((info) => useUi.getState().setAppUpdate(info)), [])
 
   const TABS: { id: 'chat' | 'stats' | 'settings'; label: string; icon: typeof MessageSquare }[] = [
     { id: 'chat', label: '对话', icon: MessageSquare },
@@ -357,6 +361,9 @@ export function ShellHome() {
                 onClick={() => setView(t.id)}
               >
                 <Icon size={14} /> {t.label}
+                {t.id === 'settings' && appUpdateAvailable && (
+                  <span className="ml-0.5 h-1.5 w-1.5 rounded-full bg-danger" title="发现新版本,前往 设置 → 常规 更新" />
+                )}
               </button>
             )
           })}

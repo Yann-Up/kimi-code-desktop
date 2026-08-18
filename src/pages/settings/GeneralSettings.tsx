@@ -1,7 +1,11 @@
 import { useEffect, useState } from 'react'
 import { Section, Card, GroupLabel } from '../../components/settings/common'
 import { FolderPickerDialog } from '../../components/FolderPickerDialog'
-import type { ConnectionTargetInfo, WebServerOptions } from '../../platform/kimi-api'
+import type {
+  AppUpdateProgress,
+  ConnectionTargetInfo,
+  WebServerOptions
+} from '../../platform/kimi-api'
 import { useUi } from '../../stores/ui'
 
 interface AppInfo {
@@ -200,8 +204,49 @@ export function GeneralSettings() {
   const [webPortText, setWebPortText] = useState('')
   const [webSaving, setWebSaving] = useState(false)
   const [webMsg, setWebMsg] = useState<{ ok: boolean; text: string } | null>(null)
+  // 应用自身更新(桌面应用,区别于下方 CLI 升级);结果存全局 store,
+  // 启动静默自检先于本页打开时也能直接展示
+  const appUpdate = useUi((s) => s.appUpdate)
+  const [appChecking, setAppChecking] = useState(false)
+  const [appMsg, setAppMsg] = useState<{ ok: boolean; text: string } | null>(null)
+  const [appInstalling, setAppInstalling] = useState(false)
+  const [appProgress, setAppProgress] = useState<AppUpdateProgress | null>(null)
   // 本页所有服务信息/事件跟随激活通道:切换通道后重探
   const activeChannel = useUi((s) => s.activeChannel)
+
+  useEffect(() => window.kimiApi.onAppUpdateProgress(setAppProgress), [])
+
+  /** 手动检查应用更新(GitHub Releases);结果写全局 store,错误就地展示 */
+  const checkAppUpdate = () => {
+    setAppChecking(true)
+    setAppMsg(null)
+    window.kimiApi
+      .appUpdateCheck()
+      .then((r) => {
+        useUi.getState().setAppUpdate(r)
+        if (!r) setAppMsg({ ok: true, text: '已是最新版本' })
+      })
+      .catch((e) => setAppMsg({ ok: false, text: e instanceof Error ? e.message : String(e) }))
+      .finally(() => setAppChecking(false))
+  }
+
+  /** 下载并安装应用更新:成功安装时进程被安装器接管重启,正常 resolve 意味着
+   *  重新检查时更新已不存在(Release 被撤回等),需复位状态提示用户 */
+  const installAppUpdate = () => {
+    setAppInstalling(true)
+    setAppMsg(null)
+    setAppProgress(null)
+    window.kimiApi
+      .appUpdateInstall()
+      .then(() => {
+        setAppInstalling(false)
+        setAppMsg({ ok: false, text: '更新已不可用,请重新检查' })
+      })
+      .catch((e) => {
+        setAppMsg({ ok: false, text: e instanceof Error ? e.message : String(e) })
+        setAppInstalling(false)
+      })
+  }
 
   useEffect(() => {
     window.kimiApi.appInfo(activeChannel).then(setInfo).catch(() => {})
@@ -374,6 +419,73 @@ export function GeneralSettings() {
             <span className="font-mono">{cliInfo?.version ?? '—'}</span>
           </div>
         </div>
+      </Card>
+
+      {/* 应用自身更新:GitHub Releases 通道;启动时静默自检,此处手动检查与执行更新 */}
+      <GroupLabel>应用更新</GroupLabel>
+      <Card>
+        <div className="flex items-center justify-between gap-3">
+          <div className="min-w-0">
+            <p className="text-[13.5px] font-medium">
+              桌面应用更新
+              {appUpdate && (
+                <span className="ml-2 rounded bg-success-soft px-1.5 py-0.5 text-[11px] text-success">
+                  新版本 v{appUpdate.version}
+                </span>
+              )}
+            </p>
+            <p className="mt-0.5 text-[12px] text-text-tertiary">
+              当前版本 <span className="font-mono">{info?.appVersion ?? '—'}</span>
+              ;检查 GitHub Releases 上的新版本,更新包经签名校验,下载完成后自动安装并重启
+            </p>
+          </div>
+          <div className="flex shrink-0 gap-2">
+            <button
+              className="rounded-lg border border-border px-3 py-1.5 text-[13px] text-text-secondary hover:bg-surface-tertiary disabled:opacity-50"
+              disabled={appChecking || appInstalling}
+              onClick={checkAppUpdate}
+            >
+              {appChecking ? '检查中…' : '检查更新'}
+            </button>
+            {appUpdate && (
+              <button
+                className="rounded-lg bg-primary px-3 py-1.5 text-[13px] font-medium text-white hover:bg-primary-hover disabled:opacity-50"
+                disabled={appInstalling}
+                onClick={installAppUpdate}
+              >
+                {appInstalling ? '下载中…' : '下载并重启更新'}
+              </button>
+            )}
+          </div>
+        </div>
+        {appUpdate?.notes && (
+          <p className="mt-2 whitespace-pre-wrap text-[12px] text-text-secondary">{appUpdate.notes}</p>
+        )}
+        {appInstalling && appProgress && (
+          <div className="mt-3">
+            <div className="h-1.5 overflow-hidden rounded-full bg-surface-tertiary">
+              <div
+                className={`h-full rounded-full bg-primary ${appProgress.total ? 'transition-all' : 'animate-pulse'}`}
+                style={{
+                  width: appProgress.total
+                    ? `${Math.min(100, Math.round((appProgress.downloaded / appProgress.total) * 100))}%`
+                    : '100%'
+                }}
+              />
+            </div>
+            <p className="mt-1 text-[12px] text-text-tertiary">
+              {appProgress.total
+                ? `已下载 ${(appProgress.downloaded / 1024 / 1024).toFixed(1)} / ${(appProgress.total / 1024 / 1024).toFixed(1)} MB`
+                : `已下载 ${(appProgress.downloaded / 1024 / 1024).toFixed(1)} MB`}
+              ,完成后将自动安装并重启
+            </p>
+          </div>
+        )}
+        {appMsg && (
+          <p className={`mt-2 text-[12px] ${appMsg.ok ? 'text-success' : 'text-danger'}`}>
+            {appMsg.text}
+          </p>
+        )}
       </Card>
 
       {/* 连接目标的编辑入口已迁移至「通道」设置页(ChannelsSettings) */}

@@ -16,6 +16,7 @@ mod rest;
 mod server;
 mod ssh;
 mod target;
+mod updater;
 mod ws;
 
 use std::collections::HashMap;
@@ -33,6 +34,7 @@ use tauri_plugin_opener::OpenerExt;
 
 use rest::RestClient;
 use server::{ServerInfo, ServerManager, SharedServer};
+use updater::{app_update_check, app_update_install};
 use ws::WsClient;
 
 /// 单个通道的后端运行时状态:server / REST / server_info / WS 均按通道隔离,
@@ -1341,6 +1343,7 @@ pub fn run() {
         }))
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         // 外部宠物精灵图协议(M3):前端 URL 形态 http://pet.localhost/<slug>
         // (Tauri v2 在 Windows 上自定义 scheme 的访问形态)。按 slug 定位宠物目录下的
         // 精灵图(优先 webp 其次 png)返回字节;slug 白名单校验防路径穿越;找不到 404
@@ -1371,6 +1374,8 @@ pub fn run() {
         .manage(state)
         .invoke_handler(tauri::generate_handler![
             app_info,
+            app_update_check,
+            app_update_install,
             web_ui_url,
             app_open_logs,
             open_external,
@@ -1483,6 +1488,8 @@ pub fn run() {
                 });
             }
             // 启动即进主页面,但不自动拉起 kimi web:由对话页占位图上的"启动服务"触发
+            // 应用自动更新:延迟静默自检,发现新版发系统通知 + emit app:update-available
+            updater::spawn_startup_check(app.handle().clone());
             Ok(())
         })
         .build(tauri::generate_context!())

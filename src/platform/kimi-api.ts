@@ -108,6 +108,18 @@ export interface TurnEndedInfo {
   session_id: string
 }
 
+/** 应用自身更新信息(app_update_check 返回 / app:update-available 事件载荷) */
+export interface AppUpdateInfo {
+  version: string
+  notes: string | null
+}
+
+/** 应用更新下载进度(app:update-progress 事件载荷;total 未知时为 null) */
+export interface AppUpdateProgress {
+  downloaded: number
+  total: number | null
+}
+
 /** 桌宠配置(实验性功能;设计见 docs/desktop-pet-design.md) */
 export interface PetConfig {
   enabled: boolean
@@ -215,6 +227,14 @@ export interface KimiApi {
   cliNpmUpgrade(): Promise<any>
   /** 手动检查 CLI 更新:返回当前/最新版本与是否有更新;网络失败时 reject */
   cliCheckUpdate(): Promise<{ current: string | null; latest: string; hasUpdate: boolean }>
+  /** 手动检查应用自身更新(GitHub Releases);无更新返回 null,检查失败 reject */
+  appUpdateCheck(): Promise<AppUpdateInfo | null>
+  /** 下载并安装应用更新:进度经 onAppUpdateProgress 推送,完成后自动重启应用 */
+  appUpdateInstall(): Promise<void>
+  /** 应用更新下载进度(app:update-progress;total 未知时为 null) */
+  onAppUpdateProgress(cb: (p: AppUpdateProgress) => void): Unsubscribe
+  /** 启动静默自检发现新版本(app:update-available),供前端角标提示 */
+  onAppUpdateAvailable(cb: (info: AppUpdateInfo) => void): Unsubscribe
   connectionTargetGet(): Promise<ConnectionTargetInfo>
   connectionTargetSet(
     cfg: ConnectionTargetConfig,
