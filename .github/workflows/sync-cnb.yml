@@ -34,6 +34,8 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event.release.tag_name || inputs.tag }}
+          # 必须全量历史:默认浅克隆(depth=1)往 CNB 推 tag 会被拒(shallow update not allowed)
+          fetch-depth: 0
 
       # 取回 tauri-action 生成的 latest.json(Release 已发布,可直接下载)
       - name: Generate CNB latest.json
