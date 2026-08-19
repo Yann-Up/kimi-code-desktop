@@ -7,6 +7,8 @@
  */
 import { useEffect, useRef, useState } from 'react'
 import {
+  Eye,
+  EyeOff,
   Gauge,
   MessageSquare,
   RadioTower,
@@ -39,8 +41,9 @@ function WebFrame() {
   const [installConfirm, setInstallConfirm] = useState(false)
   // 每通道 src 拉取在途标记(避免 effect 重跑时并发重复拉取)
   const fetching = useRef<Set<string>>(new Set())
-  // 对话页内皮肤立绘桥接(实验性):与 iframe 注入脚本 postMessage 收发皮肤配置
-  useChatSkinBridge()
+  // 对话页内皮肤立绘桥接(实验性):与 iframe 注入脚本 postMessage 收发皮肤配置;
+  // active 时右下角给会话级快捷显隐按钮(审阅面板被立绘遮挡时临时关闭,不落配置)
+  const chatSkin = useChatSkinBridge()
 
   // 通道集合就绪后:为尚无状态的通道初始化(运行中 → on,其余 → off)
   useEffect(() => {
@@ -271,6 +274,17 @@ function WebFrame() {
           </div>
         )
       })}
+
+      {/* 会话立绘快捷显隐:立绘会盖住右侧审阅面板,给会话级开关(不落配置,重启恢复) */}
+      {chatSkin.active && (
+        <button
+          className="absolute bottom-3 right-3 z-10 flex h-7 w-7 items-center justify-center rounded-full border border-border bg-surface/90 text-text-tertiary shadow-sm backdrop-blur transition-colors hover:text-text"
+          title={chatSkin.hidden ? '显示立绘' : '暂时隐藏立绘(本次会话有效)'}
+          onClick={chatSkin.toggleHidden}
+        >
+          {chatSkin.hidden ? <EyeOff size={14} /> : <Eye size={14} />}
+        </button>
+      )}
 
       {/* 本机缺 CLI 的安装确认:明确告知将下载什么、用什么方式(仅 local 通道) */}
       {installConfirm && (
