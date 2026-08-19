@@ -2,7 +2,7 @@ name: Sync CNB
 
 # CNB 镜像同步:GitHub Release 正式发布(published)后触发,做两件事——
 #   1. 把 tag(连同可达提交)推送到 CNB 镜像仓,触发其 .cnb.yml 流水线
-#      自动创建同名 Release 并从本 Release 拉取 .nsis.zip 上传为 CNB 附件;
+#      自动创建同名 Release 并从本 Release 拉取安装器(setup.exe + msi)上传为 CNB 附件;
 #   2. 生成 CNB 版 latest.json(下载地址改写为 CNB 附件直链,签名内容不变),
 #      提交到 CNB 仓 updater 分支——其 raw 固定链接即客户端更新器的 CNB 端点。
 # 需要的一次性仓库 Secrets:
