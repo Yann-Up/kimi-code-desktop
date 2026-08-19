@@ -48,7 +48,8 @@ const api: KimiApi = {
   appInfo: (channel) => invoke('app_info', { channel }),
   windowControl: async (action) => {
     const win = getCurrentWindow()
-    if (action === 'minimize') await win.minimize()
+    // 最小化到托盘:hide 后任务栏不留按钮,由托盘左键/菜单"显示主窗口"恢复
+    if (action === 'minimize') await win.hide()
     else if (action === 'close') await win.close()
     else if (await win.isMaximized()) await win.unmaximize()
     else await win.maximize()

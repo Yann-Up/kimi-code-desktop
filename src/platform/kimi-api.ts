@@ -215,6 +215,7 @@ export interface KimiApi {
   // app
   /** 应用与指定通道(缺省=激活通道)服务信息;channel 省略时后端按激活通道解析 */
   appInfo(channel?: string): Promise<any>
+  /** 窗口控制:minimize 为最小化到托盘(任务栏不留按钮,托盘恢复) */
   windowControl(action: 'minimize' | 'maximize' | 'close'): Promise<void>
   cliUpgrade(): Promise<any>
   openLogs(): Promise<any>

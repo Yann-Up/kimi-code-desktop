@@ -8,7 +8,24 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import type { PetMeta, PetState } from '@/platform/kimi-api'
-import spritesheetUrl from '@/assets/pets/kimi/spritesheet.png'
+
+/** 内置宠物精灵图注册表:slug → 打包资源 URL(src/assets/pets/<slug>/spritesheet.{png,webp}) */
+const BUILTIN_SHEETS: Record<string, string> = Object.fromEntries(
+  Object.entries(
+    import.meta.glob('../../assets/pets/*/spritesheet.{png,webp}', {
+      eager: true,
+      query: '?url',
+      import: 'default'
+    })
+  ).map(([path, url]) => {
+    const m = path.match(/pets\/([^/]+)\/spritesheet\./)
+    return [m?.[1] ?? '', url as string]
+  })
+)
+/** 内置宠物取图:slug 未命中(注册表与资产不一致)时回退 kimi 团子 */
+function builtinSheetUrl(slug: string): string {
+  return BUILTIN_SHEETS[slug] ?? BUILTIN_SHEETS['kimi'] ?? ''
+}
 
 /** 工具脉冲气泡文案(display.kind → 候选短句,随机取一;服务端 schema 已核实取值集合) */
 const TOOL_BUBBLE: Record<string, string[]> = {
@@ -184,7 +201,7 @@ export function PetWindow() {
     // crossOrigin=anonymous + 协议响应的 ACAO:* 配套:否则画布被跨源污染,
     // 下面 detectFrames 的 getImageData 会抛 SecurityError 导致整只宠物不显示
     img.crossOrigin = 'anonymous'
-    img.src = meta.source === 'builtin' ? spritesheetUrl : `http://pet.localhost/${meta.slug}`
+    img.src = meta.source === 'builtin' ? builtinSheetUrl(meta.slug) : `http://pet.localhost/${meta.slug}`
     let raf = 0
     let start = 0
     // 有效帧数探测:外部宠物某行的尾部帧可能是空格子(pet.json 未声明帧数时

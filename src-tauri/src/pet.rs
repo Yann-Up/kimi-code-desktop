@@ -327,9 +327,6 @@ pub fn init(app: &AppHandle) {
 // 与前端 src/platform/kimi-api.ts 的 PetAnim/PetMeta/PetInfo 严格同形(camelCase)
 // ---------------------------------------------------------------------------
 
-/// 内置宠物 slug(精灵图打包在前端 src/assets/pets/kimi,不走 pet:// 协议)
-pub const BUILTIN_SLUG: &str = "kimi";
-
 /// 五状态 key(states 映射的固定键集,与 PetState 一一对应)
 const STATE_KEYS: [&str; 5] = ["idle", "running", "waiting", "jumping", "failed"];
 
@@ -386,16 +383,20 @@ pub struct PetInfo {
     pub source: String,
 }
 
-/// 内置宠物"Kimi 团子":192x208 帧、每行 7 帧(网格仍为 8 列,第 8 列是首帧副本不参与播放),
-/// 与 src/assets/pets/kimi/spritesheet.png 一致
-pub fn builtin_pet() -> PetMeta {
+/// 默认内置宠物 slug(desktop-config.json 未设置 pet_slug 时的回退)
+pub const BUILTIN_SLUG: &str = "kimi";
+
+/// petdex 布局的九状态行映射(行序:idle,running-right,running-left,waving,
+/// jumping,failed,waiting,running,review)。frames 按各宠物每行实际帧数声明;
+/// 前端 detectFrames 会再按内容截断行尾空帧
+fn petdex_states(frames: u32) -> HashMap<String, PetAnim> {
     let anim = |row: u32, fps: u32, is_loop: bool| PetAnim {
         row,
-        frames: 7,
+        frames,
         fps,
         is_loop,
     };
-    let states = HashMap::from([
+    HashMap::from([
         ("idle".to_string(), anim(0, 4, true)),
         ("running".to_string(), anim(7, 10, true)),
         ("waiting".to_string(), anim(6, 3, true)),
@@ -406,15 +407,27 @@ pub fn builtin_pet() -> PetMeta {
         ("running-left".to_string(), anim(2, 10, true)),
         ("waving".to_string(), anim(3, 8, false)),
         ("review".to_string(), anim(8, 6, true)),
-    ]);
-    PetMeta {
-        slug: BUILTIN_SLUG.to_string(),
-        name: "Kimi 团子".to_string(),
+    ])
+}
+
+/// 内置宠物注册表(素材在 src/assets/pets/<slug>/ 下,前端 import.meta.glob 取图):
+/// - kimi: Kimi 团子,192x208 帧、每行 7 帧(网格 8 列,第 8 列是首帧副本不参与播放)
+/// - xiao-k: 小K,petdex 标准布局 8 帧/行(部分行只有 6 帧,由前端探测截断)
+pub fn builtin_pets() -> Vec<PetMeta> {
+    let meta = |slug: &str, name: &str, frames: u32| PetMeta {
+        slug: slug.to_string(),
+        name: name.to_string(),
         source: "builtin".to_string(),
         frame_w: 192,
         frame_h: 208,
-        states,
-    }
+        states: petdex_states(frames),
+    };
+    vec![meta("kimi", "Kimi 团子", 7), meta("xiao-k", "小K", 8)]
+}
+
+/// 默认内置宠物(Kimi 团子)
+pub fn builtin_pet() -> PetMeta {
+    builtin_pets().into_iter().next().expect("内置宠物注册表为空")
 }
 
 /// slug 白名单校验:仅 [A-Za-z0-9_-],防路径穿越(pet:// 协议 handler 与扫描均用)
@@ -512,11 +525,15 @@ fn petdex_fallback(v: &Value, slug: &str, source: &str) -> PetMeta {
         .and_then(|x| x.as_str())
         .unwrap_or(slug)
         .to_string();
-    let mut meta = builtin_pet();
-    meta.slug = slug.to_string();
-    meta.name = name;
-    meta.source = source.to_string();
-    meta
+    PetMeta {
+        slug: slug.to_string(),
+        name,
+        source: source.to_string(),
+        frame_w: 192,
+        frame_h: 208,
+        // 按满网格声明 8 帧,行尾空帧由前端 detectFrames 截断
+        states: petdex_states(8),
+    }
 }
 
 /// 解析单个宠物目录的 pet.json 为 PetMeta;解析失败(无 pet.json / JSON 坏 / 缺关键字段)返回 None
@@ -561,10 +578,10 @@ pub fn scan_pets() -> Vec<PetMeta> {
     out
 }
 
-/// 按 slug 解析宠物元信息:内置直接返回;外部在扫描结果中找,找不到回退内置
+/// 按 slug 解析宠物元信息:内置注册表直接返回;外部在扫描结果中找,找不到回退默认内置
 pub fn resolve_pet(slug: &str) -> PetMeta {
-    if slug == BUILTIN_SLUG {
-        return builtin_pet();
+    if let Some(p) = builtin_pets().into_iter().find(|p| p.slug == slug) {
+        return p;
     }
     scan_pets()
         .into_iter()
@@ -582,7 +599,8 @@ pub fn active_slug(app: &AppHandle) -> String {
 /// 按 slug 读取外部宠物精灵图(优先 spritesheet.webp,其次 spritesheet.png;
 /// 目录查找顺序与扫描一致:kimi-code 优先)。返回字节与 mime,找不到返回 None
 pub fn load_spritesheet(slug: &str) -> Option<(Vec<u8>, &'static str)> {
-    if !valid_slug(slug) || slug == BUILTIN_SLUG {
+    // 内置宠物的图打包在前端资产里(import.meta.glob),不走 pet:// 协议
+    if !valid_slug(slug) || builtin_pets().iter().any(|p| p.slug == slug) {
         return None;
     }
     for (root, _) in scan_roots() {

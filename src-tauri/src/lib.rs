@@ -691,11 +691,11 @@ async fn pet_set_enabled(app: AppHandle, enabled: bool) -> Result<(), String> {
     Ok(())
 }
 
-/// 宠物列表(M3):内置排第一,其后为扫描到的外部宠物(kimi-code 目录优先于 petdex)。
+/// 宠物列表(M3):内置注册表在前,其后为扫描到的外部宠物(kimi-code 目录优先于 petdex)。
 /// 不建窗,仅读盘扫描,sync 即可
 #[tauri::command]
 fn pet_list() -> Vec<pet::PetInfo> {
-    let mut list = vec![pet::builtin_pet().info()];
+    let mut list: Vec<pet::PetInfo> = pet::builtin_pets().iter().map(|p| p.info()).collect();
     list.extend(pet::scan_pets().into_iter().map(|p| p.info()));
     list
 }
@@ -707,14 +707,15 @@ fn pet_active_get(app: AppHandle) -> pet::PetMeta {
     pet::resolve_pet(&pet::active_slug(&app))
 }
 
-/// 切换激活宠物(M3):校验 slug 存在(内置 "kimi" 或扫描到)→ 持久化 pet_slug →
+/// 切换激活宠物(M3):校验 slug 存在(内置注册表或扫描到)→ 持久化 pet_slug →
 /// 广播 pet:config-changed(载荷为完整 PetConfig)。不建窗,sync 即可
 #[tauri::command]
 fn pet_set_active(app: AppHandle, slug: String) -> Result<(), String> {
     if !pet::valid_slug(&slug) {
         return Err(format!("非法宠物标识: {slug}"));
     }
-    if slug != pet::BUILTIN_SLUG && !pet::scan_pets().iter().any(|p| p.slug == slug) {
+    let is_builtin = pet::builtin_pets().iter().any(|p| p.slug == slug);
+    if !is_builtin && !pet::scan_pets().iter().any(|p| p.slug == slug) {
         return Err(format!("宠物不存在: {slug}"));
     }
     let mut cfg = config::load(&app);

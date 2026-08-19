@@ -28,7 +28,7 @@ src-tauri/src/          Rust 后端
   cli.rs                CLI 自检测 / 安装 / 升级
   ssh.rs                进程内 SSH 客户端与端口转发
   config.rs / local_store.rs / target.rs   配置、本地数据直读、运行目标(本机/WSL/SSH)
-  pet.rs                桌宠悬浮窗(实验性):透明置顶小窗 + 状态机(ws.rs 事件驱动);M3 起扫描 <kimi_home>/pets 与 ~/.petdex/pets(兼容 kimi-pet.v0/petdex 布局),外部精灵图经 pet:// 自定义协议供图;开关存 desktop-config.json 的 pet_enabled/pet_slug
+  pet.rs                桌宠悬浮窗(实验性):透明置顶小窗 + 状态机(ws.rs 事件驱动);内置宠物注册表 builtin_pets()(素材 src/assets/pets/<slug>/),并扫描 <kimi_home>/pets 与 ~/.petdex/pets(兼容 kimi-pet.v0/petdex 布局),外部精灵图经 pet:// 自定义协议供图;开关存 desktop-config.json 的 pet_enabled/pet_slug
   updater.rs            应用自动更新(tauri-plugin-updater + GitHub Releases latest.json,minisign 签名校验):app_update_check/app_update_install 命令 + 启动延迟静默自检(dev 跳过);签名公钥在 tauri.conf.json plugins.updater.pubkey,私钥 ~/.tauri/kimi-desktop.key 不入库(CI 走 TAURI_SIGNING_PRIVATE_KEY secret);发版见 .github/workflows/release.yml(push v* tag → 草稿 Release)
 build/                  图标等资源;design/ 设计稿;docs/ 评审与跟踪文档;out/renderer 前端构建产物
 ```

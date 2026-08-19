@@ -4,7 +4,7 @@
 
 ## M3 实现要点(2026-08-18)
 
-- 宠物来源三处:内置 `kimi`(Kimi 团子,打包 spritesheet)、`<kimi_home>/pets/*`(source `kimi-code`)、`~/.petdex/pets/*`(source `petdex`);slug=目录名,去重 kimi-code 优先,坏条目跳过。
+- 宠物来源三处:内置注册表(打包 spritesheet,`pet.rs::builtin_pets()`,目前有 kimi 团子 / xiao-k 小K 两只;素材在 `src/assets/pets/<slug>/`,前端 `import.meta.glob` 按 slug 取图)、`<kimi_home>/pets/*`(source `kimi-code`)、`~/.petdex/pets/*`(source `petdex`);slug=目录名,去重 kimi-code 优先,坏条目跳过。
 - pet.json 三格式归一化(Rust `pet.rs::parse_pet_dir`):`schema=="kimi-desktop-pet/1"` 原生格式;`schemaVersion=="kimi-pet.v0"`(FeiZhuLulu/kimi-pet,animations 映射 thinking/tool_use/editing/terminal→running、waiting_approval→waiting、success→jumping、error→failed);无标记按 petdex 布局兜底(192x208、8 帧/行、固定行序)。
 - 外部精灵图走自定义协议 `pet://`(Windows 前端 URL 形态 `http://pet.localhost/<slug>`,lib.rs `register_uri_scheme_protocol` 实现,slug 白名单防路径穿越,优先 spritesheet.webp 其次 .png);CSP img-src 已放行。
 - 配置 `pet_slug` 存 desktop-config.json;命令 `pet_list`/`pet_active_get`/`pet_set_active`(均不建窗,sync 即可);切换时 emit `pet:config-changed`(载荷完整 PetConfig `{enabled, slug}`),桌宠窗与设置页都靠它重载。
