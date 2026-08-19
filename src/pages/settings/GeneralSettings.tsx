@@ -550,7 +550,7 @@ export function GeneralSettings() {
                 setNpmUpgrading(true)
                 setCliError('')
                 window.kimiApi
-                  .cliNpmUpgrade()
+                  .cliUpgrade()
                   .then(() => setTimeout(() => window.location.reload(), 600))
                   .catch((e) => {
                     setCliError(e instanceof Error ? e.message : String(e))

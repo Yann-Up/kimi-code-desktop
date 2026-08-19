@@ -271,41 +271,49 @@ async fn cli_upgrade(app: AppHandle, state: State<'_, Arc<AppState>>) -> Result<
     if !conn_target.is_local() {
         return cli_upgrade_remote(&app, &state, &conn_target).await;
     }
-    // 一键升级仅适用于官方脚本安装的 CLI(数据目录/bin 或默认目录/bin);
-    // npm 全局/自定义路径安装的请用对应包管理器升级
-    match cli::kimi_bin_source() {
-        "home" => {}
-        "custom" | "env" => {
-            return Err("当前 CLI 为自定义路径安装,请自行升级(如 npm update -g @moonshot-ai/kimi-code)".to_string())
+    // 按 CLI 安装来源自动选择升级通道:
+    // home(官方 irm/install.ps1 脚本装到数据目录/bin)走 `kimi upgrade` 自更新;
+    // path/custom/env(npm 全局或自定义路径)走 `npm update -g`
+    let source = cli::kimi_bin_source();
+    let before = cli::detect_installed().await;
+    match source {
+        "home" => {
+            let _out = cli::upgrade_cli().await?;
         }
         _ => {
-            return Err("当前 CLI 来自 PATH(可能为 npm 安装),请用对应包管理器升级".to_string())
+            let _out = cli::npm_upgrade().await?;
         }
     }
-    // kimi upgrade 本身失败时不 emit,直接抛错(与 Electron 版一致)
-    let _out = cli::upgrade_cli().await?;
-    // 升级后重启激活通道的 kimi web 服务使新二进制生效
-    let channel = cli::active_channel();
-    let target = cli::connection_target();
-    let server = state.channel_server(&channel).await;
-    ServerManager::stop(&server, &state.http).await;
-    match ServerManager::start(&server, &state.http, &app, &channel, &target).await {
-        Ok(info) => {
-            init_backend(&app, &state, &channel, &info).await;
-            let _ = app.emit(
-                "cli:upgraded",
-                json!({ "version": info.cli_version, "restartOk": true }),
-            );
-            Ok(info.cli_version)
-        }
-        Err(e) => {
-            let _ = app.emit(
-                "cli:upgraded",
-                json!({ "version": Value::Null, "restartOk": false }),
-            );
-            Err(e)
-        }
+    let version = cli::detect_installed().await;
+    // 升级前后版本一致:自更新渠道暂未发布该版本(irm 渠道可能落后于 npm registry),
+    // 或交互式升级被取消 / 当前 CLI 并非 npm 全局安装——如实报错,误报成功会导致
+    // 下次启动重复提示同一更新
+    if version.is_some() && version == before {
+        return Err(if source == "home" {
+            "CLI 自更新渠道暂未发布新版本(或升级被取消),请稍后再试".to_string()
+        } else {
+            "升级后版本未变化;若 CLI 非 npm 全局安装(如 scoop/手动放置),请用对应方式手动升级".to_string()
+        });
     }
+    // 服务在跑则重启使新版本生效;重启失败不否定升级本身(restartOk=false 由前端提示)
+    let was_running = {
+        let map = state.backends.lock().await;
+        match map.get(&cli::active_channel()) {
+            Some(bs) => bs.server_info.lock().await.is_some(),
+            None => false,
+        }
+    };
+    let restart_ok = if was_running {
+        restart_backend(&app, &state).await.is_ok()
+    } else {
+        false
+    };
+    let _ = app.emit(
+        "cli:upgraded",
+        json!({ "version": version, "restartOk": restart_ok }),
+    );
+    // 升级后探测失败不视为升级失败:version=null,前端提示"无法确认新版本"
+    Ok(version.unwrap_or_default())
 }
 
 /// WSL/SSH 远端升级:路径含 .kimi-code/bin 视为官方脚本安装(重跑安装脚本),
@@ -400,30 +408,12 @@ async fn stop_backend(
     Ok(())
 }
 
-/// npm 快捷升级(npm 全局/自定义路径安装时可用):npm update -g → 重启后端 → 广播 cli:upgraded
+/// 更新弹窗"跳过此版本":持久化到 desktop-config.json,启动查更新时该版本不再提示
 #[tauri::command]
-async fn cli_npm_upgrade(app: AppHandle, state: State<'_, Arc<AppState>>) -> Result<String, String> {
-    if cli::kimi_bin_source() == "home" {
-        return Err("当前为官方脚本安装,请使用应用内一键升级".to_string());
-    }
-    let _out = cli::npm_upgrade().await?;
-    // 服务在跑则重启使新版本生效;未启动只需报告新版本号
-    let was_running = {
-        let map = state.backends.lock().await;
-        match map.get(&cli::active_channel()) {
-            Some(bs) => bs.server_info.lock().await.is_some(),
-            None => false,
-        }
-    };
-    if was_running {
-        restart_backend(&app, &state).await?;
-    }
-    let version = cli::detect_installed().await;
-    let _ = app.emit(
-        "cli:upgraded",
-        json!({ "version": version, "restartOk": was_running }),
-    );
-    version.ok_or_else(|| "升级后检测 CLI 版本失败".to_string())
+async fn cli_update_skip(app: AppHandle, version: String) -> Result<(), String> {
+    let mut cfg = config::load(&app);
+    cfg.cli_update_skip = Some(version);
+    config::save(&app, &cfg)
 }
 
 /// 手动检查 CLI 更新:对比 npm registry 最新版,返回当前/最新版本与是否有更新。
@@ -738,12 +728,13 @@ fn pet_set_active(app: AppHandle, slug: String) -> Result<(), String> {
     Ok(())
 }
 
-/// 皮肤配置载荷(enabled/slug/opacity),skin_config_get 返回值与 skin:config-changed 载荷共用
+/// 皮肤配置载荷(enabled/slug/opacity/in_chat),skin_config_get 返回值与 skin:config-changed 载荷共用
 fn skin_config_json(cfg: &config::DesktopConfig) -> Value {
     json!({
         "enabled": cfg.skin_enabled.unwrap_or(false),
         "slug": cfg.skin_slug,
         "opacity": cfg.skin_opacity.unwrap_or(skin::DEFAULT_OPACITY),
+        "inChat": cfg.skin_in_chat.unwrap_or(false),
     })
 }
 
@@ -783,6 +774,17 @@ fn skin_set_opacity(app: AppHandle, opacity: u8) -> Result<(), String> {
     }
     let mut cfg = config::load(&app);
     cfg.skin_opacity = Some(opacity);
+    config::save(&app, &cfg)?;
+    let _ = app.emit("skin:config-changed", skin_config_json(&cfg));
+    Ok(())
+}
+
+/// 开关对话页内立绘透出(实验性):只持久化并广播 skin:config-changed,
+/// iframe 内显隐由注入脚本与壳侧桥接(chatSkinBridge)完成,sync 即可
+#[tauri::command]
+fn skin_set_in_chat(app: AppHandle, enabled: bool) -> Result<(), String> {
+    let mut cfg = config::load(&app);
+    cfg.skin_in_chat = Some(enabled);
     config::save(&app, &cfg)?;
     let _ = app.emit("skin:config-changed", skin_config_json(&cfg));
     Ok(())
@@ -1353,10 +1355,16 @@ async fn run_bootstrap(app: AppHandle, state: Arc<AppState>, channel: String) {
             let current = version.clone();
             tauri::async_runtime::spawn(async move {
                 if let Some(latest) = cli::fetch_latest_version(&http).await {
+                    // 用户在弹窗点过"跳过此版本":该版本不再提示(有更新的版本仍会提示)
+                    let skipped = config::load(&app2).cli_update_skip;
+                    if skipped.as_deref() == Some(latest.as_str()) {
+                        return;
+                    }
                     if cli::is_newer(&latest, &current) {
+                        // source 供前端区分升级通道:home=kimi upgrade,其余=npm update -g
                         let _ = app2.emit(
                             "cli:update-available",
-                            json!({ "current": current, "latest": latest }),
+                            json!({ "current": current, "latest": latest, "source": cli::kimi_bin_source() }),
                         );
                     }
                 }
@@ -1472,7 +1480,7 @@ pub fn run() {
             confirm_close,
             hide_main_to_tray,
             cli_upgrade,
-            cli_npm_upgrade,
+            cli_update_skip,
             cli_check_update,
             start_backend,
             stop_backend,
@@ -1511,6 +1519,7 @@ pub fn run() {
             skin_custom_list,
             skin_dir_open,
             skin_set_opacity,
+            skin_set_in_chat,
             local_mcp_read,
             local_mcp_write,
             local_cli_config_read,
@@ -1562,6 +1571,10 @@ pub fn run() {
                     }
                     NewWindowResponse::Deny
                 })
+                // 对话页内皮肤立绘(实验性):注入脚本在官方 web UI iframe(回环源子框架)内
+                // 挂载立绘容器,与壳侧 chatSkinBridge.ts 经 postMessage 收发配置;
+                // 脚本自带子框架/回环 origin 守卫,主框架与其他页面不受影响
+                .initialization_script_for_all_frames(include_str!("../assets/chat_skin_inject.js"))
                 .build()?;
             create_tray(app.handle())?;
             // 桌宠状态机巡检(一次性动作到期回基底 / 事件流断裂复位)

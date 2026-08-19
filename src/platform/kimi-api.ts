@@ -134,6 +134,8 @@ export interface SkinConfig {
   slug: string | null
   /** 卡片不透明度百分比(30-100,缺省 82;越低立绘透出越明显) */
   opacity: number
+  /** 对话页内透出立绘(实验性,缺省关):经注入脚本显示在官方 web UI iframe 内右下 */
+  inChat: boolean
 }
 
 /** 桌宠状态(pet:state 事件载荷;M2 起由 Rust 侧状态机驱动)。
@@ -234,7 +236,8 @@ export interface KimiApi {
   kimiCliSet(path: string | null): Promise<any>
   /** 指定/清除远端 CLI 路径(仅 WSL/SSH 激活通道;null 恢复自动探测) */
   remoteBinSet(path: string | null): Promise<any>
-  cliNpmUpgrade(): Promise<any>
+  /** 更新弹窗"跳过此版本":持久化,启动查更新时该版本不再提示 */
+  cliUpdateSkip(version: string): Promise<void>
   /** 手动检查 CLI 更新:返回当前/最新版本与是否有更新;网络失败时 reject */
   cliCheckUpdate(): Promise<{ current: string | null; latest: string; hasUpdate: boolean }>
   /** 手动检查应用自身更新(GitHub Releases);无更新返回 null,检查失败 reject */
@@ -272,7 +275,8 @@ export interface KimiApi {
   /** kimi web 意外退出(非用户主动停止)时触发,前端应提示并允许重新启动 */
   onServerExited(cb: (info: ServerExitedInfo) => void): Unsubscribe
   onCliInstalling(cb: () => void): Unsubscribe
-  onCliUpdateAvailable(cb: (info: { current: string; latest: string }) => void): Unsubscribe
+  /** source: CLI 安装来源(home=官方脚本,其余按 npm 处理),用于区分升级通道 */
+  onCliUpdateAvailable(cb: (info: { current: string; latest: string; source: string }) => void): Unsubscribe
   onCliUpgraded(cb: (info: { version: string | null; restartOk: boolean }) => void): Unsubscribe
   onServerReady(cb: (info: ServerReadyInfo) => void): Unsubscribe
   onServerError(cb: (info: ServerErrorInfo) => void): Unsubscribe
@@ -353,6 +357,8 @@ export interface KimiApi {
   skinDirOpen(): Promise<void>
   /** 调整卡片不透明度(30-100):持久化并发 skin:config-changed,拖动滑块时连续调用 */
   skinSetOpacity(opacity: number): Promise<void>
+  /** 开关对话页内立绘透出:持久化并发 skin:config-changed(iframe 内显隐由注入脚本完成) */
+  skinSetInChat(enabled: boolean): Promise<void>
   /** 皮肤配置变化(skin:config-changed;切换开关/皮肤后同步立绘显隐与形象) */
   onSkinConfigChanged(cb: (cfg: SkinConfig) => void): Unsubscribe
 }

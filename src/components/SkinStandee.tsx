@@ -11,7 +11,7 @@ import type { SkinConfig } from '../platform/kimi-api'
 import { BUILTIN_SKINS, listAllSkins, resolveSkin, type SkinInfo } from './skins'
 
 export function SkinStandee() {
-  const [cfg, setCfg] = useState<SkinConfig>({ enabled: false, slug: null, opacity: 82 })
+  const [cfg, setCfg] = useState<SkinConfig>({ enabled: false, slug: null, opacity: 82, inChat: false })
   // 皮肤列表:内置先行(立即可用),自选扫描结果到达后合并
   const [skins, setSkins] = useState<SkinInfo[]>(BUILTIN_SKINS)
 

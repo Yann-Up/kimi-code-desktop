@@ -15,6 +15,7 @@ import {
 } from 'lucide-react'
 import { QuotaStrip } from './QuotaStrip'
 import { SkinStandee } from './SkinStandee'
+import { useChatSkinBridge } from './chatSkinBridge'
 import { SettingsPage } from '../pages/SettingsPage'
 import { StatsPage } from '../pages/stats/StatsPage'
 import { useUi } from '../stores/ui'
@@ -38,6 +39,8 @@ function WebFrame() {
   const [installConfirm, setInstallConfirm] = useState(false)
   // 每通道 src 拉取在途标记(避免 effect 重跑时并发重复拉取)
   const fetching = useRef<Set<string>>(new Set())
+  // 对话页内皮肤立绘桥接(实验性):与 iframe 注入脚本 postMessage 收发皮肤配置
+  useChatSkinBridge()
 
   // 通道集合就绪后:为尚无状态的通道初始化(运行中 → on,其余 → off)
   useEffect(() => {

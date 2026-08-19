@@ -62,7 +62,7 @@ const api: KimiApi = {
   kimiCliGet: () => invoke('get_cli_bin'),
   kimiCliSet: (path) => invoke('set_cli_bin', { path }),
   remoteBinSet: (path) => invoke('set_remote_bin', { path }),
-  cliNpmUpgrade: () => invoke('cli_npm_upgrade'),
+  cliUpdateSkip: (version) => invoke('cli_update_skip', { version }),
   cliCheckUpdate: () => invoke('cli_check_update'),
   appUpdateCheck: () => invoke<AppUpdateInfo | null>('app_update_check'),
   appUpdateInstall: () => invoke<void>('app_update_install'),
@@ -144,6 +144,7 @@ const api: KimiApi = {
   skinCustomList: () => invoke<string[]>('skin_custom_list'),
   skinDirOpen: () => invoke('skin_dir_open'),
   skinSetOpacity: (opacity) => invoke('skin_set_opacity', { opacity }),
+  skinSetInChat: (enabled) => invoke('skin_set_in_chat', { enabled }),
   onSkinConfigChanged: (cb) => on<SkinConfig>('skin:config-changed', cb)
 }
 

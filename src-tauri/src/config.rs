@@ -43,6 +43,12 @@ pub struct DesktopConfig {
     pub skin_slug: Option<String>,
     /// 卡片不透明度百分比(None = 默认 82;取值 30-100,越低立绘透出越明显)
     pub skin_opacity: Option<u8>,
+    /// 对话页内透出立绘(实验性,缺省关):经注入脚本显示在官方 web UI iframe 内右下
+    /// (注入见 assets/chat_skin_inject.js,桥接见 src/components/chatSkinBridge.ts)
+    pub skin_in_chat: Option<bool>,
+    /// 用户在更新弹窗点"跳过此版本"的 CLI 版本号;启动查更新时该版本不再提示
+    /// (有新于它的版本仍会提示;升级成功后自然失效——比较用 is_newer)
+    pub cli_update_skip: Option<String>,
 }
 
 impl DesktopConfig {

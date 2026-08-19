@@ -10,7 +10,7 @@ export default function App() {
   const [phase, setPhase] = useState<'starting' | 'ready' | 'error'>('starting')
   const [serverError, setServerError] = useState<string | null>(null)
   const [installing, setInstalling] = useState(false)
-  const [updateInfo, setUpdateInfo] = useState<{ current: string; latest: string } | null>(null)
+  const [updateInfo, setUpdateInfo] = useState<{ current: string; latest: string; source: string } | null>(null)
   const [upgrading, setUpgrading] = useState(false)
   const [upgradeMsg, setUpgradeMsg] = useState('')
   // 关窗确认框:null=不显示;否则值为"是否有后端在跑"(决定警告文案)
@@ -53,10 +53,15 @@ export default function App() {
       window.kimiApi.onCliUpgraded((info) => {
         setUpgrading(false)
         setUpdateInfo(null)
+        // restartOk=服务已重启使新版本生效;version=null=升级后版本探测失败(更新本身已执行)
         setUpgradeMsg(
           info.restartOk
-            ? `已更新到 ${info.version},服务已自动重启`
-            : '更新完成,但服务重启失败,请手动重启应用'
+            ? info.version
+              ? `已更新到 ${info.version},服务已自动重启`
+              : '更新已执行,但无法确认新版本,请重启应用确认'
+            : info.version
+              ? `已更新到 ${info.version};若服务在运行,重启后生效`
+              : '更新已执行;若服务在运行,重启后生效'
         )
         setTimeout(() => setUpgradeMsg(''), 5000)
       })
@@ -154,9 +159,20 @@ export default function App() {
               当前 {updateInfo.current} → 最新 {updateInfo.latest}
             </p>
             <p className="mt-1 text-[12px] text-text-tertiary">
-              更新通过 `kimi upgrade` 完成,更新后服务会自动重启
+              {updateInfo.source === 'home'
+                ? '更新通过 `kimi upgrade` 完成,更新后服务会自动重启'
+                : '当前为 npm 安装,更新通过 `npm update -g @moonshot-ai/kimi-code` 完成,更新后服务会自动重启'}
             </p>
             <div className="mt-4 flex justify-end gap-2">
+              <button
+                className="rounded-lg border border-border px-4 py-1.5 text-[13px] text-text-secondary hover:bg-surface-tertiary"
+                onClick={() => {
+                  window.kimiApi.cliUpdateSkip(updateInfo.latest).catch(() => {})
+                  setUpdateInfo(null)
+                }}
+              >
+                跳过此版本
+              </button>
               <button
                 className="rounded-lg border border-border px-4 py-1.5 text-[13px] text-text-secondary hover:bg-surface-tertiary"
                 onClick={() => setUpdateInfo(null)}
@@ -167,11 +183,16 @@ export default function App() {
                 className="rounded-lg bg-primary px-4 py-1.5 text-[13px] font-medium text-white hover:bg-primary-hover disabled:opacity-50"
                 disabled={upgrading}
                 onClick={() => {
+                  const failHint =
+                    updateInfo.source === 'home'
+                      ? '更新失败,请稍后在终端手动运行 kimi upgrade'
+                      : '更新失败,请稍后在终端手动运行 npm update -g @moonshot-ai/kimi-code'
                   setUpgrading(true)
-                  window.kimiApi.cliUpgrade().catch(() => {
+                  window.kimiApi.cliUpgrade().catch((e) => {
                     setUpgrading(false)
                     setUpdateInfo(null)
-                    setUpgradeMsg('更新失败,请稍后在终端手动运行 kimi upgrade')
+                    // 后端会给出具体原因(自更新渠道未发布/版本未变化等),优先透传
+                    setUpgradeMsg(typeof e === 'string' ? e : e instanceof Error ? e.message : failHint)
                     setTimeout(() => setUpgradeMsg(''), 5000)
                   })
                 }}

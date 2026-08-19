@@ -309,10 +309,24 @@ pub async fn fetch_latest_version(client: &reqwest::Client) -> Option<String> {
     None
 }
 
-/// semver 比较:latest 是否新于 current
+/// 规范化版本串:去首尾空白、取最后一个空白分隔段(容忍 "kimi 0.37.2" 这类输出)、去 v/V 前缀
+fn normalize_version(s: &str) -> &str {
+    let s = s.trim();
+    let s = s.split_whitespace().last().unwrap_or(s);
+    s.strip_prefix(['v', 'V']).unwrap_or(s)
+}
+
+/// semver 比较:latest 是否新于 current。
+/// latest 为预发布(含 "-" 后缀,如 0.38.0-beta.1)时不提示升级:
+/// stable 渠道的升级命令拿不到它,提示了只会反复打扰
 pub fn is_newer(latest: &str, current: &str) -> bool {
+    let latest = normalize_version(latest);
+    if latest.contains('-') {
+        return false;
+    }
     let parse = |s: &str| -> Vec<i64> {
-        s.split('.')
+        normalize_version(s)
+            .split('.')
             .map(|x| {
                 // 预发布/构建后缀(如 "2-beta.1"、"1+build")只取数字前缀再 parse
                 x.split(['-', '+'])

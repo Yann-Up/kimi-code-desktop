@@ -24,6 +24,8 @@ export function DesktopExperimentalSettings() {
   const [skinOptions, setSkinOptions] = useState<SkinInfo[]>([])
   // 卡片不透明度(30-100,缺省 82;与 Rust skin::DEFAULT_OPACITY 对齐)
   const [skinOpacity, setSkinOpacity] = useState(82)
+  // 对话页内透出立绘(实验性,缺省关;注入脚本 + chatSkinBridge 桥接)
+  const [skinInChat, setSkinInChat] = useState(false)
 
   useEffect(() => {
     window.kimiApi
@@ -44,6 +46,7 @@ export function DesktopExperimentalSettings() {
         setSkinEnabled(c.enabled)
         setSkinSlug(c.slug)
         setSkinOpacity(c.opacity)
+        setSkinInChat(c.inChat)
       })
       .catch(() => {})
     // 皮肤配置经 skin:config-changed 广播,同步本页(立绘显隐由 SkinStandee 自行监听)
@@ -51,6 +54,7 @@ export function DesktopExperimentalSettings() {
       setSkinEnabled(c.enabled)
       setSkinSlug(c.slug)
       setSkinOpacity(c.opacity)
+      setSkinInChat(c.inChat)
     })
     return () => {
       offPet()
@@ -269,6 +273,39 @@ export function DesktopExperimentalSettings() {
                 {skinOpacity}%
               </span>
             </div>
+          </div>
+        )}
+        {/* 对话页内透出:经注入脚本把立绘挂进官方 web UI iframe 右下(chatSkinBridge 桥接) */}
+        {skinEnabled && (
+          <div className="mt-3 flex items-center justify-between gap-3 border-t border-border pt-3">
+            <div className="min-w-0">
+              <p className="text-[13.5px] font-medium">对话页内显示立绘</p>
+              <p className="text-[12px] text-text-tertiary">
+                在对话窗口(官方 web UI)右下角叠加显示当前皮肤立绘
+              </p>
+            </div>
+            <button
+              className={`relative h-6 w-11 shrink-0 rounded-full transition-colors ${
+                skinInChat ? 'bg-primary' : 'bg-border'
+              } disabled:opacity-50`}
+              disabled={skinBusy}
+              onClick={() => {
+                const next = !skinInChat
+                setSkinBusy(true)
+                setSkinError('')
+                window.kimiApi
+                  .skinSetInChat(next)
+                  .then(() => setSkinInChat(next))
+                  .catch((e) => setSkinError(e instanceof Error ? e.message : String(e)))
+                  .finally(() => setSkinBusy(false))
+              }}
+            >
+              <span
+                className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-all ${
+                  skinInChat ? 'left-[22px]' : 'left-0.5'
+                }`}
+              />
+            </button>
           </div>
         )}
       </Card>
