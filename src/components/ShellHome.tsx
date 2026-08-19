@@ -317,6 +317,8 @@ export function ShellHome() {
   // 结果写入全局 store,设置页任何时候打开都能直接看到
   const appUpdateAvailable = useUi((s) => s.appUpdate !== null)
   useEffect(() => window.kimiApi.onAppUpdateAvailable((info) => useUi.getState().setAppUpdate(info)), [])
+  // 下载进度监听挂在常驻的 ShellHome 上:设置页切换 tab 会卸载,挂页面上会丢进度
+  useEffect(() => window.kimiApi.onAppUpdateProgress((p) => useUi.getState().setAppProgress(p)), [])
 
   const TABS: { id: 'chat' | 'stats' | 'settings'; label: string; icon: typeof MessageSquare }[] = [
     { id: 'chat', label: '对话', icon: MessageSquare },

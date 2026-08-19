@@ -2,7 +2,6 @@ import { useEffect, useState } from 'react'
 import { Section, Card, GroupLabel } from '../../components/settings/common'
 import { FolderPickerDialog } from '../../components/FolderPickerDialog'
 import type {
-  AppUpdateProgress,
   ConnectionTargetInfo,
   WebServerOptions
 } from '../../platform/kimi-api'
@@ -204,17 +203,15 @@ export function GeneralSettings() {
   const [webPortText, setWebPortText] = useState('')
   const [webSaving, setWebSaving] = useState(false)
   const [webMsg, setWebMsg] = useState<{ ok: boolean; text: string } | null>(null)
-  // 应用自身更新(桌面应用,区别于下方 CLI 升级);结果存全局 store,
-  // 启动静默自检先于本页打开时也能直接展示
+  // 应用自身更新(桌面应用,区别于下方 CLI 升级);结果与下载状态存全局 store,
+  // 启动静默自检先于本页打开、或下载中切换 tab 再回来,状态都不丢失
   const appUpdate = useUi((s) => s.appUpdate)
+  const appInstalling = useUi((s) => s.appInstalling)
+  const appProgress = useUi((s) => s.appProgress)
   const [appChecking, setAppChecking] = useState(false)
   const [appMsg, setAppMsg] = useState<{ ok: boolean; text: string } | null>(null)
-  const [appInstalling, setAppInstalling] = useState(false)
-  const [appProgress, setAppProgress] = useState<AppUpdateProgress | null>(null)
   // 本页所有服务信息/事件跟随激活通道:切换通道后重探
   const activeChannel = useUi((s) => s.activeChannel)
-
-  useEffect(() => window.kimiApi.onAppUpdateProgress(setAppProgress), [])
 
   /** 手动检查应用更新(GitHub Releases);结果写全局 store,错误就地展示 */
   const checkAppUpdate = () => {
@@ -233,6 +230,7 @@ export function GeneralSettings() {
   /** 下载并安装应用更新:成功安装时进程被安装器接管重启,正常 resolve 意味着
    *  重新检查时更新已不存在(Release 被撤回等),需复位状态提示用户 */
   const installAppUpdate = () => {
+    const { setAppInstalling, setAppProgress } = useUi.getState()
     setAppInstalling(true)
     setAppMsg(null)
     setAppProgress(null)

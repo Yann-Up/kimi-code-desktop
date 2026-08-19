@@ -1,0 +1,79 @@
+name: Sync CNB
+
+# CNB 镜像同步:GitHub Release 正式发布(published)后触发,做两件事——
+#   1. 把 tag(连同可达提交)推送到 CNB 镜像仓,触发其 .cnb.yml 流水线
+#      自动创建同名 Release 并从本 Release 拉取 .nsis.zip 上传为 CNB 附件;
+#   2. 生成 CNB 版 latest.json(下载地址改写为 CNB 附件直链,签名内容不变),
+#      提交到 CNB 仓 updater 分支——其 raw 固定链接即客户端更新器的 CNB 端点。
+# 需要的一次性仓库 Secrets:
+#   CNB_TOKEN  CNB 访问令牌(个人设置 → 访问令牌,需 repo-contents 读写权限)
+#
+# 手动补同步:Actions → Sync CNB → Run workflow 输入 tag 即可(用于补历史版本或重试)。
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "要同步的 tag(需已发布对应 Release,如 v0.3.8)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  CNB_REPO: Yann-Up/kimi-code-desktop
+
+jobs:
+  sync-cnb:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name || inputs.tag }}
+
+      # 取回 tauri-action 生成的 latest.json(Release 已发布,可直接下载)
+      - name: Generate CNB latest.json
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.event.release.tag_name || inputs.tag }}
+        run: |
+          mkdir -p dist
+          gh release download "$TAG" --dir dist --pattern "latest.json" --clobber
+          # 仅改写下载地址为 CNB 附件直链,版本号/签名等其余字段保持原样
+          jq -c --arg tag "$TAG" --arg repo "$CNB_REPO" '
+            .platforms |= with_entries(
+              .value.url = ("https://cnb.cool/" + $repo + "/-/releases/download/" + $tag + "/" + (.value.url | split("/") | last))
+            )' dist/latest.json | tee dist/cnb-latest.json
+
+      # 推送 tag 到 CNB → 触发 .cnb.yml tag_push 流水线(建 Release + 上传附件)
+      - name: Push tag to CNB
+        env:
+          CNB_TOKEN: ${{ secrets.CNB_TOKEN }}
+          TAG: ${{ github.event.release.tag_name || inputs.tag }}
+        run: |
+          git push "https://cnb:${CNB_TOKEN}@cnb.cool/${CNB_REPO}.git" "refs/tags/${TAG}:refs/tags/${TAG}"
+
+      # 发布 CNB 版 latest.json 到 updater 分支(raw 固定链接,客户端端点)
+      - name: Publish latest.json to CNB updater branch
+        env:
+          CNB_TOKEN: ${{ secrets.CNB_TOKEN }}
+          TAG: ${{ github.event.release.tag_name || inputs.tag }}
+        run: |
+          git clone --depth 1 "https://cnb:${CNB_TOKEN}@cnb.cool/${CNB_REPO}.git" cnb-sync
+          cd cnb-sync
+          if git ls-remote --exit-code origin updater >/dev/null 2>&1; then
+            git fetch --depth 1 origin updater
+            git checkout -b updater FETCH_HEAD
+          else
+            git checkout --orphan updater
+            git rm -rf . >/dev/null 2>&1 || true
+          fi
+          cp ../dist/cnb-latest.json latest.json
+          git add latest.json
+          git -c user.name="github-actions[bot]" \
+              -c user.email="github-actions[bot]@users.noreply.github.com" \
+              commit -m "chore: latest.json ${TAG}"
+          git push origin updater

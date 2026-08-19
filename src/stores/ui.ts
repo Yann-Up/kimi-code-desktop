@@ -1,5 +1,10 @@
 import { create } from 'zustand'
-import type { AppUpdateInfo, ChannelInfo, ConnectionTargetConfig } from '../platform/kimi-api'
+import type {
+  AppUpdateInfo,
+  AppUpdateProgress,
+  ChannelInfo,
+  ConnectionTargetConfig
+} from '../platform/kimi-api'
 
 /** 壳内视图:顶部导航的三个 tab(对话 / 统计 / 设置) */
 export type ShellView = 'chat' | 'stats' | 'settings'
@@ -28,6 +33,10 @@ interface UiState {
   settingsZoom: number
   /** 应用自身更新信息(启动静默自检/设置页手动检查写入;null=无更新或未检查) */
   appUpdate: AppUpdateInfo | null
+  /** 应用更新下载中标记(全局:设置页切走再回来不丢失,也用于禁用重复触发) */
+  appInstalling: boolean
+  /** 应用更新下载进度(app:update-progress 事件写入,ShellHome 常驻监听) */
+  appProgress: AppUpdateProgress | null
   /** 切换顶部导航 tab */
   setView: (v: ShellView) => void
   openSettings: (section?: string) => void
@@ -36,6 +45,8 @@ interface UiState {
   setQuotaRefreshSecs: (secs: number) => void
   setSettingsZoom: (pct: number) => void
   setAppUpdate: (info: AppUpdateInfo | null) => void
+  setAppInstalling: (v: boolean) => void
+  setAppProgress: (p: AppUpdateProgress | null) => void
   setConnectionTarget: (t: ConnectionTargetConfig['target']) => void
   /** 填充通道列表与激活通道;connectionTarget 随之派生 */
   setChannels: (channels: ChannelInfo[], active: string) => void
@@ -57,6 +68,8 @@ export const useUi = create<UiState>((set) => ({
   onboardingMode: 'switch',
   onboardingTarget: null,
   appUpdate: null,
+  appInstalling: false,
+  appProgress: null,
   quotaRefreshSecs: (() => {
     const raw = localStorage.getItem('kimi.quotaRefreshSecs')
     if (raw === null) return 60 // 未设置过:默认 60s
@@ -83,6 +96,8 @@ export const useUi = create<UiState>((set) => ({
     set({ settingsZoom: pct })
   },
   setAppUpdate: (info) => set({ appUpdate: info }),
+  setAppInstalling: (v) => set({ appInstalling: v }),
+  setAppProgress: (p) => set({ appProgress: p }),
   setConnectionTarget: (t) => set({ connectionTarget: t }),
   setChannels: (channels, active) =>
     set((s) => ({

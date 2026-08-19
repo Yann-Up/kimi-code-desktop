@@ -3,8 +3,12 @@
 //! 启动时延迟静默自检,发现新版本发系统通知并 emit `app:update-available` 供前端角标提示。
 
 use serde::Serialize;
+use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_updater::{Update, UpdaterExt};
+
+/// 并发守卫:前端切页导致重复点击/重复调用时,拒绝并行的第二个下载安装任务
+static INSTALLING: AtomicBool = AtomicBool::new(false);
 
 /// 更新信息(serde camelCase,与前端 AppUpdateInfo 契约一致)
 #[derive(Serialize, Clone)]
@@ -23,11 +27,16 @@ impl From<&Update> for AppUpdateInfo {
     }
 }
 
+/// 检查更新:endpoints 按序回退(CNB 优先,GitHub 兜底)。
+/// 注意不能用 UpdaterBuilder::timeout——它同样作用于 download 阶段,会掐断大文件下载;
+/// 改为只在 check 外层包 tokio 超时(latest.json 很小,15s 足够),兜住
+/// "CNB 故障 + GitHub 挂起"时无代理连接的超长等待。
 async fn fetch_update(app: &AppHandle) -> Result<Option<Update>, String> {
-    app.updater()
-        .map_err(|e| e.to_string())?
-        .check()
+    let updater = app.updater().map_err(|e| e.to_string())?;
+    let check = updater.check();
+    tokio::time::timeout(std::time::Duration::from_secs(15), check)
         .await
+        .map_err(|_| "检查更新失败: 请求超时".to_string())?
         .map_err(|e| format!("检查更新失败: {e}"))
 }
 
@@ -43,6 +52,20 @@ pub async fn app_update_check(app: AppHandle) -> Result<Option<AppUpdateInfo>, S
 /// "检查发现新版后 Release 被撤回"的场景(此时静默返回 Ok,由前端提示重查)
 #[tauri::command]
 pub async fn app_update_install(app: AppHandle) -> Result<(), String> {
+    // 已有下载/安装任务在进行:直接报错让前端提示,避免双下载写同一临时文件
+    if INSTALLING
+        .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+        .is_err()
+    {
+        return Err("更新下载已在进行中,请稍候".to_string());
+    }
+    let result = download_and_install(app).await;
+    // 成功路径进程会被安装器接管/重启,此复位实际只在出错或更新被撤回时生效
+    INSTALLING.store(false, Ordering::SeqCst);
+    result
+}
+
+async fn download_and_install(app: AppHandle) -> Result<(), String> {
     let Some(update) = fetch_update(&app).await? else {
         return Ok(());
     };

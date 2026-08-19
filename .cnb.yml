@@ -1,0 +1,32 @@
+# CNB 云原生构建(镜像仓:https://cnb.cool/Yann-Up/kimi-code-desktop)
+# 触发链:GitHub Release 正式发布(published)→ .github/workflows/sync-cnb.yml
+# 把 tag 推送到 CNB 仓 → 本流水线执行:
+#   1. git:release 自动创建同名 Release(标记为最新版)
+#   2. 从 GitHub 已发布 Release 拉取更新包(.nsis.zip),上传为 CNB Release 附件
+# 用途:作为应用自动更新的国内下载源(客户端 endpoints 中 CNB 优先、GitHub 兜底)。
+# 注意:更新器端点是 updater 分支的 latest.json raw 固定链接,由 sync-cnb.yml 维护。
+$:
+  tag_push:
+    - stages:
+        - name: 创建 Release
+          type: git:release
+          options:
+            latest: true
+
+        - name: 从 GitHub 拉取更新包
+          script: |
+            VER="${CNB_BRANCH#v}"
+            PKG="Kimi.Code.Desktop_${VER}_x64-setup.nsis.zip"
+            URL="https://github.com/Yann-Up/kimi-code-desktop/releases/download/${CNB_BRANCH}/${PKG}"
+            for i in 1 2 3; do
+              curl -fSL --connect-timeout 20 -o "$PKG" "$URL" && break
+              echo "download retry $i"
+              sleep 15
+            done
+            ls -la "$PKG"
+
+        - name: 上传更新包为 Release 附件
+          image: cnbcool/attachments:latest
+          settings:
+            attachments:
+              - "./Kimi.Code.Desktop_*_x64-setup.nsis.zip"
