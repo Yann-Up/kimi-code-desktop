@@ -422,7 +422,7 @@ pub fn builtin_pets() -> Vec<PetMeta> {
         frame_h: 208,
         states: petdex_states(frames),
     };
-    vec![meta("kimi", "Kimi 团子", 7), meta("xiao-k", "小K", 8)]
+    vec![meta("kimi", "Kimi 团子", 7), meta("xiao-k", "小K", 8), meta("maoniang", "猫娘", 8)]
 }
 
 /// 默认内置宠物(Kimi 团子)
