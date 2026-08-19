@@ -1,6 +1,6 @@
 [package]
 name = "kimi-desktop-tauri"
-version = "0.3.5"
+version = "0.3.6"
 description = "Desktop client for Kimi Code CLI (kimi web backend) - Tauri shell"
 edition = "2021"
 rust-version = "1.77"
