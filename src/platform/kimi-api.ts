@@ -267,12 +267,14 @@ export interface KimiApi {
   onCliUpgraded(cb: (info: { version: string | null; restartOk: boolean }) => void): Unsubscribe
   onServerReady(cb: (info: ServerReadyInfo) => void): Unsubscribe
   onServerError(cb: (info: ServerErrorInfo) => void): Unsubscribe
-  /** 后端运行中用户请求关窗(标题栏/Alt+F4 等)时触发,前端应弹退出确认框 */
-  onCloseRequested(cb: () => void): Unsubscribe
+  /** 用户请求关窗(标题栏 X/Alt+F4 等)时触发,前端应弹"是否关闭进程"确认框;参数=是否有后端在跑 */
+  onCloseRequested(cb: (backendRunning: boolean) => void): Unsubscribe
   /** 系统浏览器打开 http/https 链接(iframe 被 frame-ancestors 拦截时的降级入口) */
   openExternal(url: string): Promise<void>
   /** 确认退出:真正关闭应用(后端会被优雅关停) */
   confirmClose(): Promise<any>
+  /** 关窗确认框选"进入托盘":隐藏主窗口,仅托盘驻留(托盘图标/菜单可唤回) */
+  hideToTray(): Promise<any>
 
   // web ui(官方 web 界面 iframe 内嵌)
   /** 官方 web UI 地址(http://127.0.0.1:<port>/#token=<token>);指定通道(缺省=激活)未运行时 reject */

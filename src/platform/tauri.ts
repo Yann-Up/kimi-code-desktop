@@ -48,8 +48,8 @@ const api: KimiApi = {
   appInfo: (channel) => invoke('app_info', { channel }),
   windowControl: async (action) => {
     const win = getCurrentWindow()
-    // 最小化到托盘:hide 后任务栏不留按钮,由托盘左键/菜单"显示主窗口"恢复
-    if (action === 'minimize') await win.hide()
+    // 最小化=普通任务栏最小化;进托盘由关窗确认框的"进入托盘"(hide_main_to_tray)承担
+    if (action === 'minimize') await win.minimize()
     else if (action === 'close') await win.close()
     else if (await win.isMaximized()) await win.unmaximize()
     else await win.maximize()
@@ -85,8 +85,9 @@ const api: KimiApi = {
   onCliUpgraded: (cb) => on('cli:upgraded', cb),
   onServerReady: (cb) => on<ServerReadyInfo>('server:ready', cb),
   onServerError: (cb) => on<ServerErrorInfo>('server:error', cb),
-  onCloseRequested: (cb) => on('app:close-requested', cb),
+  onCloseRequested: (cb) => on<boolean>('app:close-requested', (p) => cb(!!p)),
   confirmClose: () => invoke('confirm_close'),
+  hideToTray: () => invoke('hide_main_to_tray'),
   openExternal: (url) => invoke<void>('open_external', { url }),
 
   // web ui

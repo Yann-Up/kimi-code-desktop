@@ -254,6 +254,15 @@ fn confirm_close(app: AppHandle) {
     app.exit(0);
 }
 
+/// 退出确认弹窗选"进入托盘":隐藏主窗口(仅托盘驻留);恢复走托盘 restore_main。
+/// 必须 async:同步命令占住主线程会卡住事件循环(见 AGENTS.md)
+#[tauri::command]
+async fn hide_main_to_tray(app: AppHandle) {
+    if let Some(w) = app.get_webview_window("main") {
+        let _ = w.hide();
+    }
+}
+
 #[tauri::command]
 async fn cli_upgrade(app: AppHandle, state: State<'_, Arc<AppState>>) -> Result<String, String> {
     // WSL/SSH:CLI 在远端环境,走远端升级路径
@@ -1187,23 +1196,26 @@ fn local_drives() -> Vec<String> {
 
 // ---------- 托盘 ----------
 
-/// 托盘图标:打包后 resource_dir/tray.png;dev 回退 ../build/tray.png(项目 build/tray.png)
+/// 托盘图标:编译期内嵌 build/tray.png,不依赖 resource_dir/工作目录,dev 与打包均可用
 fn tray_icon(app: &AppHandle) -> Option<tauri::image::Image<'static>> {
-    let mut candidates: Vec<PathBuf> = Vec::new();
-    if let Ok(dir) = app.path().resource_dir() {
-        candidates.push(dir.join("tray.png"));
-    }
-    candidates.push(PathBuf::from("../build/tray.png"));
-    for p in candidates {
-        if let Ok(img) = tauri::image::Image::from_path(&p) {
-            return Some(img);
+    let _ = app;
+    tauri::image::Image::from_bytes(include_bytes!("../../build/tray.png")).ok()
+}
+
+/// 从托盘恢复主窗口:先 unminimize 再 show,兼容"任务栏最小化"与"hide 到托盘"两种隐藏态
+fn restore_main(app: &AppHandle) {
+    if let Some(w) = app.get_webview_window("main") {
+        if w.is_minimized().unwrap_or(false) {
+            let _ = w.unminimize();
         }
+        let _ = w.show();
+        let _ = w.set_focus();
     }
-    None
 }
 
 fn create_tray(app: &AppHandle) -> tauri::Result<()> {
     let Some(icon) = tray_icon(app) else {
+        eprintln!("tray: 图标解码失败,跳过托盘创建(最小化到托盘将无法唤回窗口)");
         return Ok(());
     };
     let show = MenuItemBuilder::with_id("show", "显示主窗口").build(app)?;
@@ -1215,12 +1227,7 @@ fn create_tray(app: &AppHandle) -> tauri::Result<()> {
         .tooltip("Kimi Code Desktop")
         .menu(&menu)
         .on_menu_event(|app, event| match event.id().as_ref() {
-            "show" => {
-                if let Some(w) = app.get_webview_window("main") {
-                    let _ = w.show();
-                    let _ = w.set_focus();
-                }
-            }
+            "show" => restore_main(app),
             "quit" => app.exit(0),
             _ => {}
         })
@@ -1231,15 +1238,8 @@ fn create_tray(app: &AppHandle) -> tauri::Result<()> {
                 ..
             } = event
             {
-                if let Some(w) = tray.app_handle().get_webview_window("main") {
-                    // 可见则聚焦,不可见则显示
-                    if w.is_visible().unwrap_or(false) {
-                        let _ = w.set_focus();
-                    } else {
-                        let _ = w.show();
-                        let _ = w.set_focus();
-                    }
-                }
+                // 可见则聚焦,不可见(最小化到托盘)则恢复显示
+                restore_main(tray.app_handle());
             }
         })
         .build(app)?;
@@ -1381,6 +1381,7 @@ pub fn run() {
             app_open_logs,
             open_external,
             confirm_close,
+            hide_main_to_tray,
             cli_upgrade,
             cli_npm_upgrade,
             cli_check_update,
@@ -1474,17 +1475,17 @@ pub fn run() {
             if cfg.pet_enabled.unwrap_or(false) {
                 let _ = pet::show(app.handle());
             }
-            // 关闭拦截:任一通道后端运行中时不直接关窗,通知前端弹退出确认框(确认后走 confirm_close);
+            // 关闭拦截:点 X 一律不直接关窗,通知前端弹确认框(是否关闭进程):
+            // "退出程序"走 confirm_close(app.exit),"进入托盘"走 hide_main_to_tray;
             // 覆盖标题栏关闭按钮、Alt+F4、任务栏关闭等所有关窗路径
             if let Some(win) = app.get_webview_window("main") {
                 let st = app.state::<Arc<AppState>>().inner().clone();
                 let win2 = win.clone();
                 win.on_window_event(move |e| {
                     if let tauri::WindowEvent::CloseRequested { api, .. } = e {
-                        if st.any_backend_running() {
-                            api.prevent_close();
-                            let _ = win2.emit("app:close-requested", ());
-                        }
+                        api.prevent_close();
+                        // payload: 是否有后端在跑(前端据此决定确认框的警告文案)
+                        let _ = win2.emit("app:close-requested", st.any_backend_running());
                     }
                 });
             }

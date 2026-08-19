@@ -69,3 +69,4 @@ cd src-tauri && cargo check   # Rust 侧检查(提交前必过)
 - 许可证 AGPL-3.0-only,勿引入不兼容许可证的运行时依赖。
 - `token 时序竞争`、`崩溃自愈(server:exited)` 等时序逻辑见 README「关键实现细节」,改动前先读。
 - **运行期建窗/关窗的命令必须是 async**:同步命令占住主线程,`WebviewWindowBuilder::build()` 等事件循环初始化 WebView2 会死锁(桌宠 M1 实测踩过,见 docs/desktop-pet-design.md)。
+- **关窗语义**:点 X 一律 `prevent_close` + emit `app:close-requested`(payload=是否有后端在跑),前端弹"是否关闭进程"确认框——"退出程序"走 `confirm_close`(app.exit),"进入托盘"走 `hide_main_to_tray`(必须是 async 命令);最小化按钮 − 只是普通任务栏最小化,不进托盘。托盘图标 `include_bytes!` 内嵌(不依赖 resource_dir/cwd);托盘唤回统一走 `restore_main`(unminimize+show+focus,托盘左键/菜单/单实例复用)。

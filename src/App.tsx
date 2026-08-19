@@ -13,7 +13,8 @@ export default function App() {
   const [updateInfo, setUpdateInfo] = useState<{ current: string; latest: string } | null>(null)
   const [upgrading, setUpgrading] = useState(false)
   const [upgradeMsg, setUpgradeMsg] = useState('')
-  const [closeConfirm, setCloseConfirm] = useState(false)
+  // 关窗确认框:null=不显示;否则值为"是否有后端在跑"(决定警告文案)
+  const [closeConfirm, setCloseConfirm] = useState<boolean | null>(null)
   const onboardingOpen = useUi((s) => s.onboardingOpen)
 
   useEffect(() => {
@@ -48,7 +49,7 @@ export default function App() {
         setPhase((p) => (p === 'ready' ? p : 'starting'))
       }),
       window.kimiApi.onCliUpdateAvailable((info) => setUpdateInfo(info)),
-      window.kimiApi.onCloseRequested(() => setCloseConfirm(true)),
+      window.kimiApi.onCloseRequested((running) => setCloseConfirm(running)),
       window.kimiApi.onCliUpgraded((info) => {
         setUpgrading(false)
         setUpdateInfo(null)
@@ -187,26 +188,32 @@ export default function App() {
         </div>
       )}
 
-      {/* 退出确认:后端运行中关窗(标题栏/Alt+F4)时由 Rust 侧拦截触发 */}
-      {closeConfirm && (
+      {/* 关窗确认:点 X(标题栏/Alt+F4/任务栏关闭)时由 Rust 侧拦截触发。
+          "进入托盘"=不关闭进程仅隐藏窗口;"退出程序"=真正退出(优雅关停后端) */}
+      {closeConfirm !== null && (
         <div className="fixed inset-0 z-[85] flex items-center justify-center bg-black/30">
           <div className="w-[380px] rounded-xl bg-surface p-5 shadow-2xl">
-            <p className="text-[15px] font-semibold">退出 Kimi Code Desktop?</p>
+            <p className="text-[15px] font-semibold">是否关闭 Kimi Code Desktop?</p>
             <p className="mt-2 text-[13px] text-text-secondary">
-              Kimi Code 服务正在运行中,退出将停止服务并中断所有进行中的会话。
+              {closeConfirm
+                ? 'Kimi Code 服务正在运行中,退出将停止服务并中断所有进行中的会话;进入托盘则保持后台运行。'
+                : '可以退出程序,或进入托盘保持后台驻留(托盘图标可随时唤回)。'}
             </p>
             <div className="mt-4 flex justify-end gap-2">
               <button
                 className="rounded-lg border border-border px-4 py-1.5 text-[13px] text-text-secondary hover:bg-surface-tertiary"
-                onClick={() => setCloseConfirm(false)}
+                onClick={() => {
+                  setCloseConfirm(null)
+                  window.kimiApi.hideToTray().catch(() => {})
+                }}
               >
-                取消
+                进入托盘
               </button>
               <button
                 className="rounded-lg bg-danger px-4 py-1.5 text-[13px] font-medium text-white hover:opacity-90"
                 onClick={() => window.kimiApi.confirmClose().catch(() => {})}
               >
-                退出
+                退出程序
               </button>
             </div>
           </div>
