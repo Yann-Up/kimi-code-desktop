@@ -108,7 +108,7 @@ git tag v0.3.5 && git push --tags
 - `npm run typecheck` 通过
 - `cd src-tauri && cargo check` 通过
 
-提交 PR 即表示你同意以本项目的 AGPL-3.0 许可证授权你的贡献。
+提交 PR 即表示你同意以本项目的 MIT 许可证授权你的贡献。
 
 ## 商标声明
 
@@ -118,16 +118,15 @@ git tag v0.3.5 && git push --tags
 
 Copyright (C) 2025 Kimi Code Desktop contributors
 
-本项目以 [GNU Affero General Public License v3.0 (AGPL-3.0)](LICENSE) 开源。要点(以许可证原文为准):
+本项目以 [MIT License](LICENSE) 开源。要点(以许可证原文为准):
 
-- **可以自由使用、复制、修改、分发**,包括商业用途和收费分发——AGPL 不禁止"卖钱"。
-- **核心约束是"Copyleft 延伸到网络服务"**:分发修改后的版本,或把(修改过的)本软件作为网络服务对外提供,都必须以 AGPL-3.0 向接收者/用户提供对应的完整源代码。
-- 即:**不能拿这套代码改了之后闭源发布或闭源提供 SaaS 服务**;只要遵守开源义务,商用本身是被允许的。
-- 本软件按"原样"提供,不附带任何担保(详见许可证第 15、16 条)。
+- **可以自由使用、复制、修改、分发**,包括商业用途和闭源分发——MIT 不附加开源义务。
+- **唯一要求**:保留版权声明与许可证文本(副本或主要部分中均需包含)。
+- 本软件按"原样"提供,不附带任何担保。
 
 ### 第三方组件
 
-运行时/构建依赖均为宽松许可证(MIT / Apache-2.0 / BSD / ISC,如 React、Tauri、zustand 等),与 AGPL-3.0 兼容;`sharp`(Apache-2.0)仅用于设计期图标脚本,不进入运行时产物。Kimi Code CLI 本身由 Moonshot AI 按其自身条款分发,不属于本仓库的授权范围。
+运行时/构建依赖均为宽松许可证(MIT / Apache-2.0 / BSD / ISC,如 React、Tauri、zustand 等),与 MIT 兼容;`sharp`(Apache-2.0)仅用于设计期图标脚本,不进入运行时产物。Kimi Code CLI 本身由 Moonshot AI 按其自身条款分发,不属于本仓库的授权范围。
 
 ---
 
@@ -145,4 +144,4 @@ npm run tauri:dev     # dev
 npm run tauri:build   # build installer for the current platform
 ```
 
-Licensed under **AGPL-3.0** (see [LICENSE](LICENSE)): free to use, modify, and distribute — including commercially — but any distributed derivative or network service built on this code must also be open-sourced under AGPL-3.0. "Kimi" and "Kimi Code" are trademarks of Moonshot AI; this project is a desktop client for the CLI and is distributed under its own license.
+Licensed under the **MIT License** (see [LICENSE](LICENSE)): free to use, modify, and distribute — including commercially and in closed-source form — as long as the copyright notice and license text are retained. "Kimi" and "Kimi Code" are trademarks of Moonshot AI; this project is a desktop client for the CLI and is distributed under its own license.
