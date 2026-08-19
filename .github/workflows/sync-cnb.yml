@@ -6,7 +6,8 @@ name: Sync CNB
 #   2. 生成 CNB 版 latest.json(下载地址改写为 CNB 附件直链,签名内容不变),
 #      提交到 CNB 仓 updater 分支——其 raw 固定链接即客户端更新器的 CNB 端点。
 # 需要的一次性仓库 Secrets:
-#   CNB_TOKEN  CNB 访问令牌(个人设置 → 访问令牌,需 repo-contents 读写权限)
+#   CNB_TOKEN  CNB 访问令牌(个人设置 → 访问令牌,使用范围选定本仓库,
+#              授权范围勾选 repo-code 读写;Git 推送时用户名固定为 cnb、密码即 token)
 #
 # 手动补同步:Actions → Sync CNB → Run workflow 输入 tag 即可(用于补历史版本或重试)。
 
