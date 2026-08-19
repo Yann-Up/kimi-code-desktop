@@ -13,11 +13,11 @@ export function Section(props: { title: string; desc?: string; children: ReactNo
   )
 }
 
-/** 设置页标准卡片 */
+/** 设置页标准卡片(skin-card:皮肤立绘开启时半透明 + 毛玻璃,见 theme.css) */
 export function Card(props: { children: ReactNode; className?: string }) {
   return (
     <div
-      className={`rounded-xl border border-border bg-surface p-4 ${props.className ?? ''}`}
+      className={`skin-card rounded-xl border border-border bg-surface p-4 ${props.className ?? ''}`}
     >
       {props.children}
     </div>

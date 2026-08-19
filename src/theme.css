@@ -120,6 +120,14 @@ body,
   color: var(--color-text-secondary);
 }
 
+/* 皮肤立绘开启时(body.skin-on,由 SkinStandee 挂载):设置/统计卡片半透明 + 毛玻璃,
+   透出垫底立绘;表格等密集内容不在此列,保持不透明。
+   不透明度由 --skin-card-opacity 控制(设置页滑块,缺省 0.82) */
+.skin-on .skin-card {
+  background: rgb(255 255 255 / var(--skin-card-opacity, 0.82));
+  backdrop-filter: blur(8px);
+}
+
 /* 等待应答指示:logo 明暗呼吸(对齐 kimi web 月亮动画,换用应用 logo) */
 @keyframes logo-breathe {
   0%,

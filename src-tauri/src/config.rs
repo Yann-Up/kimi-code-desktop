@@ -37,6 +37,12 @@ pub struct DesktopConfig {
     pub pet_enabled: Option<bool>,
     /// 当前激活宠物 slug(缺省 "kimi" 即内置;外部宠物为目录名,见 pet.rs 扫描逻辑)
     pub pet_slug: Option<String>,
+    /// 界面皮肤开关(实验性,缺省关):主页/统计/设置页右侧显示内置立绘
+    pub skin_enabled: Option<bool>,
+    /// 当前皮肤 slug(None = 注册表第一个;内置皮肤注册表在前端,见 src/components/skins.ts)
+    pub skin_slug: Option<String>,
+    /// 卡片不透明度百分比(None = 默认 82;取值 30-100,越低立绘透出越明显)
+    pub skin_opacity: Option<u8>,
 }
 
 impl DesktopConfig {

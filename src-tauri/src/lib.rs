@@ -14,6 +14,7 @@ mod local_store;
 mod pet;
 mod rest;
 mod server;
+mod skin;
 mod ssh;
 mod target;
 mod updater;
@@ -737,6 +738,72 @@ fn pet_set_active(app: AppHandle, slug: String) -> Result<(), String> {
     Ok(())
 }
 
+/// 皮肤配置载荷(enabled/slug/opacity),skin_config_get 返回值与 skin:config-changed 载荷共用
+fn skin_config_json(cfg: &config::DesktopConfig) -> Value {
+    json!({
+        "enabled": cfg.skin_enabled.unwrap_or(false),
+        "slug": cfg.skin_slug,
+        "opacity": cfg.skin_opacity.unwrap_or(skin::DEFAULT_OPACITY),
+    })
+}
+
+/// 皮肤配置(实验性):enabled 缺省关;slug 为当前皮肤(缺省 None,前端回退注册表第一个);
+/// opacity 为卡片不透明度百分比(缺省 82)
+#[tauri::command]
+fn skin_config_get(app: AppHandle) -> Value {
+    skin_config_json(&config::load(&app))
+}
+
+/// 开关界面皮肤:只持久化并广播 skin:config-changed,不涉及建窗,sync 即可
+#[tauri::command]
+fn skin_set_enabled(app: AppHandle, enabled: bool) -> Result<(), String> {
+    let mut cfg = config::load(&app);
+    cfg.skin_enabled = Some(enabled);
+    config::save(&app, &cfg)?;
+    let _ = app.emit("skin:config-changed", skin_config_json(&cfg));
+    Ok(())
+}
+
+/// 切换皮肤:内置皮肤注册表在前端(src/assets/skins/ 目录扫描),Rust 不校验 slug,
+/// 前端遇到未知 slug 回退注册表第一个(与 pet_active_get 的回退策略一致)
+#[tauri::command]
+fn skin_set_active(app: AppHandle, slug: String) -> Result<(), String> {
+    let mut cfg = config::load(&app);
+    cfg.skin_slug = Some(slug.clone());
+    config::save(&app, &cfg)?;
+    let _ = app.emit("skin:config-changed", skin_config_json(&cfg));
+    Ok(())
+}
+
+/// 调整卡片不透明度(30-100):拖动滑块时连续调用,每次持久化并广播,立绘透出即时预览
+#[tauri::command]
+fn skin_set_opacity(app: AppHandle, opacity: u8) -> Result<(), String> {
+    if !(skin::MIN_OPACITY..=100).contains(&opacity) {
+        return Err(format!("不透明度需在 {}-100 之间", skin::MIN_OPACITY));
+    }
+    let mut cfg = config::load(&app);
+    cfg.skin_opacity = Some(opacity);
+    config::save(&app, &cfg)?;
+    let _ = app.emit("skin:config-changed", skin_config_json(&cfg));
+    Ok(())
+}
+
+/// 用户自选皮肤列表:扫描 <config_dir>/skins/,返回 slug 列表(只读盘,sync 即可)
+#[tauri::command]
+fn skin_custom_list() -> Vec<String> {
+    skin::scan_custom_skins()
+}
+
+/// 打开用户皮肤目录(不存在先建好),便于用户往里放图片
+#[tauri::command]
+async fn skin_dir_open(app: AppHandle) -> Result<(), String> {
+    let dir = skin::skins_dir().ok_or("无法确定配置目录")?;
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    app.opener()
+        .open_path(dir.to_string_lossy().into_owned(), None::<&str>)
+        .map_err(|e| e.to_string())
+}
+
 /// 添加通道:复用 set_connection_target 的保存/密码落 keyring 逻辑,但只追加,
 /// 不切换激活通道、不重启任何服务。id 按目标自动生成,重复报错;本机不可添加。
 /// label 省略时按目标展示名(本机 / WSL (Ubuntu) / user@host)生成
@@ -1372,6 +1439,28 @@ pub fn run() {
                 None => err(404),
             }
         })
+        // 用户自选皮肤协议:前端 URL 形态 http://skin.localhost/<slug>(同 pet 协议)。
+        // 按 slug 读 <config_dir>/skins/<slug>.<ext>;slug 白名单校验防路径穿越;找不到 404
+        .register_uri_scheme_protocol("skin", |_ctx, request| {
+            let slug = request.uri().path().trim_start_matches('/');
+            let err = |status: u16| {
+                tauri::http::Response::builder()
+                    .status(status)
+                    .body(Vec::new())
+                    .expect("skin 协议错误响应构建失败")
+            };
+            if !pet::valid_slug(slug) {
+                return err(400);
+            }
+            match skin::load_custom_skin(slug) {
+                Some((bytes, mime)) => tauri::http::Response::builder()
+                    .status(200)
+                    .header("Content-Type", mime)
+                    .body(bytes)
+                    .expect("skin 协议响应构建失败"),
+                None => err(404),
+            }
+        })
         .manage(state)
         .invoke_handler(tauri::generate_handler![
             app_info,
@@ -1416,6 +1505,12 @@ pub fn run() {
             pet_list,
             pet_active_get,
             pet_set_active,
+            skin_config_get,
+            skin_set_enabled,
+            skin_set_active,
+            skin_custom_list,
+            skin_dir_open,
+            skin_set_opacity,
             local_mcp_read,
             local_mcp_write,
             local_cli_config_read,

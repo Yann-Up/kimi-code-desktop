@@ -17,6 +17,7 @@ import type {
   PetState,
   ServerErrorInfo,
   ServerReadyInfo,
+  SkinConfig,
   TurnEndedInfo,
   WebServerOptions
 } from './kimi-api'
@@ -134,7 +135,16 @@ const api: KimiApi = {
   onPetConfigChanged: (cb) => on<PetConfig>('pet:config-changed', cb),
   petList: () => invoke<PetInfo[]>('pet_list'),
   petActiveGet: () => invoke<PetMeta>('pet_active_get'),
-  petSetActive: (slug) => invoke('pet_set_active', { slug })
+  petSetActive: (slug) => invoke('pet_set_active', { slug }),
+
+  // skin
+  skinConfigGet: () => invoke<SkinConfig>('skin_config_get'),
+  skinSetEnabled: (enabled) => invoke('skin_set_enabled', { enabled }),
+  skinSetActive: (slug) => invoke('skin_set_active', { slug }),
+  skinCustomList: () => invoke<string[]>('skin_custom_list'),
+  skinDirOpen: () => invoke('skin_dir_open'),
+  skinSetOpacity: (opacity) => invoke('skin_set_opacity', { opacity }),
+  onSkinConfigChanged: (cb) => on<SkinConfig>('skin:config-changed', cb)
 }
 
 /** 安装到 window.kimiApi */

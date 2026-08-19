@@ -14,6 +14,7 @@ import {
   TriangleAlert
 } from 'lucide-react'
 import { QuotaStrip } from './QuotaStrip'
+import { SkinStandee } from './SkinStandee'
 import { SettingsPage } from '../pages/SettingsPage'
 import { StatsPage } from '../pages/stats/StatsPage'
 import { useUi } from '../stores/ui'
@@ -149,7 +150,7 @@ function WebFrame() {
   const renderPlaceholder = (ch: string) => {
     const error = errors[ch]
     return (
-      <div className="flex flex-1 items-center justify-center bg-surface-secondary">
+      <div className="flex flex-1 items-center justify-center">
         <div className="flex flex-col items-center">
           <img src={logoUrl} alt="Kimi Code" className="h-14 w-14 rounded-2xl shadow-sm" />
           <p className="mt-5 text-[15px] font-semibold">Kimi Code 服务未启动</p>
@@ -175,7 +176,7 @@ function WebFrame() {
 
   /* 启动中(含首次自动安装 CLI) */
   const renderStarting = () => (
-    <div className="flex flex-1 items-center justify-center bg-surface-secondary">
+    <div className="flex flex-1 items-center justify-center">
       <div className="flex flex-col items-center">
         <div className="h-8 w-8 animate-spin rounded-full border-2 border-primary border-t-transparent" />
         <p className="mt-4 text-sm text-text-secondary">
@@ -196,7 +197,7 @@ function WebFrame() {
     if (st === 'starting' || st === 'checking') return renderStarting()
     if (st === 'error') {
       return (
-        <div className="flex flex-1 flex-col items-center justify-center gap-3 bg-surface-secondary">
+        <div className="flex flex-1 flex-col items-center justify-center gap-3">
           <p className="text-sm text-text-secondary">无法加载对话界面</p>
           <p className="text-[11px] text-text-tertiary">{errors[ch]}</p>
           <button
@@ -211,7 +212,7 @@ function WebFrame() {
     const src = srcs[ch]
     if (!src) {
       return (
-        <div className="flex flex-1 items-center justify-center bg-surface-secondary">
+        <div className="flex flex-1 items-center justify-center">
           <div className="h-6 w-6 animate-spin rounded-full border-2 border-primary border-t-transparent" />
         </div>
       )
@@ -219,7 +220,7 @@ function WebFrame() {
     // 服务端禁止 iframe 嵌入(官方下发 frame-ancestors):空白 iframe 无提示,改显示引导
     if (frameBlocked[ch]) {
       return (
-        <div className="flex flex-1 items-center justify-center bg-surface-secondary">
+        <div className="flex flex-1 items-center justify-center">
           <div className="flex max-w-[420px] flex-col items-center px-6">
             <TriangleAlert size={32} className="text-warning" />
             <p className="mt-4 text-[15px] font-semibold">官方服务端禁止了 iframe 嵌入</p>
@@ -373,13 +374,15 @@ export function ShellHome() {
         </div>
       </div>
 
-      {/* tab 内容:对话区常驻挂载(切 tab 只隐藏),避免重载官方 UI 丢失会话状态 */}
-      <div className="flex min-h-0 flex-1 flex-col">
+      {/* tab 内容:对话区常驻挂载(切 tab 只隐藏),避免重载官方 UI 丢失会话状态;
+          SkinStandee 垫底(z-0),各 tab 内容 relative 在其上,透明处透出立绘 */}
+      <div className="relative flex min-h-0 flex-1 flex-col">
+        <SkinStandee />
         <div className={`min-h-0 flex-1 flex-col ${view === 'chat' ? 'flex' : 'hidden'}`}>
           <WebFrame />
         </div>
         {view === 'stats' && (
-          <div className="min-h-0 flex-1 overflow-y-auto">
+          <div className="relative min-h-0 flex-1 overflow-y-auto">
             <StatsPage />
           </div>
         )}

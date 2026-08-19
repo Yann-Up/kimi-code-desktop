@@ -127,6 +127,15 @@ export interface PetConfig {
   slug: string
 }
 
+/** 界面皮肤配置(实验性):开启后主页/统计/设置页右侧显示内置立绘(SkinStandee) */
+export interface SkinConfig {
+  enabled: boolean
+  /** 当前皮肤 slug(null = 回退注册表第一个;注册表见 components/skins.ts) */
+  slug: string | null
+  /** 卡片不透明度百分比(30-100,缺省 82;越低立绘透出越明显) */
+  opacity: number
+}
+
 /** 桌宠状态(pet:state 事件载荷;M2 起由 Rust 侧状态机驱动)。
  * running-left/running-right 仅前端拖拽时本地使用,Rust 不 emit */
 export type PetState =
@@ -330,6 +339,22 @@ export interface KimiApi {
   petActiveGet(): Promise<PetMeta>
   /** 切换激活宠物:校验 slug 存在后持久化并发 pet:config-changed */
   petSetActive(slug: string): Promise<void>
+
+  // skin(界面皮肤,实验性)
+  /** 皮肤配置(enabled 缺省关) */
+  skinConfigGet(): Promise<SkinConfig>
+  /** 开关皮肤立绘:持久化并发 skin:config-changed */
+  skinSetEnabled(enabled: boolean): Promise<void>
+  /** 切换皮肤:持久化 slug 并发 skin:config-changed(未知 slug 前端回退注册表第一个) */
+  skinSetActive(slug: string): Promise<void>
+  /** 用户自选皮肤 slug 列表(扫描 <config_dir>/skins/) */
+  skinCustomList(): Promise<string[]>
+  /** 打开用户皮肤目录(不存在先建好) */
+  skinDirOpen(): Promise<void>
+  /** 调整卡片不透明度(30-100):持久化并发 skin:config-changed,拖动滑块时连续调用 */
+  skinSetOpacity(opacity: number): Promise<void>
+  /** 皮肤配置变化(skin:config-changed;切换开关/皮肤后同步立绘显隐与形象) */
+  onSkinConfigChanged(cb: (cfg: SkinConfig) => void): Unsubscribe
 }
 
 declare global {

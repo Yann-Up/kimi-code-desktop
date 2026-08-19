@@ -113,7 +113,8 @@ export function SettingsPage() {
 
   return (
     // zoom 整体缩放设置页(组件均为固定 px 字号,继承式 font-size 不生效);仅作用本页
-    <div className="flex min-h-0 flex-1" style={{ zoom: settingsZoom / 100 }}>
+    // relative:压在 SkinStandee(z-0 立绘)之上;内容区不设底色,卡片不透处透出立绘
+    <div className="relative flex min-h-0 flex-1" style={{ zoom: settingsZoom / 100 }}>
       <div className="flex w-[200px] shrink-0 flex-col border-r border-border-light bg-surface-secondary">
         <div className="mt-2 flex-1 overflow-y-auto px-2 pb-2">
           {GROUPS.map((g) => (
@@ -140,7 +141,7 @@ export function SettingsPage() {
           ))}
         </div>
       </div>
-      <div className="min-w-0 flex-1 overflow-y-auto bg-surface">{content}</div>
+      <div className="min-w-0 flex-1 overflow-y-auto">{content}</div>
     </div>
   )
 }

@@ -16,7 +16,7 @@ Kimi Code Desktop:基于 [Kimi Code CLI](https://github.com/moonshotai/kimi-code
 
 ```
 src/                    渲染进程(React)
-  components/           壳组件:ShellHome(三 tab 主页)/ QuotaStrip / TitleBar / settings/ / pet/(桌宠窗口)
+  components/           壳组件:ShellHome(三 tab 主页)/ QuotaStrip / TitleBar / SkinStandee(实验性皮肤立绘,设置/统计/主页透出) / settings/ / pet/(桌宠窗口)
   pages/                Onboarding / Settings / stats
   platform/kimi-api.ts  壳与渲染层的 API 契约(window.kimiApi)
   platform/tauri.ts     契约的 Tauri 实现(invoke / 事件监听)
@@ -28,6 +28,7 @@ src-tauri/src/          Rust 后端
   cli.rs                CLI 自检测 / 安装 / 升级
   ssh.rs                进程内 SSH 客户端与端口转发
   config.rs / local_store.rs / target.rs   配置、本地数据直读、运行目标(本机/WSL/SSH)
+  skin.rs               用户自选皮肤(实验性):扫描 <config_dir>/skins 下的 png/webp/jpg,经 skin:// 自定义协议供图;内置皮肤注册表在前端(src/components/skins.ts,构建时扫描 src/assets/skins);开关与选中存 desktop-config.json 的 skin_enabled/skin_slug,立绘渲染见 SkinStandee
   pet.rs                桌宠悬浮窗(实验性):透明置顶小窗 + 状态机(ws.rs 事件驱动);内置宠物注册表 builtin_pets()(素材 src/assets/pets/<slug>/),并扫描 <kimi_home>/pets 与 ~/.petdex/pets(兼容 kimi-pet.v0/petdex 布局),外部精灵图经 pet:// 自定义协议供图;开关存 desktop-config.json 的 pet_enabled/pet_slug
   updater.rs            应用自动更新(tauri-plugin-updater + GitHub Releases latest.json,minisign 签名校验):app_update_check/app_update_install 命令 + 启动延迟静默自检(dev 跳过);签名公钥在 tauri.conf.json plugins.updater.pubkey,私钥 ~/.tauri/kimi-desktop.key 不入库(CI 走 TAURI_SIGNING_PRIVATE_KEY secret);发版见 .github/workflows/release.yml(push v* tag → 草稿 Release)
 build/                  图标等资源;design/ 设计稿;docs/ 评审与跟踪文档;out/renderer 前端构建产物

@@ -1,9 +1,10 @@
 /**
  * 桌面 · 实验性功能:桌面壳自身的实验性特性(与 CLI 实验性开关互不影响)。
- * 目前只有桌宠(设计见 docs/desktop-pet-design.md)。
+ * 目前有桌宠(设计见 docs/desktop-pet-design.md)与皮肤立绘(注册表见 components/skins.ts)。
  */
 import { useEffect, useState } from 'react'
 import { Section, Card, GroupLabel } from '../../components/settings/common'
+import { listAllSkins, resolveSkin, type SkinInfo } from '../../components/skins'
 import type { PetInfo } from '../../platform/kimi-api'
 
 export function DesktopExperimentalSettings() {
@@ -14,6 +15,15 @@ export function DesktopExperimentalSettings() {
   // 当前激活宠物 slug 与可选宠物列表(内置 + 扫描到的外部宠物)
   const [petSlug, setPetSlug] = useState('kimi')
   const [petOptions, setPetOptions] = useState<PetInfo[]>([])
+  // 皮肤立绘:开关状态、当前皮肤 slug(null = 注册表第一个)与写入中标记
+  const [skinEnabled, setSkinEnabled] = useState(false)
+  const [skinSlug, setSkinSlug] = useState<string | null>(null)
+  const [skinBusy, setSkinBusy] = useState(false)
+  const [skinError, setSkinError] = useState('')
+  // 可选皮肤列表(内置 + 自选,开启时加载)
+  const [skinOptions, setSkinOptions] = useState<SkinInfo[]>([])
+  // 卡片不透明度(30-100,缺省 82;与 Rust skin::DEFAULT_OPACITY 对齐)
+  const [skinOpacity, setSkinOpacity] = useState(82)
 
   useEffect(() => {
     window.kimiApi
@@ -24,10 +34,28 @@ export function DesktopExperimentalSettings() {
       })
       .catch(() => {})
     // 其他页面/窗口改桌宠配置后,同步本页开关与激活宠物
-    return window.kimiApi.onPetConfigChanged((c) => {
+    const offPet = window.kimiApi.onPetConfigChanged((c) => {
       setPetEnabled(c.enabled)
       setPetSlug(c.slug)
     })
+    window.kimiApi
+      .skinConfigGet()
+      .then((c) => {
+        setSkinEnabled(c.enabled)
+        setSkinSlug(c.slug)
+        setSkinOpacity(c.opacity)
+      })
+      .catch(() => {})
+    // 皮肤配置经 skin:config-changed 广播,同步本页(立绘显隐由 SkinStandee 自行监听)
+    const offSkin = window.kimiApi.onSkinConfigChanged((c) => {
+      setSkinEnabled(c.enabled)
+      setSkinSlug(c.slug)
+      setSkinOpacity(c.opacity)
+    })
+    return () => {
+      offPet()
+      offSkin()
+    }
   }, [])
 
   // 桌宠开启后加载可选宠物列表(内置 + kimi_home/pets 与 ~/.petdex/pets 扫描结果)
@@ -38,6 +66,14 @@ export function DesktopExperimentalSettings() {
       .then(setPetOptions)
       .catch((e) => setPetError(e instanceof Error ? e.message : String(e)))
   }, [petEnabled])
+
+  // 皮肤开启后加载可选皮肤列表(内置 + 扫描 <config_dir>/skins/ 的自选图片)
+  useEffect(() => {
+    if (!skinEnabled) return
+    listAllSkins()
+      .then(setSkinOptions)
+      .catch((e) => setSkinError(e instanceof Error ? e.message : String(e)))
+  }, [skinEnabled])
 
   return (
     <Section
@@ -110,6 +146,129 @@ export function DesktopExperimentalSettings() {
                 </option>
               ))}
             </select>
+          </div>
+        )}
+      </Card>
+      <GroupLabel>皮肤</GroupLabel>
+      <Card>
+        {/* 皮肤立绘:主页/统计/设置页右侧显示内置立绘(SkinStandee),对话 iframe 不生效 */}
+        <div className="flex items-center justify-between">
+          <div>
+            <p className="text-[13.5px] font-medium">背景立绘</p>
+            <p className="text-[12px] text-text-tertiary">
+              在主页、统计、设置页右侧显示内置立绘(对话页不生效)
+            </p>
+            {skinError && <p className="mt-1 text-[12px] text-danger">{skinError}</p>}
+          </div>
+          <button
+            className={`relative h-6 w-11 shrink-0 rounded-full transition-colors ${
+              skinEnabled ? 'bg-primary' : 'bg-border'
+            } disabled:opacity-50`}
+            disabled={skinBusy}
+            onClick={() => {
+              const next = !skinEnabled
+              setSkinBusy(true)
+              setSkinError('')
+              window.kimiApi
+                .skinSetEnabled(next)
+                .then(() => setSkinEnabled(next))
+                .catch((e) => setSkinError(e instanceof Error ? e.message : String(e)))
+                .finally(() => setSkinBusy(false))
+            }}
+          >
+            <span
+              className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-all ${
+                skinEnabled ? 'left-[22px]' : 'left-0.5'
+              }`}
+            />
+          </button>
+        </div>
+        {/* 皮肤选择(内置 + 自选);切换后立绘经 skin:config-changed 即时换图 */}
+        {skinEnabled && skinOptions.length > 0 && (
+          <div className="mt-3 flex items-center justify-between gap-3 border-t border-border pt-3">
+            <div className="flex min-w-0 items-center gap-3">
+              {/* 当前皮肤小预览(立绘全身像,定高截取即可) */}
+              <img
+                src={resolveSkin(skinOptions, skinSlug)?.url}
+                alt=""
+                className="h-16 w-auto shrink-0 rounded-lg border border-border-light"
+                draggable={false}
+              />
+              <div className="min-w-0">
+                <p className="text-[13.5px] font-medium">皮肤形象</p>
+                <p className="text-[12px] text-text-tertiary">
+                  除内置皮肤外,也可把自己的图片(png/webp/jpg)放进皮肤目录使用,
+                  <button
+                    className="text-primary hover:underline"
+                    onClick={() => {
+                      setSkinError('')
+                      window.kimiApi
+                        .skinDirOpen()
+                        .catch((err) =>
+                          setSkinError(err instanceof Error ? err.message : String(err))
+                        )
+                    }}
+                  >
+                    打开皮肤目录
+                  </button>
+                  ;放入后重开本页即可选择
+                </p>
+              </div>
+            </div>
+            <select
+              className="shrink-0 rounded-lg border border-border bg-surface px-2.5 py-1.5 text-[13px] outline-none disabled:opacity-50"
+              value={resolveSkin(skinOptions, skinSlug)?.slug}
+              disabled={skinBusy}
+              onChange={(e) => {
+                const slug = e.target.value
+                setSkinError('')
+                window.kimiApi
+                  .skinSetActive(slug)
+                  .then(() => setSkinSlug(slug))
+                  .catch((err) => setSkinError(err instanceof Error ? err.message : String(err)))
+              }}
+            >
+              {skinOptions.map((s) => (
+                <option key={s.slug} value={s.slug}>
+                  {s.name}
+                  {s.source === 'custom' ? '(自选)' : ''}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+        {/* 卡片不透明度:拖动即持久化并发 skin:config-changed,SkinStandee 即时更新 CSS 变量 */}
+        {skinEnabled && (
+          <div className="mt-3 flex items-center justify-between gap-3 border-t border-border pt-3">
+            <div className="min-w-0">
+              <p className="text-[13.5px] font-medium">卡片不透明度</p>
+              <p className="text-[12px] text-text-tertiary">
+                数值越低,立绘从卡片下透出越明显(30% - 100%)
+              </p>
+            </div>
+            <div className="flex shrink-0 items-center gap-2">
+              <input
+                type="range"
+                min={30}
+                max={100}
+                value={skinOpacity}
+                disabled={skinBusy}
+                className="w-40 accent-primary disabled:opacity-50"
+                onChange={(e) => {
+                  const v = Number(e.target.value)
+                  setSkinOpacity(v)
+                  setSkinError('')
+                  window.kimiApi
+                    .skinSetOpacity(v)
+                    .catch((err) =>
+                      setSkinError(err instanceof Error ? err.message : String(err))
+                    )
+                }}
+              />
+              <span className="w-10 text-right text-[13px] tabular-nums text-text-secondary">
+                {skinOpacity}%
+              </span>
+            </div>
           </div>
         )}
       </Card>
