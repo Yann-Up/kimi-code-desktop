@@ -102,7 +102,13 @@ export function useChatSkinBridge(): ChatSkinBridge {
     const applyCfg = (c: SkinConfig) => {
       cfgRef.current = c
       setActive(c.enabled && c.inChat)
-      broadcast()
+      // 配置变更时重扫皮肤列表(同 SkinStandee):运行期间新增的自选皮肤才能解析到
+      listAllSkins()
+        .then((list) => {
+          skinsRef.current = list
+          broadcast()
+        })
+        .catch(() => broadcast())
     }
     window.kimiApi.skinConfigGet().then(applyCfg).catch(() => {})
     listAllSkins()

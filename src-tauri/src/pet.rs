@@ -432,10 +432,11 @@ pub fn builtin_pet() -> PetMeta {
 
 /// slug 白名单校验:仅 [A-Za-z0-9_-],防路径穿越(pet:// 协议 handler 与扫描均用)
 pub fn valid_slug(slug: &str) -> bool {
+    // 允许 Unicode 字母/数字(支持中文文件名),仍拒绝 '.'、'/'、'\\' 等,防路径穿越
     !slug.is_empty()
         && slug
             .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+            .all(|c| c.is_alphanumeric() || c == '_' || c == '-')
 }
 
 /// 宠物扫描根目录:扫描去重与协议取图共用此序(kimi-code 优先于 petdex)。

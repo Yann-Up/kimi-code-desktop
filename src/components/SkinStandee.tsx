@@ -23,7 +23,14 @@ export function SkinStandee() {
     listAllSkins()
       .then(setSkins)
       .catch(() => {})
-    return window.kimiApi.onSkinConfigChanged(setCfg)
+    // 配置变更时重扫皮肤列表:运行期间新放进目录的自选皮肤才能解析到,
+    // 否则列表里没有该 slug 会静默回退内置第一个
+    return window.kimiApi.onSkinConfigChanged((c) => {
+      setCfg(c)
+      listAllSkins()
+        .then(setSkins)
+        .catch(() => {})
+    })
   }, [])
 
   // 开关与不透明度同步到 body:theme.css 据此把 skin-card 卡片切为半透毛玻璃
