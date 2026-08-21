@@ -145,3 +145,24 @@ body,
 .logo-breathe {
   animation: logo-breathe 1.6s ease-in-out infinite;
 }
+
+/* 皮肤立绘呼吸微动效(SkinStandee 主页/设置/统计透出):轻微浮动 + 缩放,
+   以底部为轴(立绘贴地);会话页内立绘由 chat_skin_inject.js 注入同款 keyframes */
+@keyframes skin-breathe {
+  0%,
+  100% {
+    transform: translateY(0) scale(1);
+  }
+  50% {
+    transform: translateY(-6px) scale(1.015);
+  }
+}
+.skin-breathe {
+  transform-origin: 50% 100%;
+  animation: skin-breathe 3.6s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .skin-breathe {
+    animation: none;
+  }
+}

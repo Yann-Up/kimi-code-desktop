@@ -47,7 +47,7 @@ export function SkinStandee() {
   if (!skin) return null
   return (
     <div className="pointer-events-none absolute bottom-0 right-6 z-0 h-[72%] select-none">
-      <img src={skin.url} alt="" className="h-full w-auto" draggable={false} />
+      <img src={skin.url} alt="" className="skin-breathe h-full w-auto" draggable={false} />
     </div>
   )
 }

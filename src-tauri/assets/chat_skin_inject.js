@@ -13,6 +13,7 @@
 
   var TAG = '__kimiChatSkin';
   var CONTAINER_ID = 'kimi-chat-skin';
+  var STYLE_ID = 'kimi-chat-skin-style';
   // 壳侧 origin 白名单:prod 为 tauri 自定义协议域,dev 为 vite dev server
   var PARENT_ORIGINS = ['https://tauri.localhost', 'http://tauri.localhost', 'http://localhost:5188'];
 
@@ -21,17 +22,37 @@
     if (el) el.remove();
   }
 
+  // 呼吸微动效 keyframes(与壳侧 theme.css 的 skin-breathe 同款,命名加前缀防撞);
+  // 注入 <style> 一次即可;官方页面 loopback 下无 CSP,内联样式不受限
+  function ensureStyle() {
+    if (document.getElementById(STYLE_ID) || !document.head) return;
+    var st = document.createElement('style');
+    st.id = STYLE_ID;
+    st.textContent =
+      '@keyframes kimi-chat-skin-breathe{' +
+      '0%,100%{transform:translateY(0) scale(1)}' +
+      '50%{transform:translateY(-6px) scale(1.015)}}' +
+      '@media (prefers-reduced-motion: reduce){' +
+      '#' + CONTAINER_ID + ' img{animation:none}}';
+    document.head.appendChild(st);
+  }
+
   function renderSkin(dataUrl) {
     if (!document.body) return; // body 未出:等下一次 cfg 或 ready 重握手
+    ensureStyle();
     var el = document.getElementById(CONTAINER_ID);
     if (!el) {
       el = document.createElement('div');
       el.id = CONTAINER_ID;
       el.style.cssText =
+        // z-index 0:借 DOM 顺序(div 在 #app 之后)浮于聊天内容之上,
+        // 但官方弹层/下拉/toast(z≥1~9999)可正常盖住立绘,避免遮挡交互
         'position:fixed;right:12px;bottom:0;height:60%;pointer-events:none;' +
-        'z-index:2147483647;user-select:none;';
+        'z-index:0;user-select:none;';
       var img = document.createElement('img');
-      img.style.cssText = 'height:100%;width:auto;display:block;';
+      img.style.cssText =
+        'height:100%;width:auto;display:block;transform-origin:50% 100%;' +
+        'animation:kimi-chat-skin-breathe 3.6s ease-in-out infinite;';
       img.draggable = false;
       el.appendChild(img);
       document.body.appendChild(el);
