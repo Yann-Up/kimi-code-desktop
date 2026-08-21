@@ -8,11 +8,26 @@
 //! 优先级:waiting(任一会话待审批/提问)> 一次性动作(jumping/failed)
 //! > review(M4:review 子代理进行中)> running(任一有活跃 turn)> idle。
 //! M4 另有 pet:tool 工具脉冲事件(同类 1s 节流,不进状态机)。规则详见 docs/desktop-pet-design.md。
+//! M5 P2 信息型气泡 pet:bubble { text, tone }:turn 概要(turn.ended 成功)、
+//! 审批详情(event.approval.requested)、配额提醒(ws.rs 周期任务调 quota_remind);
+//! 同类 2s 合并、全局 1s 限流,见 emit_bubble。
+//! M5 P4 子代理小跟班:全部活跃子代理计入 active_subagents(subagent.spawned
+//! 不再按名称过滤),数量变化时广播 pet:minions { count }(归零也发一次);
+//! review 状态仍按 name 含 "review" 从该集合派生,M4 优先级语义不变。
+//! M5 P5 时间维度:running 持续超 3min 显示为 tired、无事件 idle 超 5min 显示为
+//! sleep(均为显示态,优先级位不变;内置宠物无对应状态行,前端 resolveAnim 回退
+//! running/idle);闲置散步由前端定时器驱动,经 pet_nudge 命令挪窗(见 lib.rs)。
 //!
 //! 宠物资产(M3):内置宠物硬编码;扫描 <config_dir>/pets/*(source custom,与 skins
 //! 目录同级;导入的宠物落这里)、<kimi_home>/pets/*(source kimi-code,兼容旧布局)
 //! 与 ~/.petdex/pets/*(source petdex)下的 pet.json,三种格式归一化为统一
 //! PetMeta;外部精灵图经 pet:// 自定义协议(lib.rs 注册)按 slug 供图。
+//!
+//! 悬浮菜单(M5 P3):label "pet-menu" 的浮层窗口(menu_show/hide/toggle),
+//! 锚定**角色视觉头顶**(按激活宠物 frame 高换算)居中,失焦自动收起(hide 保留
+//! 状态);钉选会话持久化在 desktop-config.json 的 menu_pinned_sessions(命令见
+//! lib.rs)。M6 视觉归一:菜单即"宠物的大气泡",show/hide 广播 pet:menu-visible
+//! {visible},PetWindow 据此压制气泡(互斥,避免三层叠加)。
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -84,11 +99,144 @@ pub fn show(app: &AppHandle) -> Result<(), String> {
     Ok(())
 }
 
-/// 关闭桌宠窗口(不存在则忽略)
+/// 关闭桌宠窗口(不存在则忽略);悬浮菜单(M5 P3)一并收起
 pub fn hide(app: &AppHandle) {
+    menu_hide(app);
     if let Some(w) = app.get_webview_window(PET_WINDOW_LABEL) {
         let _ = w.close();
     }
+}
+
+// ---------------------------------------------------------------------------
+// 悬浮菜单(M5 P3):pet-menu 浮层窗口
+// 透明无边框置顶,位于宠物窗上方居中;focused(true)(菜单有搜索框要输入)。
+// 失焦自动收起(hide 不 close,保留前端搜索词等状态)。
+// ---------------------------------------------------------------------------
+
+/// 悬浮菜单窗口 label(前端经 ?window=pet-menu 识别并渲染 PetMenu)
+pub const MENU_WINDOW_LABEL: &str = "pet-menu";
+/// 菜单尺寸(逻辑像素):会话列表 + 底部快捷行
+const MENU_WIDTH: f64 = 380.0;
+const MENU_HEIGHT: f64 = 460.0;
+
+/// 菜单与角色头顶的间距(逻辑像素):留给卡片尾巴,贴脸但不压住 sprite
+const MENU_GAP: f64 = 3.0;
+
+/// 菜单位置(物理像素):底边贴**角色视觉头顶**(非 pet 窗顶边)、水平居中。
+/// sprite 在 pet 窗内水平居中、底边贴窗底,高 frame_h 逻辑 px(取当前激活宠物
+/// 的 PetMeta,解析不到时 resolve_pet 回退内置 208),故头顶物理 y =
+/// 窗顶 + 窗高 - frame_h*scale。pet 不在时落主显示器右下角(与 pet::show 落位
+/// 一致);最后 clamp 进显示器范围——上方空间不够时菜单顶贴屏幕上沿,宁可盖住
+/// 角色头顶也不裁菜单本身
+fn menu_position(app: &AppHandle) -> Option<(f64, f64)> {
+    let m = app.primary_monitor().ok().flatten()?;
+    let scale = m.scale_factor();
+    let size = m.size();
+    let origin = m.position();
+    let menu_w = MENU_WIDTH * scale;
+    let menu_h = MENU_HEIGHT * scale;
+    let (mut x, mut y) = match app.get_webview_window(PET_WINDOW_LABEL) {
+        Some(p) => {
+            let pos = p.outer_position().ok()?;
+            let pet_size = p.outer_size().ok()?;
+            // 混合 DPI 多显示器时 pet 窗缩放未必等于主显示器,用窗自身的
+            let pet_scale = p.scale_factor().unwrap_or(scale);
+            let frame_h = resolve_pet(&active_slug(app)).frame_h as f64;
+            let head_top = pos.y as f64 + pet_size.height as f64 - frame_h * pet_scale;
+            (
+                pos.x as f64 + (pet_size.width as f64 - menu_w) / 2.0,
+                head_top - menu_h - MENU_GAP * scale,
+            )
+        }
+        None => (
+            origin.x as f64 + size.width as f64 - menu_w - 48.0 * scale,
+            origin.y as f64 + size.height as f64 - menu_h - 96.0 * scale,
+        ),
+    };
+    x = x.clamp(
+        origin.x as f64,
+        origin.x as f64 + (size.width as f64 - menu_w).max(0.0),
+    );
+    y = y.clamp(
+        origin.y as f64,
+        origin.y as f64 + (size.height as f64 - menu_h).max(0.0),
+    );
+    Some((x, y))
+}
+
+/// M6 菜单可见性广播(pet:menu-visible {visible},无敏感信息):
+/// PetWindow 据此在菜单开着期间压制气泡(菜单本身就是"宠物的大气泡")
+fn emit_menu_visible(app: &AppHandle, visible: bool) {
+    let _ = app.emit("pet:menu-visible", serde_json::json!({ "visible": visible }));
+}
+
+/// 创建并显示悬浮菜单(幂等:已存在则重新落位 + show + 聚焦)
+pub fn menu_show(app: &AppHandle) -> Result<(), String> {
+    if let Some(w) = app.get_webview_window(MENU_WINDOW_LABEL) {
+        if let Some((x, y)) = menu_position(app) {
+            let _ = w.set_position(tauri::PhysicalPosition::new(x as i32, y as i32));
+        }
+        let _ = w.show();
+        let _ = w.set_focus();
+        emit_menu_visible(app, true);
+        return Ok(());
+    }
+    let mut builder = WebviewWindowBuilder::new(
+        app,
+        MENU_WINDOW_LABEL,
+        WebviewUrl::App("index.html?window=pet-menu".into()),
+    )
+    .title("Kimi Pet Menu")
+    .inner_size(MENU_WIDTH, MENU_HEIGHT)
+    .resizable(false)
+    .decorations(false)
+    .transparent(true)
+    .shadow(false)
+    .always_on_top(true)
+    .skip_taskbar(true)
+    // 菜单要接收键盘输入(搜索框),必须可抢焦
+    .focused(true)
+    .disable_drag_drop_handler();
+    if let Some((x, y)) = menu_position(app) {
+        builder = builder.position(x, y);
+    }
+    let w = builder.build().map_err(|e| e.to_string())?;
+    // 失焦自动收起:hide 不 close,前端状态(搜索词/滚动位)得以保留。
+    // 建窗抢焦过程中可能闪过一次 Focused(false),只有真正获得过焦点后的
+    // 失焦才算"用户离开",避免刚弹出就被误收起
+    let ever_focused = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let flag = ever_focused.clone();
+    let app2 = app.clone();
+    w.on_window_event(move |event| {
+        if let tauri::WindowEvent::Focused(focused) = event {
+            if *focused {
+                flag.store(true, std::sync::atomic::Ordering::SeqCst);
+            } else if flag.load(std::sync::atomic::Ordering::SeqCst) {
+                menu_hide(&app2);
+            }
+        }
+    });
+    emit_menu_visible(app, true);
+    Ok(())
+}
+
+/// 收起悬浮菜单(hide 不 close;不存在则忽略,幂等无错)
+pub fn menu_hide(app: &AppHandle) {
+    if let Some(w) = app.get_webview_window(MENU_WINDOW_LABEL) {
+        let _ = w.hide();
+        emit_menu_visible(app, false);
+    }
+}
+
+/// 悬浮菜单开关:可见则收起,否则展开
+pub fn menu_toggle(app: &AppHandle) -> Result<(), String> {
+    if let Some(w) = app.get_webview_window(MENU_WINDOW_LABEL) {
+        if w.is_visible().unwrap_or(false) {
+            menu_hide(app);
+            return Ok(());
+        }
+    }
+    menu_show(app)
 }
 
 // ---------------------------------------------------------------------------
@@ -105,6 +253,12 @@ pub enum PetState {
     Failed,
     /// M4:会话中有 review 类子代理在跑(subagent.spawned 的 subagentName 含 "review")
     Review,
+    /// M5 P5:running 持续超 TIRED_AFTER 的显示态(与 running 同优先级位,
+    /// 仅显示名不同;内置宠物无该状态行,前端 resolveAnim 回退 running)
+    Tired,
+    /// M5 P5:idle 持续超 SLEEP_AFTER 的显示态(任一事件活动后回 idle;
+    /// 前端回退 idle 行)
+    Sleep,
 }
 
 impl PetState {
@@ -116,6 +270,8 @@ impl PetState {
             PetState::Jumping => "jumping",
             PetState::Failed => "failed",
             PetState::Review => "review",
+            PetState::Tired => "tired",
+            PetState::Sleep => "sleep",
         }
     }
 }
@@ -125,8 +281,23 @@ const ONESHOT_DURATION: Duration = Duration::from_millis(1500);
 /// 泄漏清扫:长时间没有任何会话事件(volatile 帧也算活跃)而状态非 idle,
 /// 说明事件流断过,强制复位。取 60s:静默长命令(sleep/build 等)期间没有任何
 /// 事件是常态,阈值太短会把正常执行误判成断流(10s 实测误杀,06:49)。
-/// 清扫只清 active_turns/oneshot,不清 waiting——审批挂起几分钟无事件也是常态
+/// 清扫只清 active_turns/active_subagents/oneshot,不清 waiting——审批挂起几分钟
+/// 无事件也是常态
 const STALE_TIMEOUT: Duration = Duration::from_secs(60);
+/// M5 P5 时间维度:任一会话的 turn 连续运行超此时长,running 显示为 tired(毫秒,
+/// 与 TurnTrack.start_ts 同为事件时间戳口径)
+const TIRED_AFTER_MS: u64 = 3 * 60 * 1000;
+/// M5 P5:无任何会话事件超此时长,idle 显示为 sleep(任一事件刷新 last_activity 后回 idle)
+const SLEEP_AFTER: Duration = Duration::from_secs(5 * 60);
+
+/// M5 P2:按会话跟踪 turn 概要(开始时刻 + 工具计数),turn.ended 成功时组气泡文案
+#[derive(Default)]
+struct TurnTrack {
+    /// 首个 prompt.submitted/turn.started/tool.call.started 的毫秒时间戳
+    start_ts: Option<u64>,
+    /// 本 turn 内 tool.call.started 累计
+    tool_count: u32,
+}
 
 struct Machine {
     state: PetState,
@@ -134,8 +305,14 @@ struct Machine {
     active_turns: HashSet<String>,
     /// 有待审批/提问的会话(并集语义:全清空才退出 waiting)
     waiting: HashSet<String>,
-    /// M4:进行中的 review 子代理(subagent.spawned 按 subagentId 进入,completed/failed/suspended 退出)
-    review_agents: HashSet<String>,
+    /// M4→M5 P4:进行中的全部子代理,subagentId → subagentName(小写);
+    /// spawned 一律进入,completed/failed/suspended 按 id 退出。
+    /// review 状态判定 = 集合中任一 name 含 "review"(保留 M4 语义);
+    /// 集合大小即小跟班数量(pet:minions 载荷)。用单个 HashMap 而非两个集合,
+    /// 避免 review 集与全集的配对移除逻辑漂移
+    active_subagents: HashMap<String, String>,
+    /// M5 P2:各活跃会话的 turn 概要跟踪(turn.ended/prompt.aborted/泄漏清扫时清除)
+    turn_tracks: HashMap<String, TurnTrack>,
     /// 一次性动作的结束时刻(jumping/failed 播 ONESHOT_DURATION)
     oneshot: Option<(PetState, Instant)>,
     /// 最近一次非 volatile 会话事件(泄漏清扫用)
@@ -148,13 +325,16 @@ impl Machine {
             state: PetState::Idle,
             active_turns: HashSet::new(),
             waiting: HashSet::new(),
-            review_agents: HashSet::new(),
+            active_subagents: HashMap::new(),
+            turn_tracks: HashMap::new(),
             oneshot: None,
             last_activity: Instant::now(),
         }
     }
 
-    /// 由聚合输入重算目标状态(waiting > 一次性动作 > review > running > idle)
+    /// 由聚合输入重算目标状态(waiting > 一次性动作 > review > running > idle)。
+    /// M5 P5 时间维度:running 位按 turn 时长细分 tired,idle 位按静默时长细分 sleep;
+    /// 两者只是显示态,不改变上方高优先级语义,持续时间条件消失后自然回落
     fn recompute(&mut self) -> PetState {
         let now = Instant::now();
         // 一次性动作到期即清除
@@ -167,10 +347,24 @@ impl Machine {
             PetState::Waiting
         } else if let Some((s, _)) = self.oneshot {
             s
-        } else if !self.review_agents.is_empty() {
+        } else if self.active_subagents.values().any(|n| n.contains("review")) {
             PetState::Review
         } else if !self.active_turns.is_empty() {
-            PetState::Running
+            // tired:任一在跑会话的 turn 起始时间戳(start_ts 缺失按未超时处理)
+            // 距今超 TIRED_AFTER_MS;巡检循环每 500ms 重算,到点自动切换
+            let now_ms = now_ms();
+            let tired = self
+                .active_turns
+                .iter()
+                .filter_map(|sid| self.turn_tracks.get(sid).and_then(|t| t.start_ts))
+                .any(|start| now_ms.saturating_sub(start) > TIRED_AFTER_MS);
+            if tired {
+                PetState::Tired
+            } else {
+                PetState::Running
+            }
+        } else if self.last_activity.elapsed() > SLEEP_AFTER {
+            PetState::Sleep
         } else {
             PetState::Idle
         };
@@ -205,6 +399,72 @@ fn emit_tool(app: &AppHandle, kind: &str) {
     let _ = app.emit("pet:tool", serde_json::json!({ "kind": kind }));
 }
 
+/// M5 P4 小跟班计数广播 { count }:仅在活跃子代理数变化(含清扫归零)时
+/// 由调用方触发;spawn/complete 非高频事件,无需节流
+fn emit_minions(app: &AppHandle, count: usize) {
+    let _ = app.emit("pet:minions", serde_json::json!({ "count": count }));
+}
+
+/// M5 P2 信息型气泡广播 { text, tone }:同类(category)2s 内合并;
+/// 不同类可插队,但全局 1s 内最多一条(防刷屏)。照 emit_tool 模式
+fn emit_bubble(app: &AppHandle, category: &str, text: &str, tone: &str) {
+    static LAST: Mutex<Option<(String, Instant)>> = Mutex::new(None);
+    {
+        let mut last = LAST.lock().unwrap();
+        if let Some((c, t)) = &*last {
+            let elapsed = t.elapsed();
+            if elapsed < Duration::from_secs(1)
+                || (c == category && elapsed < Duration::from_secs(2))
+            {
+                return;
+            }
+        }
+        *last = Some((category.to_string(), Instant::now()));
+    }
+    let _ = app.emit("pet:bubble", serde_json::json!({ "text": text, "tone": tone }));
+}
+
+/// 当前毫秒时间戳(tired 判定用;与事件时间戳同一 epoch 口径,取不到按 0)
+fn now_ms() -> u64 {
+    u64::try_from(chrono::Utc::now().timestamp_millis()).unwrap_or(0)
+}
+
+/// 事件毫秒时间戳(M5 P2):优先载荷 time 字段(新版服务端,毫秒),
+/// 回退帧顶层 ISO timestamp;都取不到返回 None
+fn evt_time_ms(evt: &serde_json::Map<String, Value>) -> Option<u64> {
+    if let Some(ms) = evt.get("time").and_then(|v| v.as_u64()) {
+        return Some(ms);
+    }
+    let s = evt.get("timestamp").and_then(|v| v.as_str())?;
+    let ms = chrono::DateTime::parse_from_rfc3339(s).ok()?.timestamp_millis();
+    u64::try_from(ms).ok()
+}
+
+/// M5 P2 配额提醒(ws.rs 周期任务调用):用量占比(0-100)达阈值时发 pet:bubble;
+/// 每档每自然日(本地时区,项目约定)只提醒一次
+pub fn quota_remind(app: &AppHandle, pct: f64) {
+    let (tier, text, tone) = if pct >= 95.0 {
+        (95u32, "额度快没了!", "warn")
+    } else if pct >= 80.0 {
+        (80u32, "额度用了八成多了", "info")
+    } else {
+        return;
+    };
+    // 每档一个静态槽(HashMap::new 非 const 不能进 static),存上次提醒的自然日
+    static REMINDED_80: Mutex<Option<chrono::NaiveDate>> = Mutex::new(None);
+    static REMINDED_95: Mutex<Option<chrono::NaiveDate>> = Mutex::new(None);
+    let today = chrono::Local::now().date_naive();
+    let slot = if tier == 95 { &REMINDED_95 } else { &REMINDED_80 };
+    {
+        let mut r = slot.lock().unwrap();
+        if *r == Some(today) {
+            return;
+        }
+        *r = Some(today);
+    }
+    emit_bubble(app, "quota", text, tone);
+}
+
 /// WS 会话事件入口(ws.rs handle_frame 每条会话事件都会调)。
 /// 只改聚合集合,状态跃迁才 emit;tool.call.started 等高频事件天然被
 /// "只在跃迁时 emit" 节流,无需额外计时器。
@@ -227,11 +487,46 @@ pub fn on_session_event(app: &AppHandle, ftype: &str, session_id: &str, evt: &se
     if evt.get("volatile").and_then(|v| v.as_bool()).unwrap_or(false) {
         return;
     }
+    // M5 P2 待发的信息型气泡(text, tone, category);锁内只组文案,emit 在锁外做
+    let mut bubble: Option<(String, &'static str, &'static str)> = None;
+    // M5 P4 待广播的小跟班计数(活跃子代理数变化时取新值,含归零)
+    let mut minions: Option<usize> = None;
     match ftype {
         "prompt.submitted" | "turn.started" | "tool.call.started" | "turn.step.started" => {
             m.active_turns.insert(session_id.to_string());
+            // M5 P2 turn 概要跟踪:首个事件记 start_ts;tool.call.started 累计工具数
+            // (turn.step.started 只是步骤粒度,不参与)
+            if ftype != "turn.step.started" {
+                let track = m.turn_tracks.entry(session_id.to_string()).or_default();
+                if track.start_ts.is_none() {
+                    track.start_ts = evt_time_ms(evt);
+                }
+                if ftype == "tool.call.started" {
+                    track.tool_count += 1;
+                }
+            }
         }
         "event.approval.requested" => {
+            // M5 P2 审批详情气泡:同会话已在 waiting(连续多个审批)不重复发。
+            // 详情字段实测(08-21,server/events jsonl):tool_input_display.command
+            // (kind=command 的命令详情)→ action("Running: xxx")→ tool_name,全缺回退固定文案
+            if !m.waiting.contains(session_id) {
+                let detail = evt
+                    .get("tool_input_display")
+                    .and_then(|d| d.get("command"))
+                    .and_then(|v| v.as_str())
+                    .or_else(|| evt.get("action").and_then(|v| v.as_str()))
+                    .or_else(|| evt.get("tool_name").and_then(|v| v.as_str()));
+                let text = match detail.map(str::trim).filter(|d| !d.is_empty()) {
+                    Some(d) => {
+                        let truncated: String = d.chars().take(40).collect();
+                        let ellipsis = if d.chars().count() > 40 { "…" } else { "" };
+                        format!("想执行 `{truncated}{ellipsis}`?")
+                    }
+                    None => "等你审批".to_string(),
+                };
+                bubble = Some((text, "info", "approval"));
+            }
             m.waiting.insert(session_id.to_string());
         }
         "event.approval.resolved" => {
@@ -250,6 +545,7 @@ pub fn on_session_event(app: &AppHandle, ftype: &str, session_id: &str, evt: &se
         "turn.ended" => {
             m.active_turns.remove(session_id);
             m.waiting.remove(session_id);
+            let track = m.turn_tracks.remove(session_id);
             // 失败/中断不庆祝:reason 含 error/fail → failed;含 abort/interrupt → 无动作
             let reason = evt
                 .get("reason")
@@ -260,29 +556,60 @@ pub fn on_session_event(app: &AppHandle, ftype: &str, session_id: &str, evt: &se
                 m.oneshot = Some((PetState::Failed, Instant::now() + ONESHOT_DURATION));
             } else if !reason.contains("abort") && !reason.contains("interrupt") {
                 m.oneshot = Some((PetState::Jumping, Instant::now() + ONESHOT_DURATION));
+                // M5 P2 turn 概要气泡:耗时优先取载荷 durationMs(实测存在),
+                // 缺省回退 start→ended 帧时间差;tool_count 为 0 时省略工具数
+                let duration_ms = evt
+                    .get("durationMs")
+                    .and_then(|v| v.as_u64())
+                    .or_else(|| {
+                        let start = track.as_ref().and_then(|t| t.start_ts)?;
+                        let end = evt_time_ms(evt)?;
+                        Some(end.saturating_sub(start))
+                    });
+                let tools = track.map(|t| t.tool_count).unwrap_or(0);
+                if let Some(ms) = duration_ms {
+                    let secs = ms / 1000;
+                    let dur = if secs >= 60 {
+                        format!("{} 分 {} 秒", secs / 60, secs % 60)
+                    } else {
+                        format!("{secs} 秒")
+                    };
+                    let text = if tools > 0 {
+                        format!("{dur} · {tools} 个工具,搞定!")
+                    } else {
+                        format!("{dur},搞定!")
+                    };
+                    bubble = Some((text, "info", "turn"));
+                }
             }
         }
         "prompt.aborted" => {
             m.active_turns.remove(session_id);
             m.waiting.remove(session_id);
+            m.turn_tracks.remove(session_id);
         }
-        // M4 review:subagentName 含 "review"(大小写不敏感)的子代理进入;
+        // M5 P4 子代理小跟班:spawned 一律入集(M4 的 review 名称过滤取消,
+        // review 状态改由 recompute 按 name 派生);名字存小写省去判定时的重复转换。
         // CLI 无内置 review profile,该名字来自用户/项目自定义子代理
         "subagent.spawned" => {
-            let name = evt
-                .get("subagentName")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_lowercase();
-            if name.contains("review") {
-                if let Some(id) = evt.get("subagentId").and_then(|v| v.as_str()) {
-                    m.review_agents.insert(id.to_string());
+            if let Some(id) = evt.get("subagentId").and_then(|v| v.as_str()) {
+                let name = evt
+                    .get("subagentName")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_lowercase();
+                let before = m.active_subagents.len();
+                m.active_subagents.insert(id.to_string(), name);
+                if m.active_subagents.len() != before {
+                    minions = Some(m.active_subagents.len());
                 }
             }
         }
         "subagent.completed" | "subagent.failed" | "subagent.suspended" => {
             if let Some(id) = evt.get("subagentId").and_then(|v| v.as_str()) {
-                m.review_agents.remove(id);
+                if m.active_subagents.remove(id).is_some() {
+                    minions = Some(m.active_subagents.len());
+                }
             }
         }
         "error" => {
@@ -293,6 +620,15 @@ pub fn on_session_event(app: &AppHandle, ftype: &str, session_id: &str, evt: &se
     let next = m.recompute();
     drop(m);
     emit_if_changed(app, next);
+    // M5 P2 信息型气泡在状态跃迁 emit 之后发:前端单槽气泡后到者优先,
+    // 审批详情得以覆盖 waiting 跃迁的通用文案(jumping 通用文案前端已摘除)
+    if let Some((text, tone, category)) = bubble {
+        emit_bubble(app, category, &text, tone);
+    }
+    // M5 P4 小跟班计数广播:归零也发,让前端清掉 overlay
+    if let Some(count) = minions {
+        emit_minions(app, count);
+    }
 }
 
 /// recompute 前后的状态比较在锁内做不出(已写回),这里用"上次 emit 值"判跃迁
@@ -306,7 +642,9 @@ fn emit_if_changed(app: &AppHandle, next: PetState) {
 }
 
 /// 启动后台巡检:一次性动作到期回基底;事件流断裂超 STALE_TIMEOUT 清扫
-/// active_turns/oneshot(waiting 保留,审批可能长时间无事件)。应用 setup 时调用一次。
+/// active_turns/oneshot(waiting 保留,审批可能长时间无事件);
+/// M5 P5 时长类显示态(running→tired、idle→sleep)也靠本循环每 tick 重算驱动。
+/// 应用 setup 时调用一次。
 pub fn init(app: &AppHandle) {
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
@@ -314,20 +652,26 @@ pub fn init(app: &AppHandle) {
             tokio::time::sleep(Duration::from_millis(500)).await;
             let mut m = machine().lock().unwrap();
             let stale = m.last_activity.elapsed() > STALE_TIMEOUT;
-            let oneshot_expired = m
-                .oneshot
-                .map(|(_, until)| Instant::now() >= until)
-                .unwrap_or(false);
-            if stale && m.state != PetState::Idle {
+            // M5 P4:子代理集合被清扫时归零广播(锁内只记标志,emit 在锁外)
+            let mut minions: Option<usize> = None;
+            // sleep 与 idle 同为"无活动"显示态,不触发清扫(集合本就为空)
+            if stale && !matches!(m.state, PetState::Idle | PetState::Sleep) {
                 // waiting 不清:审批可以长时间挂起而无任何事件
                 m.active_turns.clear();
-                m.review_agents.clear();
+                if !m.active_subagents.is_empty() {
+                    m.active_subagents.clear();
+                    minions = Some(0);
+                }
+                m.turn_tracks.clear();
                 m.oneshot = None;
             }
-            if stale || oneshot_expired {
-                let next = m.recompute();
-                drop(m);
-                emit_if_changed(&app, next);
+            // 每 tick 无条件重算:tired/sleep 是时长驱动的显示态,无新事件也要到点切换
+            // (emit_if_changed 挡重发,常态无事件时开销可忽略)
+            let next = m.recompute();
+            drop(m);
+            emit_if_changed(&app, next);
+            if let Some(count) = minions {
+                emit_minions(&app, count);
             }
         }
     });

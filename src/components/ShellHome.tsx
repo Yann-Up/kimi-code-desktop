@@ -119,6 +119,33 @@ function WebFrame() {
     })()
   }, [states, srcs])
 
+  // 桌宠悬浮菜单点会话行(M5 P3):官方 web UI(0.37.2 起)支持 /sessions/<id> 路径路由
+  // (加载时解析 pathname 选中会话,并监听 popstate;已按官方内嵌前端产物核实),
+  // 拼带会话路径的 src 触发 iframe 重载直达该会话。跨源无法 pushState 进 iframe,
+  // 重载是唯一入口;末尾 query 仅用于强制刷新 src(同会话重复点也能再次生效)
+  const pendingSessionFocus = useUi((s) => s.pendingSessionFocus)
+  useEffect(() => {
+    if (!pendingSessionFocus) return
+    const ch = activeChannel
+    if (states[ch] !== 'on') {
+      useUi.getState().setPendingSessionFocus(null)
+      return
+    }
+    void (async () => {
+      try {
+        const url = await window.kimiApi.webUiUrl(ch)
+        const hashIdx = url.indexOf('#')
+        const base = (hashIdx >= 0 ? url.slice(0, hashIdx) : url).replace(/\/$/, '')
+        const hash = hashIdx >= 0 ? url.slice(hashIdx) : ''
+        const src = `${base}/sessions/${encodeURIComponent(pendingSessionFocus)}?_=${Date.now()}${hash}`
+        setSrcs((s) => ({ ...s, [ch]: src }))
+      } catch {
+        /* 服务未就绪:放弃本次跳转,主窗保持原样 */
+      }
+      useUi.getState().setPendingSessionFocus(null)
+    })()
+  }, [pendingSessionFocus])
+
   /** 启动指定通道:本机通道缺 CLI 时先弹安装确认,不静默下载 */
   const startChannel = (ch: string) => {
     setErrors((e) => ({ ...e, [ch]: undefined }))

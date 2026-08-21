@@ -35,6 +35,8 @@ pub struct DesktopConfig {
     pub web_port: Option<u16>,
     /// 桌宠悬浮窗开关(实验性,缺省关;见 pet.rs)
     pub pet_enabled: Option<bool>,
+    /// 桌宠闲置散步开关(桌宠 M5 P5,缺省开):idle/sleep 且无子代理时宠物会随机挪动
+    pub pet_wander: Option<bool>,
     /// 当前激活宠物 slug(缺省 "kimi" 即内置;外部宠物为目录名,见 pet.rs 扫描逻辑)
     pub pet_slug: Option<String>,
     /// 桌宠点击穿透(缺省关):开启后悬浮窗忽略所有鼠标事件(此时右键菜单无法从宠物唤起,需到设置页关闭)
@@ -51,6 +53,8 @@ pub struct DesktopConfig {
     /// 用户在更新弹窗点"跳过此版本"的 CLI 版本号;启动查更新时该版本不再提示
     /// (有新于它的版本仍会提示;升级成功后自然失效——比较用 is_newer)
     pub cli_update_skip: Option<String>,
+    /// 桌宠悬浮菜单(桌宠 M5 P3)钉选的会话 id 列表(新的在前;缺省空)
+    pub menu_pinned_sessions: Option<Vec<String>>,
 }
 
 impl DesktopConfig {

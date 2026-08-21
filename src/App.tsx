@@ -50,6 +50,12 @@ export default function App() {
       }),
       window.kimiApi.onCliUpdateAvailable((info) => setUpdateInfo(info)),
       window.kimiApi.onCloseRequested((running) => setCloseConfirm(running)),
+      // 桌宠悬浮菜单快捷入口(M5 P3):切 view;带 sessionId 时由 WebFrame 消费
+      // pendingSessionFocus 拼 /sessions/<id> 的 iframe src 跳转该会话
+      window.kimiApi.onAppNavigate((req) => {
+        if (req.view) useUi.getState().setView(req.view)
+        if (req.sessionId) useUi.getState().setPendingSessionFocus(req.sessionId)
+      }),
       window.kimiApi.onCliUpgraded((info) => {
         setUpgrading(false)
         setUpdateInfo(null)

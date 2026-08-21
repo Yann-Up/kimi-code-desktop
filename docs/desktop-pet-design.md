@@ -1,12 +1,12 @@
 # 桌宠(Desktop Pet)实验性功能设计
 
-> 状态:M1(悬浮窗 + 占位团子 + 设置开关)、M2(状态机 + WS 事件驱动)、M3(多宠物/目录扫描/外部格式兼容)、M4(拖拽方向/review/工具脉冲/气泡/点击)、M5(右键菜单 + 点击穿透)已实现
+> 状态:M1(悬浮窗 + 占位团子 + 设置开关)、M2(状态机 + WS 事件驱动)、M3(多宠物/目录扫描/外部格式兼容)、M4(拖拽方向/review/工具脉冲/气泡/点击)、M5(右键菜单 + 点击穿透;悬浮菜单/信息气泡/小跟班/时间维度/散步/交互重排)、M6(视觉归一)已实现
 
 ## M5 实现要点(2026-08-21):右键菜单 + 点击穿透
 
-- 右键菜单(前端自绘;原生 muda 菜单无法定制样式,弃用):PetWindow `onContextMenu` 在窗内弹自绘菜单——换宠物(悬停浮出子菜单,200ms 延迟关闭防平移误收;窗口仅 240 宽,子菜单浮左侧与主菜单部分重叠,靠 z-index 盖住)、点击穿透(带"已开启"徽标)、隐藏桌宠;关闭路径:遮罩点外关闭、遮罩上再右键换位重开、**窗口失焦(onFocusChanged)或 Esc 关闭**(补原生菜单的"点桌面其他地方收起"行为);菜单按实测尺寸收边在 240x250 窗口内(先 `visibility:hidden` 测量再落位防闪);菜单动作直调 `petSetActive` / `petSetClickThrough` / `petSetEnabled` 命令,Rust 侧无菜单代码。
+- 右键菜单(前端自绘;原生 muda 菜单无法定制样式,弃用):PetWindow `onContextMenu` 在窗内弹自绘菜单——换宠物(悬停浮出子菜单,200ms 延迟关闭防平移误收;窗口仅 240 宽,子菜单浮左侧与主菜单部分重叠,靠 z-index 盖住)、点击穿透(带"已开启"徽标)、隐藏桌宠;关闭路径:遮罩点外关闭、遮罩上再右键换位重开、**窗口失焦(onFocusChanged)或 Esc 关闭**(补原生菜单的"点桌面其他地方收起"行为);菜单按实测尺寸收边在 240x250 窗口内(先 `visibility:hidden` 测量再落位防闪);菜单动作直调 `petSetActive` / `petSetClickThrough` / `petSetEnabled` 命令,Rust 侧无菜单代码。与 M5 P1 交互重排共存:单击 = 开关 pet-menu 悬浮菜单,双击 = 唤回主窗,右键 = 本自绘菜单。
 - 点击穿透:配置 `pet_click_through`(desktop-config.json);开启即 `set_ignore_cursor_events(true)`,拖动/右键/点击全部失效——**唯一关闭入口是设置页开关**(桌宠卡内已写明);`pet::show()` 建窗时按配置补齐。
-- `PetConfig` 载荷加 `clickThrough`,`pet_config_get` 与 `pet:config-changed` 共用 `pet_config_json`,设置页经事件同步三处状态(开关/宠物/穿透)。
+- `PetConfig` 载荷加 `clickThrough`(与 M5 P5 的 `wander` 并存),`pet_config_get` 与 `pet:config-changed` 共用 `pet_config_json`,设置页经事件同步开关/宠物/穿透/散步状态。
 - 宠物包导入(2026-08-21):设置页"导入 zip"选文件,字节传 `pet_import_zip` 命令;Rust 侧 `pet::import_zip` 解压到 `<config_dir>/pets/<slug>`(与 skins 目录同级)。slug 决策:先读包内 pet.json 的标识字段(slug → id → displayName → name,清洗后首个合法候选生效),zip 文件名只作兜底——petdex 下载的包文件名都叫 zip.zip,按文件名命名会互相撞车。只解 pet.json 与 spritesheet.webp/png 三个文件(条目经 `enclosed_name` 过滤防 zip slip),包内可放根目录或子目录(取最浅一份);无 pet.json 但有精灵图时按 petdex 布局兜底生成最小 pet.json;落盘后过 `parse_pet_dir` 校验,失败清目录报错;同名目录已存在则拒绝。导入成功前端刷新列表并直接 `petSetActive` 换上新宠物。依赖 `zip` crate(default-features=false + deflate,纯 Rust 后端)。
 
 ## M3 实现要点(2026-08-18)
@@ -16,6 +16,23 @@
 - 外部精灵图走自定义协议 `pet://`(Windows 前端 URL 形态 `http://pet.localhost/<slug>`,lib.rs `register_uri_scheme_protocol` 实现,slug 白名单防路径穿越,优先 spritesheet.webp 其次 .png);CSP img-src 已放行。
 - 配置 `pet_slug` 存 desktop-config.json;命令 `pet_list`/`pet_active_get`/`pet_set_active`(均不建窗,sync 即可);切换时 emit `pet:config-changed`(载荷完整 PetConfig `{enabled, slug}`),桌宠窗与设置页都靠它重载。
 > 参考:[crafter-station/petdex](https://github.com/crafter-station/petdex)
+
+## M5+M6 实现要点(2026-08-21):悬浮菜单 / 信息气泡 / 小跟班 / 时间维度 / 散步 / 视觉归一
+
+- **交互重排(P1)**:单击宠物 = 开/关悬浮菜单(`pet_menu_toggle`,waving 点击反馈保留);双击 = 唤回主窗(新 async 命令 `pet_restore_main`,包 `restore_main` 的 unminimize+show+focus)。桌宠与主窗**不互斥**、常驻(互斥联动方案已否决,未实施)。
+- **悬浮菜单(P3)**:新 Tauri 窗口 label `pet-menu`,`index.html?window=pet-menu` 分流渲染 `src/components/pet/PetMenu.tsx`;锚定宠物窗顶边居中 + 屏幕 clamp;Rust 侧 `on_window_event` 失焦收起(`ever_focused` 守卫防建窗抢焦误收,hide 不 close 保留前端状态);会话列表走 REST `/api/v1/sessions` 10s 轮询(窗口 hidden 暂停);钉选会话存 desktop-config.json `menu_pinned_sessions`(`pet_menu_pin_toggle`/`pet_menu_pins_get`);快捷行「主窗口/统计/设置」走 async 命令 `pet_menu_navigate`(先 `restore_main` 再 emit `app:navigate {view, sessionId?}`,主窗 App.tsx listen 切 view;先 restore 后 emit,主窗隐藏时 webview 存活、listen 不丢)。
+- **跳会话已落地**:官方 web UI(0.37.2 起)支持 `/sessions/<id>` 路径路由(核实依据:前端产物 `selectSession`/`onSessionRoutePopState`);ShellHome 消费 `stores/ui.ts` 的 `pendingSessionFocus`,拼 `/sessions/<id>?_=<ts>#token` 重载 iframe。新 capability `src-tauri/capabilities/pet-menu.json`(只放 event listen/unlisten)。
+- **信息气泡(P2)**:新事件 `pet:bubble {text, tone: info|warn}`(`emit_bubble`,同类 2s 合并、全局 1s 限流)。触发源:turn.ended 概要(时长优先取载荷 `durationMs`,缺失回退自算;工具数按会话累计 `tool.call.started`)、approval.requested 详情(`tool_input_display.command` → `action` → `tool_name` 依次取,截断 40 字符,同会话 waiting 中不重复;字段名经 `server/events/*.jsonl` 实测)、配额提醒(ws.rs 新周期任务 5min 轮询 `/api/v1/oauth/usage`,≥80% info / ≥95% warn,每档每自然日一次)。前端气泡 warn 档变色、220px 截断;STATE_BUBBLE 摘掉 jumping(概要气泡取代)。
+- **小跟班(P4)**:`review_agents` 泛化为 `active_subagents: HashMap<subagentId, name>`,review 判定 = 任一 name 含 "review";新事件 `pet:minions {count}`(数量变化即发,STALE 清空补发 0)。前端 MinionSprite 独立小 canvas(DOM overlay,0.45 缩放 idle 行循环 + CSS bob),最多 3 只,>3 挂「+N」角标;不进 displayed 优先级链。
+- **时间维度 + 散步(P5)**:PetState 新增 `tired`(running 分支细分:任一会话 turn 连续运行 >3min)与 `sleep`(idle 分支:last_activity >5min);init() 巡检改 500ms tick 无条件 recompute,时长到点无新事件也切换。前端 `resolveAnim` 回退 tired→running、sleep→idle,STATE_BUBBLE 各加一句;时段彩蛋纯前端(localStorage `kimi.petGreetedDate` 每日一句按本地时段)。闲置散步:配置 `pet_wander`(缺省开,设置页开关,新命令 `pet_set_wander`;`pet_config_json` 载荷统一加 `wander`),async 命令 `pet_nudge(dx)`(clamp 宠物所在显示器范围);前端 30-60s 随机走 100-300px(仅 idle/sleep 且无 minions 且未拖拽),撞边自动反向,移动时复用 running-left/right 动画。
+- **契约三处同步**:`kimi-api.ts` / `tauri.ts` / `lib.rs` 注册一致——命令 `pet_restore_main` / `pet_menu_toggle` / `pet_menu_hide` / `pet_menu_navigate` / `pet_menu_pin_toggle` / `pet_menu_pins_get` / `pet_set_wander` / `pet_nudge`,事件订阅 `onPetBubble` / `onPetMinions` / `onPetMenuVisible`。
+
+### M6 视觉归一(2026-08-21):菜单 = 宠物的大气泡
+
+- **菜单锚定角色头顶**:`menu_position` 不再贴 pet 窗顶边,改锚 sprite 视觉头顶——sprite 在窗内水平居中、底边贴窗底,头顶 y = 窗顶 + 窗高 − frame_h×scale(frame 高取当前激活宠物的 PetMeta,`resolve_pet` 解析,回退内置 208;缩放用 pet 窗自身 scale_factor,兼容混合 DPI),菜单底边留 3px 间距。屏幕 clamp 保留:上方空间不够时菜单顶贴上沿,宁可盖住角色头顶也不裁菜单。
+- **尾巴 + 生长动效(PetMenu)**:卡片底部中央加 12px 旋转正方形小三角(-mt-1.5 半叠卡片底边,bg/border 与卡片一致防透明窗穿帮),卡片 max-h 让出 6px;入场动效 origin-bottom、opacity/scale/translate 150ms ease-out,组件常驻故由 visibilitychange 在每次重show时重播,关闭无动画。
+- **气泡归位(PetWindow)**:气泡从窗口顶部改贴角色头顶(`bottom: frameH + 4`,meta 未加载回退 208),带下指小三角(warn 档同步变色),圆角加大 + 100ms 淡入上浮(theme.css `pet-bubble-in`);单行截断(220px)使 42px 顶部空间(250−208)恰好容纳气泡+三角,窗口尺寸 240×250 不变。
+- **互斥与跟随**:菜单 show/hide 广播 `pet:menu-visible {visible}`(menu_toggle 收拢路径改走 menu_hide 统一发事件;payload 无敏感信息);PetWindow 在菜单开着期间丢弃新气泡(showBubble 入口拦截,时段问候一并压制)、展开瞬间清除已显示气泡。动则收菜单:拖拽首次判定(onMouseMove 超阈值置 dragging 时)与闲置散步触发(petNudge 前)各调一次 `petMenuHide()`(未开时幂等 no-op)。
 
 ## 目标
 
@@ -109,7 +126,7 @@ pet.json(schema `kimi-desktop-pet/1`):
 ```
 
 - `states` 的行号默认按 petdex 约定行序(idle / running-right / running-left / waving / jumping / failed / waiting / running / review);加载 petdex 宠物(`~/.petdex/pets/`,无 `schema` 字段)时按该行序自动映射,无需转换;
-- 状态行的启用节奏:running-left / running-right / review 已在 M4 启用(见「M4 规划」);waving 仍未接事件,后续按需;
+- 状态行的启用节奏:running-left / running-right / review / waving 已分别在 M4(拖拽方向/review/点击反馈)启用;tired / sleep 为 M5 时长显示态,无独立素材行,前端 resolveAnim 回退 running / idle;
 - 启动扫描 `~/.kimi-code/pets/`,可选兼容扫描 `~/.petdex/pets/`;
 - 内置 Kimi 官方形象打包进应用资源,作为默认宠物(`source: "builtin"`);
 - pet.json 写盘遵循仓库原子写约定(临时文件 + 替换)。
@@ -139,10 +156,11 @@ pet.json(schema `kimi-desktop-pet/1`):
 - M1:悬浮窗 + 内置宠物 idle 动画 + 设置开关(不接事件,可拖动);
 - M2:状态机 + WS 事件驱动(含 tool-call 脉冲、节流);
 - M3:宠物目录扫描与切换、petdex 目录兼容;
-- M4:方向拖拽动画(running-left/right)+ review 状态 + 工具差异化反应(pet:tool 脉冲)+ 台词气泡 + 点击交互(见上节);
-- M5:右键菜单(换宠物/点击穿透/隐藏桌宠)+ 点击穿透(见「M5 实现要点」)。
+- M4:方向拖拽动画(running-left/right)+ review 状态 + 工具差异化反应(pet:tool 脉冲)+ 台词气泡 + 点击交互(见「M4 实现要点」);
+- M5:右键菜单(换宠物/点击穿透/隐藏桌宠)+ 点击穿透 + 悬浮菜单(会话列表/钉选/快捷导航/跳会话)+ 信息气泡(pet:bubble:turn 概要/审批详情/配额提醒)+ 小跟班 overlay(pet:minions)+ 时间维度(tired/sleep)+ 闲置散步 + 单击/双击交互重排(见顶部两节「M5 实现要点」);
+- M6:视觉归一(菜单锚角色头顶 + 尾巴/入场动效 + 气泡归位 + 菜单开着压制气泡 + 动则收菜单,见「M5+M6 实现要点」)。
 
-## M4 规划(2026-08-18 定稿)
+## M4 实现要点(2026-08-18 定稿)
 
 启用三个闲置状态行,触发规则:
 
@@ -192,7 +210,7 @@ pet.json(schema `kimi-desktop-pet/1`):
 **点击交互——waving 行启用,与拖拽共存**:
 
 - 判别顺序:mousedown 只记录起点,**移动超 5px 才 startDragging**(实测:mousedown 立即拖会让 OS 接管手势,webview 收不到 mouseup,点击永远判不出);原位快速松开(< 300ms)判定为点击;
-- 点击反应:waving 行(petdex 行 3,M3 已用微笑行填充)播一遍 + 气泡随机一句回应;
+- 点击反应:waving 行(petdex 行 3,M3 已用微笑行填充)播一遍 + 气泡随机一句回应(M5 P1 起单击语义改为开/关悬浮菜单,waving 反馈保留;双击唤回主窗);
 - 点击 oneshot 播完自动回基底(本地定时器,不等 Rust 事件);拖过则不触发。
 
 **前端显示优先级最终形态**:`dragState(拖拽方向)> localOneshot(waving / tool:* 脉冲)> rustState(waiting > 一次性动作 > review > running > idle)`。本地两层都在 PetWindow 内闭环,Rust 只新增 `pet:tool` 一个事件,主状态机不动。

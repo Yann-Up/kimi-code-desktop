@@ -127,6 +127,15 @@ export interface PetConfig {
   slug: string
   /** 点击穿透:开启后悬浮窗忽略所有鼠标事件(只能到设置页关闭) */
   clickThrough: boolean
+  /** 闲置散步开关(M5 P5,缺省开):idle/sleep 且无小跟班时宠物随机挪动 */
+  wander: boolean
+}
+
+/** 桌宠菜单导航请求(petMenuNavigate 参数 / app:navigate 事件载荷,serde camelCase)。
+ * view 取值与 stores/ui 的 ShellView 同形;sessionId 存在时主窗对话 iframe 跳转该会话 */
+export interface AppNavigateRequest {
+  view?: 'chat' | 'stats' | 'settings' | null
+  sessionId?: string | null
 }
 
 /** 界面皮肤配置(实验性):开启后主页/统计/设置页右侧显示内置立绘(SkinStandee) */
@@ -141,7 +150,8 @@ export interface SkinConfig {
 }
 
 /** 桌宠状态(pet:state 事件载荷;M2 起由 Rust 侧状态机驱动)。
- * running-left/running-right 仅前端拖拽时本地使用,Rust 不 emit */
+ * running-left/running-right 仅前端拖拽/散步时本地使用,Rust 不 emit;
+ * tired/sleep 是 M5 P5 时长显示态(素材未声明时 resolveAnim 分别回退 running/idle) */
 export type PetState =
   | 'idle'
   | 'running'
@@ -149,6 +159,8 @@ export type PetState =
   | 'jumping'
   | 'failed'
   | 'review'
+  | 'tired'
+  | 'sleep'
   | 'running-left'
   | 'running-right'
 
@@ -186,6 +198,18 @@ export interface PetInfo {
   name: string
   /** 来源:builtin / custom / kimi-code / petdex */
   source: string
+}
+
+/** 信息型气泡(pet:bubble 事件载荷;M5 P2:turn 概要/审批详情/配额提醒,
+ * Rust 侧同类 2s 合并、全局 1s 限流) */
+export interface PetBubblePayload {
+  text: string
+  tone: 'info' | 'warn'
+}
+
+/** 小跟班计数(pet:minions 事件载荷;M5 P4:活跃子代理数,变化时广播,归零也发一次) */
+export interface PetMinionsPayload {
+  count: number
 }
 
 /** 单次 API 调用明细(step.end 口径,serde camelCase;ttftMs/streamMs 缺字段时省略) */
@@ -335,10 +359,18 @@ export interface KimiApi {
   petSetEnabled(enabled: boolean): Promise<void>
   /** 点击穿透开关(缺省关):开启后悬浮窗忽略所有鼠标事件,只能到设置页关闭 */
   petSetClickThrough(enabled: boolean): Promise<void>
+  /** 闲置散步开关(M5 P5):持久化并发 pet:config-changed */
+  petSetWander(wander: boolean): Promise<void>
+  /** 闲置散步挪窗(M5 P5):x 方向移动 dx 逻辑像素,Rust 侧 clamp 在屏幕内 */
+  petNudge(dx: number): Promise<void>
   /** 桌宠状态变化(pet:state;仅桌宠窗口使用,M2 接入驱动) */
   onPetState(cb: (state: PetState) => void): Unsubscribe
   /** 工具调用脉冲(pet:tool,载荷 {kind};M4 起驱动差异化动作与气泡文案,同类 1s 节流) */
   onPetTool(cb: (kind: string) => void): Unsubscribe
+  /** 信息型气泡(pet:bubble,载荷 {text, tone};M5 P2:turn 概要/审批详情/配额提醒) */
+  onPetBubble(cb: (p: PetBubblePayload) => void): Unsubscribe
+  /** 活跃子代理计数(pet:minions,载荷 {count};M5 P4:驱动主宠两侧的小跟班 overlay) */
+  onPetMinions(cb: (p: PetMinionsPayload) => void): Unsubscribe
   /** 桌宠配置变化(pet:config-changed;切换开关/宠物后同步其他页面) */
   onPetConfigChanged(cb: (cfg: PetConfig) => void): Unsubscribe
   /** 宠物列表(内置排第一,外部宠物按目录扫描去重,custom > kimi-code > petdex) */
@@ -349,6 +381,23 @@ export interface KimiApi {
   petActiveGet(): Promise<PetMeta>
   /** 切换激活宠物:校验 slug 存在后持久化并发 pet:config-changed */
   petSetActive(slug: string): Promise<void>
+  /** 唤回主窗(unminimize+show+focus;桌宠双击调用,主窗可见时等价聚焦) */
+  petRestoreMain(): Promise<void>
+  /** 悬浮菜单开关(M5 P3):可见则收起,否则锚角色头顶展开 */
+  petMenuToggle(): Promise<void>
+  /** 收起悬浮菜单(hide 不 close,保留状态;失焦/选中后调用;菜单未开时幂等 no-op) */
+  petMenuHide(): Promise<void>
+  /** 菜单可见性变化(pet:menu-visible,载荷 {visible};M6:PetWindow 据此压制气泡,
+   * 菜单开着期间新气泡丢弃、已显示的立即清除) */
+  onPetMenuVisible(cb: (visible: boolean) => void): Unsubscribe
+  /** 悬浮菜单快捷入口:唤回主窗并广播 app:navigate(切 view / 跳会话) */
+  petMenuNavigate(req?: AppNavigateRequest): Promise<void>
+  /** 主窗导航请求(app:navigate;桌宠菜单快捷行/会话行触发,仅主窗监听) */
+  onAppNavigate(cb: (req: AppNavigateRequest) => void): Unsubscribe
+  /** 钉选会话切换:返回切换后的完整列表(新的在前,持久化) */
+  petMenuPinToggle(sessionId: string): Promise<string[]>
+  /** 当前钉选的会话 id 列表(缺省空数组) */
+  petMenuPinsGet(): Promise<string[]>
 
   // skin(界面皮肤,实验性)
   /** 皮肤配置(enabled 缺省关) */

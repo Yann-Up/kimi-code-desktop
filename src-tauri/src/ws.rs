@@ -28,6 +28,9 @@ use crate::server::ServerInfo;
 
 /// 会话枚举周期:新会话最迟一个周期内被订阅(协议无通配符订阅,只能逐会话)
 const ENUMERATE_INTERVAL: Duration = Duration::from_secs(30);
+/// M5 P2 配额提醒轮询周期(前端 QuotaStrip 的刷新间隔是 localStorage 值,Rust
+/// 拿不到,固定 5min;提醒本体按档位每自然日只发一次,轮询频率不直接影响打扰)
+const QUOTA_POLL_INTERVAL: Duration = Duration::from_secs(300);
 /// 通知去重集合容量上限,超出即整体清空(有界,防长期运行无界增长)
 const NOTIFY_DEDUP_CAP: usize = 256;
 
@@ -104,6 +107,18 @@ impl WsClient {
                 }
                 this.enumerate_sessions().await;
                 tokio::time::sleep(ENUMERATE_INTERVAL).await;
+            }
+        });
+        // M5 P2 配额提醒轮询:复用本代次的 RestClient(token 不出主进程);
+        // 服务停止 close 后退出,请求失败(服务没跑/未登录)静默跳过
+        let this = Arc::clone(self);
+        tokio::spawn(async move {
+            loop {
+                if this.closed.load(Ordering::SeqCst) {
+                    return;
+                }
+                this.quota_check().await;
+                tokio::time::sleep(QUOTA_POLL_INTERVAL).await;
             }
         });
     }
@@ -408,6 +423,38 @@ impl WsClient {
             if let Some(sid) = sid {
                 self.subscribe(sid, None).await;
             }
+        }
+    }
+
+    /// M5 P2:轮询 /api/v1/oauth/usage,取 summary/limits 各窗口用量占比的最大值
+    /// 交给 pet::quota_remind 按阈值提醒(每档每自然日一次);失败静默跳过
+    async fn quota_check(&self) {
+        let Ok(data) = self
+            .rest
+            .request(Some("GET"), "/api/v1/oauth/usage", None, None)
+            .await
+        else {
+            return;
+        };
+        // 响应结构与前端 QuotaStrip 对齐:{kind:"ok", summary, limits:[{used, limit, ...}]}
+        let mut max_pct = 0.0f64;
+        let mut consider = |w: &Value| {
+            let used = w.get("used").and_then(|v| v.as_f64()).unwrap_or(0.0);
+            let limit = w.get("limit").and_then(|v| v.as_f64()).unwrap_or(0.0);
+            if limit > 0.0 {
+                max_pct = max_pct.max(used / limit * 100.0);
+            }
+        };
+        if let Some(summary) = data.get("summary") {
+            consider(summary);
+        }
+        if let Some(limits) = data.get("limits").and_then(|v| v.as_array()) {
+            for w in limits {
+                consider(w);
+            }
+        }
+        if max_pct > 0.0 {
+            crate::pet::quota_remind(&self.app, max_pct);
         }
     }
 

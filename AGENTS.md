@@ -16,7 +16,7 @@ Kimi Code Desktop:基于 [Kimi Code CLI](https://github.com/moonshotai/kimi-code
 
 ```
 src/                    渲染进程(React)
-  components/           壳组件:ShellHome(三 tab 主页)/ QuotaStrip / TitleBar / SkinStandee(实验性皮肤立绘,设置/统计/主页透出) / settings/ / pet/(桌宠窗口)
+  components/           壳组件:ShellHome(三 tab 主页)/ QuotaStrip / TitleBar / SkinStandee(实验性皮肤立绘,设置/统计/主页透出) / settings/ / pet/(桌宠窗口 PetWindow + 悬浮菜单 PetMenu)
   pages/                Onboarding / Settings / stats
   platform/kimi-api.ts  壳与渲染层的 API 契约(window.kimiApi)
   platform/tauri.ts     契约的 Tauri 实现(invoke / 事件监听)
@@ -29,7 +29,7 @@ src-tauri/src/          Rust 后端
   ssh.rs                进程内 SSH 客户端与端口转发
   config.rs / local_store.rs / target.rs   配置、本地数据直读、运行目标(本机/WSL/SSH)
   skin.rs               用户自选皮肤(实验性):扫描 <config_dir>/skins 下的 png/webp/jpg,经 skin:// 自定义协议供图;内置皮肤注册表在前端(src/components/skins.ts,构建时扫描 src/assets/skins);开关与选中存 desktop-config.json 的 skin_enabled/skin_slug,立绘渲染见 SkinStandee;对话页内透出(skin_in_chat):主窗口 initialization_script_for_all_frames 注入 assets/chat_skin_inject.js(仅回环源子框架生效,内含 origin 守卫),壳侧桥接见 src/components/chatSkinBridge.ts(postMessage 协议:ready/cfg,素材经壳 fetch 转 dataURL 投递),不碰 dist-web、官方升级零影响
-  pet.rs                桌宠悬浮窗(实验性):透明置顶小窗 + 状态机(ws.rs 事件驱动);内置宠物注册表 builtin_pets()(素材 src/assets/pets/<slug>/),并扫描 <config_dir>/pets(custom,导入落点,与 skins 同级;后续"自定义存储路径"随 config::config_dir 一并切换)、<kimi_home>/pets(兼容旧布局)与 ~/.petdex/pets(兼容 kimi-pet.v0/petdex 布局),外部精灵图经 pet:// 自定义协议供图;右键唤前端自绘菜单(换宠物悬停子菜单/点击穿透/隐藏,PetWindow 内渲染,动作直调 petSet* 命令,失焦/Esc 关闭);支持设置页导入 zip 宠物包(pet::import_zip 解压校验到 <config_dir>/pets);开关存 desktop-config.json 的 pet_enabled/pet_slug/pet_click_through(穿透开启后窗口忽略鼠标,只能到设置页关闭)
+  pet.rs                桌宠悬浮窗(实验性):透明置顶小窗 + 状态机(ws.rs 事件驱动);内置宠物注册表 builtin_pets()(素材 src/assets/pets/<slug>/),并扫描 <config_dir>/pets(custom,导入落点,与 skins 同级;后续"自定义存储路径"随 config::config_dir 一并切换)、<kimi_home>/pets(兼容旧布局)与 ~/.petdex/pets(兼容 kimi-pet.v0/petdex 布局),外部精灵图经 pet:// 自定义协议供图;右键唤前端自绘菜单(换宠物悬停子菜单/点击穿透/隐藏,PetWindow 内渲染,动作直调 petSet* 命令,失焦/Esc 关闭);支持设置页导入 zip 宠物包(pet::import_zip 解压校验到 <config_dir>/pets);开关存 desktop-config.json 的 pet_enabled/pet_slug/pet_click_through(穿透开启后窗口忽略鼠标,只能到设置页关闭);M5+M6 扩展:pet-menu 悬浮菜单窗(label pet-menu,失焦 hide 收起;单击开关菜单、双击唤回主窗 pet_restore_main)、pet:bubble/pet:minions/pet:menu-visible 事件(turn 概要/审批详情/配额提醒、活跃子代理计数、菜单开着压制气泡)、tired/sleep 时长显示态、闲置散步(pet_wander 配置 + pet_nudge 挪窗)、pet_menu_* 系列命令(钉选存 menu_pinned_sessions)
   updater.rs            应用自动更新(tauri-plugin-updater + 静态 latest.json,minisign 签名校验):app_update_check/app_update_install 命令 + 启动延迟静默自检(dev 跳过);双下载源按序回退——CNB 镜像优先(cnb.cool 仓 updater 分支的 latest.json raw 链接)、GitHub Releases 兜底,check 外包 15s tokio 超时(不能用 UpdaterBuilder::timeout,它会同时掐断 download);签名公钥在 tauri.conf.json plugins.updater.pubkey,私钥 ~/.tauri/kimi-desktop.key 不入库(CI 走 TAURI_SIGNING_PRIVATE_KEY secret);发版见 .github/workflows/release.yml(push v* tag → 草稿 Release),正式发布(published)后 .github/workflows/sync-cnb.yml 自动把 tag 与 CNB 版 latest.json 同步到 CNB 镜像仓(CNB 仓 .cnb.yml 流水线建 Release 并回传安装器附件 setup.exe + msi;需 CNB_TOKEN secret,权限 repo-code 读写)
 build/                  图标等资源;design/ 设计稿;docs/ 评审与跟踪文档;out/renderer 前端构建产物
 ```

@@ -7,13 +7,16 @@ import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import type {
   ApiCallsResult,
+  AppNavigateRequest,
   AppUpdateInfo,
   AppUpdateProgress,
   ChannelsState,
   KimiApi,
+  PetBubblePayload,
   PetConfig,
   PetInfo,
   PetMeta,
+  PetMinionsPayload,
   PetState,
   ServerErrorInfo,
   ServerReadyInfo,
@@ -132,13 +135,26 @@ const api: KimiApi = {
   petSetEnabled: (enabled) => invoke('pet_set_enabled', { enabled }),
   /** 点击穿透开关:持久化并即时应用到悬浮窗 */
   petSetClickThrough: (enabled) => invoke('pet_set_click_through', { enabled }),
+  petSetWander: (wander) => invoke('pet_set_wander', { wander }),
+  petNudge: (dx) => invoke('pet_nudge', { dx }),
   onPetState: (cb) => on<PetState>('pet:state', cb),
   onPetTool: (cb) => on<{ kind: string }>('pet:tool', (p) => cb(p.kind)),
+  onPetBubble: (cb) => on<PetBubblePayload>('pet:bubble', cb),
+  onPetMinions: (cb) => on<PetMinionsPayload>('pet:minions', cb),
   onPetConfigChanged: (cb) => on<PetConfig>('pet:config-changed', cb),
   petList: () => invoke<PetInfo[]>('pet_list'),
   petImportZip: (name, bytes) => invoke<PetInfo>('pet_import_zip', { name, bytes }),
   petActiveGet: () => invoke<PetMeta>('pet_active_get'),
   petSetActive: (slug) => invoke('pet_set_active', { slug }),
+  petRestoreMain: () => invoke('pet_restore_main'),
+  petMenuToggle: () => invoke('pet_menu_toggle'),
+  petMenuHide: () => invoke('pet_menu_hide'),
+  onPetMenuVisible: (cb) => on<{ visible: boolean }>('pet:menu-visible', (p) => cb(p.visible)),
+  petMenuNavigate: (req) =>
+    invoke('pet_menu_navigate', { view: req?.view ?? null, sessionId: req?.sessionId ?? null }),
+  onAppNavigate: (cb) => on<AppNavigateRequest>('app:navigate', cb),
+  petMenuPinToggle: (sessionId) => invoke<string[]>('pet_menu_pin_toggle', { sessionId }),
+  petMenuPinsGet: () => invoke<string[]>('pet_menu_pins_get'),
 
   // skin
   skinConfigGet: () => invoke<SkinConfig>('skin_config_get'),

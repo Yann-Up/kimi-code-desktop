@@ -142,6 +142,37 @@ body,
     transform: scale(1);
   }
 }
+
+/* 桌宠小跟班(M5 P4):上下轻浮动;交错节奏由 PetWindow 内联 animation-delay 控制 */
+@keyframes pet-minion-bob {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-6px);
+  }
+}
+
+.pet-minion-bob {
+  animation: pet-minion-bob 1.6s ease-in-out infinite;
+}
+
+/* 桌宠台词气泡(M6):入场轻微上浮 + 淡入,与悬浮菜单生长动效同一语言 */
+@keyframes pet-bubble-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.pet-bubble-in {
+  animation: pet-bubble-in 100ms ease-out;
+}
 .logo-breathe {
   animation: logo-breathe 1.6s ease-in-out infinite;
 }

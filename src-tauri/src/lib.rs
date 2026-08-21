@@ -664,20 +664,21 @@ async fn web_server_set(
     Ok(web_server_get(app))
 }
 
-/// 桌宠配置载荷(enabled/slug/clickThrough),pet_config_get 返回值与 pet:config-changed 载荷共用
-fn pet_config_json(app: &AppHandle) -> Value {
-    let cfg = config::load(app);
+/// 桌宠配置载荷(enabled/slug/clickThrough/wander),pet_config_get 返回值与 pet:config-changed 载荷共用
+fn pet_config_json(cfg: &config::DesktopConfig) -> Value {
     json!({
         "enabled": cfg.pet_enabled.unwrap_or(false),
         "slug": cfg.pet_slug.clone().unwrap_or_else(|| pet::BUILTIN_SLUG.to_string()),
         "clickThrough": cfg.pet_click_through.unwrap_or(false),
+        "wander": cfg.pet_wander.unwrap_or(true),
     })
 }
 
-/// 桌宠配置(实验性):enabled 缺省关;slug 为当前激活宠物(缺省 "kimi" 即内置)
+/// 桌宠配置(实验性):enabled 缺省关;slug 为当前激活宠物(缺省 "kimi" 即内置);
+/// clickThrough 点击穿透缺省关;wander 闲置散步缺省开(桌宠 M5 P5)
 #[tauri::command]
 fn pet_config_get(app: AppHandle) -> Value {
-    pet_config_json(&app)
+    pet_config_json(&config::load(&app))
 }
 
 /// 开关桌宠:持久化到 desktop-config.json 并即时创建/销毁悬浮窗。
@@ -694,7 +695,7 @@ async fn pet_set_enabled(app: AppHandle, enabled: bool) -> Result<(), String> {
         pet::hide(&app);
     }
     // 广播配置变化:右键菜单/其他页面改配置后,各窗口都能同步(载荷为完整 PetConfig)
-    let _ = app.emit("pet:config-changed", pet_config_json(&app));
+    let _ = app.emit("pet:config-changed", pet_config_json(&cfg));
     Ok(())
 }
 
@@ -706,8 +707,95 @@ async fn pet_set_click_through(app: AppHandle, enabled: bool) -> Result<(), Stri
     cfg.pet_click_through = Some(enabled);
     config::save(&app, &cfg)?;
     pet::apply_click_through(&app, enabled);
-    let _ = app.emit("pet:config-changed", pet_config_json(&app));
+    let _ = app.emit("pet:config-changed", pet_config_json(&cfg));
     Ok(())
+}
+
+/// 闲置散步开关(桌宠 M5 P5):只持久化并广播 pet:config-changed,不建窗,sync 即可
+#[tauri::command]
+fn pet_set_wander(app: AppHandle, wander: bool) -> Result<(), String> {
+    let mut cfg = config::load(&app);
+    cfg.pet_wander = Some(wander);
+    config::save(&app, &cfg)?;
+    let _ = app.emit("pet:config-changed", pet_config_json(&cfg));
+    Ok(())
+}
+
+/// 闲置散步挪窗(桌宠 M5 P5):x 方向移动 dx 逻辑像素(y 不动),
+/// clamp 在宠物所在显示器范围内。必须 async(窗口操作依赖主线程事件循环)
+#[tauri::command]
+async fn pet_nudge(app: AppHandle, dx: f64) -> Result<(), String> {
+    let Some(w) = app.get_webview_window(pet::PET_WINDOW_LABEL) else {
+        return Ok(());
+    };
+    let pos = w.outer_position().map_err(|e| e.to_string())?;
+    let size = w.outer_size().map_err(|e| e.to_string())?;
+    let scale = w.scale_factor().unwrap_or(1.0);
+    let target = pos.x as f64 + dx * scale;
+    let x = match w.current_monitor().ok().flatten() {
+        Some(m) => {
+            let min = m.position().x as f64;
+            let max = m.position().x as f64 + m.size().width as f64 - size.width as f64;
+            target.clamp(min, max.max(min))
+        }
+        None => target,
+    };
+    w.set_position(tauri::PhysicalPosition::new(x as i32, pos.y))
+        .map_err(|e| e.to_string())
+}
+
+/// 桌宠窗口唤回主窗(桌宠 M5 P1):包 restore_main 的 unminimize+show+focus 逻辑,
+/// 供宠物窗/悬浮菜单前端调用。必须 async(窗口操作跑在主线程事件循环上,同步会死锁)。
+#[tauri::command]
+async fn pet_restore_main(app: AppHandle) {
+    restore_main(&app);
+}
+
+/// 悬浮菜单开关(桌宠 M5 P3):菜单可见则收起,否则在宠物上方展开。
+/// 必须 async(建窗依赖主线程事件循环,同步会死锁)。
+#[tauri::command]
+async fn pet_menu_toggle(app: AppHandle) -> Result<(), String> {
+    pet::menu_toggle(&app)
+}
+
+/// 收起悬浮菜单(hide 不 close,保留前端状态;失焦/选中会话后由前端调用)
+#[tauri::command]
+async fn pet_menu_hide(app: AppHandle) {
+    pet::menu_hide(&app);
+}
+
+/// 悬浮菜单快捷入口(桌宠 M5 P3):唤回主窗并广播 app:navigate,
+/// 主窗据此切 view;带 session_id 时对话 iframe 跳转到该会话。
+/// 先 restore 再 emit:主窗被隐藏时 webview 仍存活,listen 一直有效,时序不丢
+#[tauri::command]
+async fn pet_menu_navigate(app: AppHandle, view: Option<String>, session_id: Option<String>) {
+    restore_main(&app);
+    let _ = app.emit(
+        "app:navigate",
+        json!({ "view": view, "sessionId": session_id }),
+    );
+}
+
+/// 钉选会话切换(桌宠 M5 P3):load→toggle→原子写,返回新数组(新的在前)。
+/// 不建窗,sync 即可
+#[tauri::command]
+fn pet_menu_pin_toggle(app: AppHandle, session_id: String) -> Result<Vec<String>, String> {
+    let mut cfg = config::load(&app);
+    let mut pins = cfg.menu_pinned_sessions.unwrap_or_default();
+    if let Some(pos) = pins.iter().position(|p| p == &session_id) {
+        pins.remove(pos);
+    } else {
+        pins.insert(0, session_id);
+    }
+    cfg.menu_pinned_sessions = Some(pins.clone());
+    config::save(&app, &cfg)?;
+    Ok(pins)
+}
+
+/// 钉选会话列表(桌宠 M5 P3;缺省空数组)
+#[tauri::command]
+fn pet_menu_pins_get(app: AppHandle) -> Vec<String> {
+    config::load(&app).menu_pinned_sessions.unwrap_or_default()
 }
 
 /// 宠物列表(M3):内置注册表在前,其后为扫描到的外部宠物(kimi-code 目录优先于 petdex)。
@@ -747,7 +835,7 @@ fn pet_set_active(app: AppHandle, slug: String) -> Result<(), String> {
     let mut cfg = config::load(&app);
     cfg.pet_slug = Some(slug);
     config::save(&app, &cfg)?;
-    let _ = app.emit("pet:config-changed", pet_config_json(&app));
+    let _ = app.emit("pet:config-changed", pet_config_json(&cfg));
     Ok(())
 }
 
@@ -1537,10 +1625,18 @@ pub fn run() {
             pet_config_get,
             pet_set_enabled,
             pet_set_click_through,
+            pet_set_wander,
+            pet_nudge,
             pet_list,
             pet_import_zip,
             pet_active_get,
             pet_set_active,
+            pet_restore_main,
+            pet_menu_toggle,
+            pet_menu_hide,
+            pet_menu_navigate,
+            pet_menu_pin_toggle,
+            pet_menu_pins_get,
             skin_config_get,
             skin_set_enabled,
             skin_set_active,

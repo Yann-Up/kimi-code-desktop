@@ -17,6 +17,8 @@ export function DesktopExperimentalSettings() {
   const [petOptions, setPetOptions] = useState<PetInfo[]>([])
   // 点击穿透:开启后桌宠忽略鼠标事件(无法拖动/右键,只能回本页关闭)
   const [petClickThrough, setPetClickThrough] = useState(false)
+  // 闲置散步开关(桌宠 M5 P5,缺省开)
+  const [petWander, setPetWander] = useState(true)
   // 皮肤立绘:开关状态、当前皮肤 slug(null = 注册表第一个)与写入中标记
   const [skinEnabled, setSkinEnabled] = useState(false)
   const [skinSlug, setSkinSlug] = useState<string | null>(null)
@@ -36,6 +38,7 @@ export function DesktopExperimentalSettings() {
         setPetEnabled(c.enabled)
         setPetSlug(c.slug)
         setPetClickThrough(c.clickThrough)
+        setPetWander(c.wander)
       })
       .catch(() => {})
     // 其他页面/窗口改桌宠配置后,同步本页开关与激活宠物
@@ -43,6 +46,7 @@ export function DesktopExperimentalSettings() {
       setPetEnabled(c.enabled)
       setPetSlug(c.slug)
       setPetClickThrough(c.clickThrough)
+      setPetWander(c.wander)
     })
     window.kimiApi
       .skinConfigGet()
@@ -225,6 +229,40 @@ export function DesktopExperimentalSettings() {
               <span
                 className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-all ${
                   petClickThrough ? 'left-[22px]' : 'left-0.5'
+                }`}
+              />
+            </button>
+          </div>
+        )}
+        {/* 闲置散步(桌宠 M5 P5):开关写 desktop-config.json 的 pet_wander,
+            桌宠窗经 pet:config-changed 即时启停散步定时器 */}
+        {petEnabled && (
+          <div className="mt-3 flex items-center justify-between gap-3 border-t border-border pt-3">
+            <div className="min-w-0">
+              <p className="text-[13.5px] font-medium">闲置时四处走动</p>
+              <p className="text-[12px] text-text-tertiary">
+                空闲时宠物会在屏幕上随机溜达,来活了就停下
+              </p>
+            </div>
+            <button
+              className={`relative h-6 w-11 shrink-0 rounded-full transition-colors ${
+                petWander ? 'bg-primary' : 'bg-border'
+              } disabled:opacity-50`}
+              disabled={petBusy}
+              onClick={() => {
+                const next = !petWander
+                setPetBusy(true)
+                setPetError('')
+                window.kimiApi
+                  .petSetWander(next)
+                  .then(() => setPetWander(next))
+                  .catch((e) => setPetError(e instanceof Error ? e.message : String(e)))
+                  .finally(() => setPetBusy(false))
+              }}
+            >
+              <span
+                className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-all ${
+                  petWander ? 'left-[22px]' : 'left-0.5'
                 }`}
               />
             </button>

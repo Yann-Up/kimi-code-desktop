@@ -27,6 +27,8 @@ interface UiState {
   onboardingMode: OnboardingMode
   /** 打开向导时预选的目标(占位页点 WSL/SSH 时带入),null=从选择步骤开始 */
   onboardingTarget: ConnectionTargetConfig['target'] | null
+  /** 桌宠悬浮菜单(M5 P3)请求主窗对话 iframe 跳转的会话 id;WebFrame 消费后清空 */
+  pendingSessionFocus: string | null
   /** 额度条自动刷新间隔(秒,0=关闭;持久化 localStorage,默认 60) */
   quotaRefreshSecs: number
   /** 设置页字体缩放(百分比,100=标准;持久化 localStorage,经 CSS zoom 生效) */
@@ -56,6 +58,7 @@ interface UiState {
   setChannelRunning: (id: string, running: boolean) => void
   openOnboarding: (t?: ConnectionTargetConfig['target'], mode?: OnboardingMode) => void
   closeOnboarding: () => void
+  setPendingSessionFocus: (id: string | null) => void
 }
 
 export const useUi = create<UiState>((set) => ({
@@ -67,6 +70,7 @@ export const useUi = create<UiState>((set) => ({
   onboardingOpen: false,
   onboardingMode: 'switch',
   onboardingTarget: null,
+  pendingSessionFocus: null,
   appUpdate: null,
   appInstalling: false,
   appProgress: null,
@@ -123,5 +127,6 @@ export const useUi = create<UiState>((set) => ({
     })),
   openOnboarding: (t, mode) =>
     set({ onboardingOpen: true, onboardingTarget: t ?? null, onboardingMode: mode ?? 'switch' }),
-  closeOnboarding: () => set({ onboardingOpen: false, onboardingTarget: null })
+  closeOnboarding: () => set({ onboardingOpen: false, onboardingTarget: null }),
+  setPendingSessionFocus: (id) => set({ pendingSessionFocus: id })
 }))
