@@ -1,6 +1,6 @@
 {
   "name": "kimi-desktop-next",
-  "version": "0.4.3",
+  "version": "0.4.4",
   "description": "Desktop client for Kimi Code CLI (kimi web backend)",
   "license": "MIT",
   "scripts": {
