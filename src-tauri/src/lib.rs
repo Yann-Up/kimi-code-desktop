@@ -664,10 +664,20 @@ async fn web_server_set(
     Ok(web_server_get(app))
 }
 
+/// 桌宠配置载荷(enabled/slug/clickThrough),pet_config_get 返回值与 pet:config-changed 载荷共用
+fn pet_config_json(app: &AppHandle) -> Value {
+    let cfg = config::load(app);
+    json!({
+        "enabled": cfg.pet_enabled.unwrap_or(false),
+        "slug": cfg.pet_slug.clone().unwrap_or_else(|| pet::BUILTIN_SLUG.to_string()),
+        "clickThrough": cfg.pet_click_through.unwrap_or(false),
+    })
+}
+
 /// 桌宠配置(实验性):enabled 缺省关;slug 为当前激活宠物(缺省 "kimi" 即内置)
 #[tauri::command]
 fn pet_config_get(app: AppHandle) -> Value {
-    json!({ "enabled": pet::enabled(&app), "slug": pet::active_slug(&app) })
+    pet_config_json(&app)
 }
 
 /// 开关桌宠:持久化到 desktop-config.json 并即时创建/销毁悬浮窗。
@@ -683,11 +693,20 @@ async fn pet_set_enabled(app: AppHandle, enabled: bool) -> Result<(), String> {
     } else {
         pet::hide(&app);
     }
-    // 广播配置变化:右键关宠等路径也能让设置页开关保持同步(载荷为完整 PetConfig)
-    let _ = app.emit(
-        "pet:config-changed",
-        json!({ "enabled": enabled, "slug": pet::active_slug(&app) }),
-    );
+    // 广播配置变化:右键菜单/其他页面改配置后,各窗口都能同步(载荷为完整 PetConfig)
+    let _ = app.emit("pet:config-changed", pet_config_json(&app));
+    Ok(())
+}
+
+/// 开关点击穿透:持久化并即时应用到已存在的悬浮窗(建窗时 pet::show 会按配置补齐)。
+/// 异步:窗口操作遵守上述 async 约定
+#[tauri::command]
+async fn pet_set_click_through(app: AppHandle, enabled: bool) -> Result<(), String> {
+    let mut cfg = config::load(&app);
+    cfg.pet_click_through = Some(enabled);
+    config::save(&app, &cfg)?;
+    pet::apply_click_through(&app, enabled);
+    let _ = app.emit("pet:config-changed", pet_config_json(&app));
     Ok(())
 }
 
@@ -698,6 +717,13 @@ fn pet_list() -> Vec<pet::PetInfo> {
     let mut list: Vec<pet::PetInfo> = pet::builtin_pets().iter().map(|p| p.info()).collect();
     list.extend(pet::scan_pets().into_iter().map(|p| p.info()));
     list
+}
+
+/// 导入宠物包(设置页"导入 zip"):bytes 为 zip 文件内容,解压校验到 kimi_home/pets/<slug>。
+/// 只读盘/写盘,不建窗,sync 即可
+#[tauri::command]
+fn pet_import_zip(name: String, bytes: Vec<u8>) -> Result<pet::PetInfo, String> {
+    pet::import_zip(&name, &bytes)
 }
 
 /// 当前激活宠物完整元信息(M3):按 desktop-config.json 的 pet_slug 在扫描结果里找,
@@ -719,12 +745,9 @@ fn pet_set_active(app: AppHandle, slug: String) -> Result<(), String> {
         return Err(format!("宠物不存在: {slug}"));
     }
     let mut cfg = config::load(&app);
-    cfg.pet_slug = Some(slug.clone());
+    cfg.pet_slug = Some(slug);
     config::save(&app, &cfg)?;
-    let _ = app.emit(
-        "pet:config-changed",
-        json!({ "enabled": cfg.pet_enabled.unwrap_or(false), "slug": slug }),
-    );
+    let _ = app.emit("pet:config-changed", pet_config_json(&app));
     Ok(())
 }
 
@@ -1464,6 +1487,9 @@ pub fn run() {
                 Some((bytes, mime)) => tauri::http::Response::builder()
                     .status(200)
                     .header("Content-Type", mime)
+                    // 壳侧 fetch(skin.url) 转 dataURL 属跨源请求,需 ACAO(同 pet 协议);
+                    // <img> 直引不受 CORS 限制,故主页/设置页立绘不受影响
+                    .header("Access-Control-Allow-Origin", "*")
                     .body(bytes)
                     .expect("skin 协议响应构建失败"),
                 None => err(404),
@@ -1510,7 +1536,9 @@ pub fn run() {
             web_server_set,
             pet_config_get,
             pet_set_enabled,
+            pet_set_click_through,
             pet_list,
+            pet_import_zip,
             pet_active_get,
             pet_set_active,
             skin_config_get,

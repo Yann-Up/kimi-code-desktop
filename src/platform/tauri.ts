@@ -130,10 +130,13 @@ const api: KimiApi = {
   // pet
   petConfigGet: () => invoke<PetConfig>('pet_config_get'),
   petSetEnabled: (enabled) => invoke('pet_set_enabled', { enabled }),
+  /** 点击穿透开关:持久化并即时应用到悬浮窗 */
+  petSetClickThrough: (enabled) => invoke('pet_set_click_through', { enabled }),
   onPetState: (cb) => on<PetState>('pet:state', cb),
   onPetTool: (cb) => on<{ kind: string }>('pet:tool', (p) => cb(p.kind)),
   onPetConfigChanged: (cb) => on<PetConfig>('pet:config-changed', cb),
   petList: () => invoke<PetInfo[]>('pet_list'),
+  petImportZip: (name, bytes) => invoke<PetInfo>('pet_import_zip', { name, bytes }),
   petActiveGet: () => invoke<PetMeta>('pet_active_get'),
   petSetActive: (slug) => invoke('pet_set_active', { slug }),
 

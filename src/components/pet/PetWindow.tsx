@@ -5,9 +5,10 @@
  * M4 显示优先级:dragState(拖拽方向)> oneshot(点击 waving / pet:tool 脉冲)> rustState(状态机)。
  * 前两层是本地状态,不进 Rust;气泡为纯前端文本层,与动画解耦。
  */
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { getCurrentWindow } from '@tauri-apps/api/window'
-import type { PetMeta, PetState } from '@/platform/kimi-api'
+import { Check, ChevronRight, EyeOff, MousePointerClick, PawPrint } from 'lucide-react'
+import type { PetConfig, PetInfo, PetMeta, PetState } from '@/platform/kimi-api'
 
 /** 内置宠物精灵图注册表:slug → 打包资源 URL(src/assets/pets/<slug>/spritesheet.{png,webp}) */
 const BUILTIN_SHEETS: Record<string, string> = Object.fromEntries(
@@ -89,9 +90,19 @@ export function PetWindow() {
   const [bubble, setBubble] = useState<string | null>(null)
   // 当前激活宠物的元信息;未加载到时渲染空容器(不报错、不画图)
   const [meta, setMeta] = useState<PetMeta | null>(null)
+  // 桌宠配置(右键菜单的点击穿透勾选项与激活宠物高亮用)
+  const [petCfg, setPetCfg] = useState<PetConfig | null>(null)
+  // 右键菜单(M5,前端自绘):menuAt 为目标位置(null 关闭),menuPos 为实测收边后的落位(null=测量中,先隐藏防闪)
+  const [menuAt, setMenuAt] = useState<{ x: number; y: number } | null>(null)
+  const [menuPos, setMenuPos] = useState<{ x: number; y: number } | null>(null)
+  // 换宠物子菜单(悬停浮出);subTimer 做 200ms 延迟关闭,给鼠标移向子菜单留余量
+  const [subOpen, setSubOpen] = useState(false)
+  const [petOptions, setPetOptions] = useState<PetInfo[]>([])
 
   const metaRef = useRef<PetMeta | null>(null)
   metaRef.current = meta
+  const menuRef = useRef<HTMLDivElement>(null)
+  const subTimer = useRef(0)
   const oneshotTimer = useRef(0)
   const bubbleTimer = useRef(0)
   const dragEndTimer = useRef(0)
@@ -143,7 +154,7 @@ export function PetWindow() {
     })
   }, [triggerOneshot])
 
-  // M3:加载激活宠物元信息;设置页切换宠物(petSetActive 发 pet:config-changed)后重载
+  // M3:加载激活宠物元信息与配置;设置页/右键菜单改配置(pet:config-changed)后重载
   useEffect(() => {
     const reload = () => {
       window.kimiApi
@@ -152,8 +163,71 @@ export function PetWindow() {
         .catch(() => {})
     }
     reload()
-    return window.kimiApi.onPetConfigChanged(reload)
+    window.kimiApi
+      .petConfigGet()
+      .then(setPetCfg)
+      .catch(() => {})
+    return window.kimiApi.onPetConfigChanged((c) => {
+      setPetCfg(c)
+      reload()
+    })
   }, [])
+
+  // 右键菜单打开时刷新宠物列表(外部宠物目录可能变动);关闭时清空收边落位
+  useEffect(() => {
+    if (!menuAt) return
+    window.kimiApi
+      .petList()
+      .then(setPetOptions)
+      .catch(() => {})
+  }, [menuAt])
+
+  // 菜单收边:窗口只有 240x250,按实测尺寸把菜单夹回窗口内(先隐藏测量再落位)
+  useLayoutEffect(() => {
+    if (!menuAt || !menuRef.current) return
+    const r = menuRef.current.getBoundingClientRect()
+    setMenuPos({
+      x: Math.max(4, Math.min(menuAt.x, window.innerWidth - r.width - 4)),
+      y: Math.max(4, Math.min(menuAt.y, window.innerHeight - r.height - 4))
+    })
+  }, [menuAt, petOptions])
+
+  const closeMenu = useCallback(() => {
+    setMenuAt(null)
+    setMenuPos(null)
+    setSubOpen(false)
+  }, [])
+
+  /** 悬停进"换宠物"项或子菜单本体时保持打开 */
+  const openSub = useCallback(() => {
+    window.clearTimeout(subTimer.current)
+    setSubOpen(true)
+  }, [])
+  /** 移出后 200ms 缓冲再关,给鼠标平移到子菜单留时间(仿原生子菜单手感) */
+  const closeSubSoon = useCallback(() => {
+    window.clearTimeout(subTimer.current)
+    subTimer.current = window.setTimeout(() => setSubOpen(false), 200)
+  }, [])
+  /** 悬停到主菜单其他项时立即收起子菜单 */
+  const closeSubNow = useCallback(() => {
+    window.clearTimeout(subTimer.current)
+    setSubOpen(false)
+  }, [])
+
+  // 自绘菜单补原生行为:窗口失焦(点了桌面其他地方)或按 Esc 时关闭菜单
+  useEffect(() => {
+    const un = getCurrentWindow().onFocusChanged(({ payload: focused }) => {
+      if (!focused) closeMenu()
+    })
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') closeMenu()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => {
+      void un.then((off) => off())
+      window.removeEventListener('keydown', onKey)
+    }
+  }, [closeMenu])
 
   // M4 拖拽方向:onMoved 在 OS 拖拽期间持续触发,比较相邻 dx;
   // startDragging 后 webview 不一定收得到 mouseup,停手检测用定时器兜底
@@ -264,7 +338,7 @@ export function PetWindow() {
       className="relative flex h-full w-full items-end justify-center"
       // 点击/拖拽判别(M4):mousedown 只记录起点;移动超 CLICK_DIST 才 startDragging
       // (mousedown 立即拖的话,OS 接管后 webview 收不到 mouseup,点击永远判不出来);
-      // 原位快速松开判定为点击:waving + 随机回应。右键仅屏蔽系统菜单
+      // 原位快速松开判定为点击:waving + 随机回应。右键弹自绘菜单(见 onContextMenu)
       onMouseDown={(e) => {
         if (e.button !== 0) return
         pressStart.current = { x: e.screenX, y: e.screenY, t: Date.now(), dragging: false }
@@ -286,8 +360,116 @@ export function PetWindow() {
           triggerOneshot('waving', pick(GREETINGS))
         }
       }}
-      onContextMenu={(e) => e.preventDefault()}
+      onContextMenu={(e) => {
+        // 右键:屏蔽系统菜单,弹自绘菜单(换宠物/点击穿透/隐藏桌宠);重开时先清落位防闪
+        e.preventDefault()
+        setMenuPos(null)
+        setMenuAt({ x: e.clientX, y: e.clientY })
+      }}
     >
+      {/* 右键菜单(M5 自绘,样式对齐壳内白底蓝调):遮罩负责点外关闭,菜单本体收边在窗口内 */}
+      {menuAt && (
+        <div
+          className="absolute inset-0 z-10"
+          onMouseDown={(e) => {
+            e.stopPropagation()
+            closeMenu()
+          }}
+          onContextMenu={(e) => {
+            // 遮罩上再右键 = 换个位置重开菜单
+            e.preventDefault()
+            e.stopPropagation()
+            setMenuPos(null)
+            setMenuAt({ x: e.clientX, y: e.clientY })
+          }}
+        />
+      )}
+      {menuAt && (
+        <div
+          ref={menuRef}
+          className="absolute z-20 w-44 rounded-xl border border-border bg-white/95 p-1 shadow-lg backdrop-blur-sm"
+          style={
+            menuPos
+              ? { left: menuPos.x, top: menuPos.y }
+              : { left: menuAt.x, top: menuAt.y, visibility: 'hidden' }
+          }
+          onMouseDown={(e) => e.stopPropagation()}
+          onContextMenu={(e) => e.preventDefault()}
+        >
+          <button
+            className="flex w-full items-center gap-1.5 rounded-lg px-2 py-1.5 text-left text-[12.5px] text-text-primary hover:bg-primary/10"
+            onMouseEnter={openSub}
+            onMouseLeave={closeSubSoon}
+            onClick={openSub}
+          >
+            <PawPrint size={13} className="shrink-0 text-text-tertiary" />
+            <span className="flex-1">换宠物</span>
+            <ChevronRight size={13} className="shrink-0 text-text-tertiary" />
+          </button>
+          <div className="mx-1 my-1 h-px bg-border-light" />
+          <button
+            className="flex w-full items-center gap-1.5 rounded-lg px-2 py-1.5 text-left text-[12.5px] text-text-primary hover:bg-primary/10"
+            onMouseEnter={closeSubNow}
+            onClick={() => {
+              closeMenu()
+              if (petCfg) void window.kimiApi.petSetClickThrough(!petCfg.clickThrough).catch(() => {})
+            }}
+          >
+            <MousePointerClick size={13} className="shrink-0 text-text-tertiary" />
+            <span className="flex-1">点击穿透</span>
+            {petCfg?.clickThrough && (
+              <span className="rounded bg-primary/10 px-1 py-px text-[10.5px] text-primary">已开启</span>
+            )}
+          </button>
+          <button
+            className="flex w-full items-center gap-1.5 rounded-lg px-2 py-1.5 text-left text-[12.5px] text-text-primary hover:bg-primary/10"
+            onMouseEnter={closeSubNow}
+            onClick={() => {
+              closeMenu()
+              void window.kimiApi.petSetEnabled(false).catch(() => {})
+            }}
+          >
+            <EyeOff size={13} className="shrink-0 text-text-tertiary" />
+            <span>隐藏桌宠</span>
+          </button>
+        </div>
+      )}
+      {/* 换宠物子菜单:悬停浮出在主菜单左侧。窗口只有 240 宽,两栏并排必然重叠,
+          靠 z-30 盖住主菜单;移回主菜单其他项(closeSubNow)或点外即收起 */}
+      {menuAt && menuPos && subOpen && (
+        <div
+          className="absolute z-30 w-36 rounded-xl border border-border bg-white/95 p-1 shadow-lg backdrop-blur-sm"
+          style={{
+            left: Math.max(4, menuPos.x - 144 - 4),
+            top: Math.max(4, Math.min(menuPos.y, window.innerHeight - 168))
+          }}
+          onMouseEnter={openSub}
+          onMouseLeave={closeSubSoon}
+          onMouseDown={(e) => e.stopPropagation()}
+          onContextMenu={(e) => e.preventDefault()}
+        >
+          <div className="max-h-40 overflow-y-auto">
+            {petOptions.map((p) => {
+              const active = p.slug === (petCfg?.slug ?? meta?.slug)
+              return (
+                <button
+                  key={p.slug}
+                  className={`flex w-full items-center gap-1.5 rounded-lg px-2 py-1.5 text-left text-[12.5px] hover:bg-primary/10 ${
+                    active ? 'font-medium text-primary' : 'text-text-primary'
+                  }`}
+                  onClick={() => {
+                    closeMenu()
+                    if (!active) void window.kimiApi.petSetActive(p.slug).catch(() => {})
+                  }}
+                >
+                  <span className="w-3.5 shrink-0">{active && <Check size={13} />}</span>
+                  <span className="truncate">{p.name}</span>
+                </button>
+              )
+            })}
+          </div>
+        </div>
+      )}
       {/* 台词气泡:宠物上方,短时停留自动消失 */}
       {bubble && (
         <div className="absolute left-1/2 top-1 -translate-x-1/2 whitespace-nowrap rounded-lg border border-border bg-white/95 px-2 py-1 text-[12px] text-text-secondary shadow">

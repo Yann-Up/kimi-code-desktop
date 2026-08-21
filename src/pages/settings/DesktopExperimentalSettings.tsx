@@ -15,6 +15,8 @@ export function DesktopExperimentalSettings() {
   // 当前激活宠物 slug 与可选宠物列表(内置 + 扫描到的外部宠物)
   const [petSlug, setPetSlug] = useState('kimi')
   const [petOptions, setPetOptions] = useState<PetInfo[]>([])
+  // 点击穿透:开启后桌宠忽略鼠标事件(无法拖动/右键,只能回本页关闭)
+  const [petClickThrough, setPetClickThrough] = useState(false)
   // 皮肤立绘:开关状态、当前皮肤 slug(null = 注册表第一个)与写入中标记
   const [skinEnabled, setSkinEnabled] = useState(false)
   const [skinSlug, setSkinSlug] = useState<string | null>(null)
@@ -33,12 +35,14 @@ export function DesktopExperimentalSettings() {
       .then((c) => {
         setPetEnabled(c.enabled)
         setPetSlug(c.slug)
+        setPetClickThrough(c.clickThrough)
       })
       .catch(() => {})
     // 其他页面/窗口改桌宠配置后,同步本页开关与激活宠物
     const offPet = window.kimiApi.onPetConfigChanged((c) => {
       setPetEnabled(c.enabled)
       setPetSlug(c.slug)
+      setPetClickThrough(c.clickThrough)
     })
     window.kimiApi
       .skinConfigGet()
@@ -62,7 +66,7 @@ export function DesktopExperimentalSettings() {
     }
   }, [])
 
-  // 桌宠开启后加载可选宠物列表(内置 + kimi_home/pets 与 ~/.petdex/pets 扫描结果)
+  // 桌宠开启后加载可选宠物列表(内置 + 应用数据目录/kimi_home/pets/~/.petdex/pets 扫描结果)
   useEffect(() => {
     if (!petEnabled) return
     window.kimiApi
@@ -124,32 +128,106 @@ export function DesktopExperimentalSettings() {
             <div className="min-w-0">
               <p className="text-[13.5px] font-medium">宠物形象</p>
               <p className="text-[12px] text-text-tertiary">
-                外部宠物扫描自 kimi-code 数据目录下的 pets/ 与 ~/.petdex/pets/(需含 pet.json 与精灵图),切换即时生效
+                外部宠物扫描自应用数据目录的 pets/(导入的宠物存这里)、kimi-code 数据目录与 ~/.petdex/pets/(需含 pet.json 与精灵图);切换即时生效
+              </p>
+              <p className="text-[12px] text-text-tertiary">
+                导入 zip 时,目录名与显示名优先取 pet.json 的 slug/id/displayName/name 字段,这些字段都没有时才用 zip 文件名
               </p>
             </div>
-            <select
-              className="shrink-0 rounded-lg border border-border bg-surface px-2.5 py-1.5 text-[13px] outline-none disabled:opacity-50"
-              value={petSlug}
+            <div className="flex shrink-0 items-center gap-2">
+              {/* 导入宠物包:zip 字节传 Rust 解压校验到应用数据目录 pets/<slug>,成功后直接换上 */}
+              <label
+                className={`cursor-pointer rounded-lg border border-border bg-surface px-2.5 py-1.5 text-[13px] text-text-secondary hover:border-primary/50 ${
+                  petBusy ? 'pointer-events-none opacity-50' : ''
+                }`}
+              >
+                导入 zip
+                <input
+                  type="file"
+                  accept=".zip"
+                  className="hidden"
+                  onChange={async (e) => {
+                    const f = e.target.files?.[0]
+                    // 清空 value 允许重复选同一文件
+                    e.target.value = ''
+                    if (!f) return
+                    if (f.size > 32 * 1024 * 1024) {
+                      setPetError('宠物包过大(上限 32MB)')
+                      return
+                    }
+                    setPetBusy(true)
+                    setPetError('')
+                    try {
+                      const bytes = Array.from(new Uint8Array(await f.arrayBuffer()))
+                      const info = await window.kimiApi.petImportZip(f.name, bytes)
+                      setPetOptions(await window.kimiApi.petList())
+                      await window.kimiApi.petSetActive(info.slug)
+                      setPetSlug(info.slug)
+                    } catch (err) {
+                      setPetError(err instanceof Error ? err.message : String(err))
+                    } finally {
+                      setPetBusy(false)
+                    }
+                  }}
+                />
+              </label>
+              <select
+                className="rounded-lg border border-border bg-surface px-2.5 py-1.5 text-[13px] outline-none disabled:opacity-50"
+                value={petSlug}
+                disabled={petBusy}
+                onChange={(e) => {
+                  const slug = e.target.value
+                  setPetError('')
+                  window.kimiApi
+                    .petSetActive(slug)
+                    .then(() => setPetSlug(slug))
+                    .catch((err) => setPetError(err instanceof Error ? err.message : String(err)))
+                }}
+              >
+                {/* 激活宠物不在扫描结果里(目录被删等)时兜底展示,避免 select 失控 */}
+                {!petOptions.some((p) => p.slug === petSlug) && (
+                  <option value={petSlug}>{petSlug}</option>
+                )}
+                {petOptions.map((p) => (
+                  <option key={p.slug} value={p.slug}>
+                    {p.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+        )}
+        {/* 点击穿透:开启后桌宠不响应鼠标(挡视线时用);只能回本页关闭,故文案里写明 */}
+        {petEnabled && (
+          <div className="mt-3 flex items-center justify-between border-t border-border pt-3">
+            <div className="min-w-0">
+              <p className="text-[13.5px] font-medium">点击穿透</p>
+              <p className="text-[12px] text-text-tertiary">
+                开启后鼠标直接穿过桌宠(无法拖动或右键),需回本页关闭
+              </p>
+            </div>
+            <button
+              className={`relative h-6 w-11 shrink-0 rounded-full transition-colors ${
+                petClickThrough ? 'bg-primary' : 'bg-border'
+              } disabled:opacity-50`}
               disabled={petBusy}
-              onChange={(e) => {
-                const slug = e.target.value
+              onClick={() => {
+                const next = !petClickThrough
+                setPetBusy(true)
                 setPetError('')
                 window.kimiApi
-                  .petSetActive(slug)
-                  .then(() => setPetSlug(slug))
-                  .catch((err) => setPetError(err instanceof Error ? err.message : String(err)))
+                  .petSetClickThrough(next)
+                  .then(() => setPetClickThrough(next))
+                  .catch((e) => setPetError(e instanceof Error ? e.message : String(e)))
+                  .finally(() => setPetBusy(false))
               }}
             >
-              {/* 激活宠物不在扫描结果里(目录被删等)时兜底展示,避免 select 失控 */}
-              {!petOptions.some((p) => p.slug === petSlug) && (
-                <option value={petSlug}>{petSlug}</option>
-              )}
-              {petOptions.map((p) => (
-                <option key={p.slug} value={p.slug}>
-                  {p.name}
-                </option>
-              ))}
-            </select>
+              <span
+                className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-all ${
+                  petClickThrough ? 'left-[22px]' : 'left-0.5'
+                }`}
+              />
+            </button>
           </div>
         )}
       </Card>

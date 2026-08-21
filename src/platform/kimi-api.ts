@@ -125,6 +125,8 @@ export interface PetConfig {
   enabled: boolean
   /** 当前激活宠物 slug(缺省 "kimi" 即内置) */
   slug: string
+  /** 点击穿透:开启后悬浮窗忽略所有鼠标事件(只能到设置页关闭) */
+  clickThrough: boolean
 }
 
 /** 界面皮肤配置(实验性):开启后主页/统计/设置页右侧显示内置立绘(SkinStandee) */
@@ -168,7 +170,7 @@ export interface PetMeta {
   slug: string
   /** 展示名 */
   name: string
-  /** 来源:builtin(内置)/ kimi-code(~/.kimi-code/pets)/ petdex(~/.petdex/pets) */
+  /** 来源:builtin(内置)/ custom(应用数据目录 pets,导入落这里)/ kimi-code(~/.kimi-code/pets)/ petdex(~/.petdex/pets) */
   source: string
   /** 单帧宽度(px) */
   frameW: number
@@ -182,7 +184,7 @@ export interface PetMeta {
 export interface PetInfo {
   slug: string
   name: string
-  /** 来源:builtin / kimi-code / petdex */
+  /** 来源:builtin / custom / kimi-code / petdex */
   source: string
 }
 
@@ -331,14 +333,18 @@ export interface KimiApi {
   petConfigGet(): Promise<PetConfig>
   /** 开关桌宠悬浮窗:持久化并即时创建/销毁 */
   petSetEnabled(enabled: boolean): Promise<void>
+  /** 点击穿透开关(缺省关):开启后悬浮窗忽略所有鼠标事件,只能到设置页关闭 */
+  petSetClickThrough(enabled: boolean): Promise<void>
   /** 桌宠状态变化(pet:state;仅桌宠窗口使用,M2 接入驱动) */
   onPetState(cb: (state: PetState) => void): Unsubscribe
   /** 工具调用脉冲(pet:tool,载荷 {kind};M4 起驱动差异化动作与气泡文案,同类 1s 节流) */
   onPetTool(cb: (kind: string) => void): Unsubscribe
   /** 桌宠配置变化(pet:config-changed;切换开关/宠物后同步其他页面) */
   onPetConfigChanged(cb: (cfg: PetConfig) => void): Unsubscribe
-  /** 宠物列表(内置排第一,外部宠物按目录扫描去重,kimi-code 优先) */
+  /** 宠物列表(内置排第一,外部宠物按目录扫描去重,custom > kimi-code > petdex) */
   petList(): Promise<PetInfo[]>
+  /** 导入宠物包:zip 文件名 + 内容字节,解压校验到应用数据目录 pets/<slug>,返回新宠物信息 */
+  petImportZip(name: string, bytes: number[]): Promise<PetInfo>
   /** 当前激活宠物完整元信息(未设置或找不到时回退内置) */
   petActiveGet(): Promise<PetMeta>
   /** 切换激活宠物:校验 slug 存在后持久化并发 pet:config-changed */

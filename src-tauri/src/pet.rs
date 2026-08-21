@@ -1,6 +1,7 @@
 //! pet: 桌宠悬浮窗管理(实验性功能,默认关闭)。
 //! 透明无边框置顶小窗,只渲染打包进前端的本地 spritesheet,不触网、不接触 token。
-//! 窗口 label 固定 "pet";开关持久化在 desktop-config.json 的 pet_enabled 字段。
+//! 窗口 label 固定 "pet";开关持久化在 desktop-config.json 的 pet_enabled 字段,
+//! 点击穿透在 pet_click_through(开启后窗口忽略鼠标事件,只能到设置页关闭)。
 //!
 //! 状态机(M2):ws.rs 的全量会话事件喂入 on_session_event,按会话聚合后
 //! 只在状态跃迁时 emit pet:state(前端按状态切 spritesheet 行)。
@@ -8,7 +9,8 @@
 //! > review(M4:review 子代理进行中)> running(任一有活跃 turn)> idle。
 //! M4 另有 pet:tool 工具脉冲事件(同类 1s 节流,不进状态机)。规则详见 docs/desktop-pet-design.md。
 //!
-//! 宠物资产(M3):内置宠物硬编码;扫描 <kimi_home>/pets/*(source kimi-code)
+//! 宠物资产(M3):内置宠物硬编码;扫描 <config_dir>/pets/*(source custom,与 skins
+//! 目录同级;导入的宠物落这里)、<kimi_home>/pets/*(source kimi-code,兼容旧布局)
 //! 与 ~/.petdex/pets/*(source petdex)下的 pet.json,三种格式归一化为统一
 //! PetMeta;外部精灵图经 pet:// 自定义协议(lib.rs 注册)按 slug 供图。
 
@@ -27,9 +29,16 @@ pub const PET_WINDOW_LABEL: &str = "pet";
 const PET_WIDTH: f64 = 240.0;
 const PET_HEIGHT: f64 = 250.0;
 
-/// 桌宠是否启用(缺省关)
-pub fn enabled(app: &AppHandle) -> bool {
-    crate::config::load(app).pet_enabled.unwrap_or(false)
+/// 点击穿透是否开启(缺省关):开启后悬浮窗忽略所有鼠标事件
+pub fn click_through(app: &AppHandle) -> bool {
+    crate::config::load(app).pet_click_through.unwrap_or(false)
+}
+
+/// 对已存在的桌宠窗应用点击穿透设置(窗口不存在时忽略,建窗时会在 show 里补)
+pub fn apply_click_through(app: &AppHandle, on: bool) {
+    if let Some(w) = app.get_webview_window(PET_WINDOW_LABEL) {
+        let _ = w.set_ignore_cursor_events(on);
+    }
 }
 
 /// 创建并显示桌宠窗口(幂等:已存在则仅 show)
@@ -64,6 +73,8 @@ pub fn show(app: &AppHandle) -> Result<(), String> {
         builder = builder.position(x.max(origin.x as f64), y.max(origin.y as f64));
     }
     builder.build().map_err(|e| e.to_string())?;
+    // 建窗时补齐点击穿透(设置页/右键菜单改动走 apply_click_through)
+    apply_click_through(app, click_through(app));
     // 晚开的窗口补齐当前状态(等 webview 加载完再 emit,800ms 经验值)
     let app2 = app.clone();
     tauri::async_runtime::spawn(async move {
@@ -439,13 +450,23 @@ pub fn valid_slug(slug: &str) -> bool {
             .all(|c| c.is_alphanumeric() || c == '_' || c == '-')
 }
 
-/// 宠物扫描根目录:扫描去重与协议取图共用此序(kimi-code 优先于 petdex)。
-/// 不依赖 AppHandle(自定义协议 handler 里没有):kimi_home 走 cli 的现有 helper
-fn scan_roots() -> [(PathBuf, &'static str); 2] {
-    [
-        (crate::cli::kimi_home().join("pets"), "kimi-code"),
-        (crate::cli::home_dir().join(".petdex").join("pets"), "petdex"),
-    ]
+/// 用户宠物目录(<config_dir>/pets,与 skins 目录同级;config 目录未初始化返回 None)。
+/// 后续"自定义数据存储路径"功能落地时,此处随 config::config_dir 的解析一并切换
+pub fn custom_pets_dir() -> Option<PathBuf> {
+    crate::config::config_dir().map(|d| d.join("pets"))
+}
+
+/// 宠物扫描根目录:应用数据目录(custom,导入的宠物落这里)优先,其后 kimi-code 数据
+/// 目录(兼容旧布局)与 petdex 社区目录;扫描去重与协议取图共用此序。
+/// 不依赖 AppHandle(自定义协议 handler 里没有):config_dir 走 config 模块的全局缓存
+fn scan_roots() -> Vec<(PathBuf, &'static str)> {
+    let mut roots: Vec<(PathBuf, &'static str)> = Vec::new();
+    if let Some(d) = custom_pets_dir() {
+        roots.push((d, "custom"));
+    }
+    roots.push((crate::cli::kimi_home().join("pets"), "kimi-code"));
+    roots.push((crate::cli::home_dir().join(".petdex").join("pets"), "petdex"));
+    roots
 }
 
 /// 从 JSON 值解析一条 PetAnim(缺字段/类型错返回 None)
@@ -458,10 +479,18 @@ fn anim_from_value(v: &Value) -> Option<PetAnim> {
     })
 }
 
+/// 取展示名:name → displayName(部分宠物包如 kimi-pet.v0 用此字段)→ 调用方兜底 slug
+fn pet_name(v: &Value) -> Option<String> {
+    v.get("name")
+        .and_then(|x| x.as_str())
+        .or_else(|| v.get("displayName").and_then(|x| x.as_str()))
+        .map(|s| s.to_string())
+}
+
 /// 格式一:原生 schema == "kimi-desktop-pet/1"
 /// {schema, name, frameW, frameH, states{...}},states 值即 PetAnim,五状态缺一不可
 fn parse_native(v: &Value, slug: &str, source: &str) -> Option<PetMeta> {
-    let name = v.get("name")?.as_str()?.to_string();
+    let name = pet_name(v)?;
     let frame_w = v.get("frameW")?.as_u64()? as u32;
     let frame_h = v.get("frameH")?.as_u64()? as u32;
     let states_v = v.get("states")?;
@@ -486,12 +515,9 @@ fn parse_kimi_pet_v0(v: &Value, slug: &str, source: &str) -> Option<PetMeta> {
     let asset = v.get("asset")?;
     let frame_w = asset.get("cellWidth")?.as_u64()? as u32;
     let frame_h = asset.get("cellHeight")?.as_u64()? as u32;
-    let name = v
-        .get("displayName")
-        .and_then(|x| x.as_str())
-        .or_else(|| v.get("id").and_then(|x| x.as_str()))
-        .unwrap_or(slug)
-        .to_string();
+    let name = pet_name(v)
+        .or_else(|| v.get("id").and_then(|x| x.as_str()).map(|s| s.to_string()))
+        .unwrap_or_else(|| slug.to_string());
     let anims = v.get("animations")?;
     // 同一目标状态多个候选动画时,按给定顺序取第一个可用的
     let pick = |keys: &[&str]| {
@@ -521,11 +547,7 @@ fn parse_kimi_pet_v0(v: &Value, slug: &str, source: &str) -> Option<PetMeta> {
 /// 固定行序 idle,running-right,running-left,waving,jumping,failed,waiting,running,review;
 /// 直接复用内置宠物的 states(行序一致,M4 起九状态全映射)
 fn petdex_fallback(v: &Value, slug: &str, source: &str) -> PetMeta {
-    let name = v
-        .get("name")
-        .and_then(|x| x.as_str())
-        .unwrap_or(slug)
-        .to_string();
+    let name = pet_name(v).unwrap_or_else(|| slug.to_string());
     PetMeta {
         slug: slug.to_string(),
         name,
@@ -617,4 +639,144 @@ pub fn load_spritesheet(slug: &str) -> Option<(Vec<u8>, &'static str)> {
         }
     }
     None
+}
+
+/// 从 zip 字节导入宠物包到 <config_dir>/pets/<slug>/。
+/// slug 决策:先读包内 pet.json 的标识字段(slug → id → displayName → name),
+/// zip 文件名只作兜底——petdex 下载的包文件名都叫 zip.zip,按文件名命名会互相撞车。
+/// 候选清洗规则:非法字符折成 '-',两端 '-' 去掉,首个清洗后合法的候选生效。
+/// 包内定位 pet.json 与精灵图(可在根或单层/多层子目录,取最浅的一份);只解这三个文件,
+/// 条目经 enclosed_name 过滤防 zip slip。无 pet.json 但有精灵图时按 petdex 布局兜底生成
+/// 最小 pet.json;落盘后过一遍 parse_pet_dir 校验,失败清目录报错。同名目录已存在则拒绝
+pub fn import_zip(zip_name: &str, bytes: &[u8]) -> Result<PetInfo, String> {
+    const MAX_BYTES: usize = 32 * 1024 * 1024;
+    if bytes.len() > MAX_BYTES {
+        return Err("宠物包过大(上限 32MB)".to_string());
+    }
+    let mut archive = zip::ZipArchive::new(std::io::Cursor::new(bytes))
+        .map_err(|e| format!("zip 解析失败: {e}"))?;
+    const WANTED: [&str; 3] = ["pet.json", "spritesheet.webp", "spritesheet.png"];
+    let split_entry = |f: &zip::read::ZipFile| -> Option<(String, String)> {
+        let path = f.enclosed_name()?; // 过滤路径穿越
+        let name = path.to_string_lossy().replace('\\', "/");
+        let (prefix, file) = match name.rsplit_once('/') {
+            Some((d, f)) => (d.to_string(), f.to_lowercase()),
+            None => (String::new(), name.to_lowercase()),
+        };
+        Some((prefix, file))
+    };
+    // 第一遍:登记 目标文件名(小写)→ 所在目录前缀(根为 ""),供前缀决策
+    let mut found: Vec<(String, String)> = Vec::new();
+    for i in 0..archive.len() {
+        let Ok(f) = archive.by_index(i) else {
+            continue;
+        };
+        if let Some((prefix, file)) = split_entry(&f) {
+            if WANTED.contains(&file.as_str()) {
+                found.push((file, prefix));
+            }
+        }
+    }
+    // 前缀决策:pet.json 优先(取目录层级最浅的一份);没有 pet.json 则看精灵图
+    let shallowest = |file_prefix: &str| {
+        found
+            .iter()
+            .filter(|(f, _)| f == file_prefix || file_prefix.is_empty() && f.starts_with("spritesheet"))
+            .min_by_key(|(_, p)| p.matches('/').count())
+            .map(|(_, p)| p.clone())
+    };
+    let prefix = shallowest("pet.json")
+        .or_else(|| shallowest(""))
+        .ok_or_else(|| "包内未找到 pet.json 或精灵图(spritesheet.webp/png)".to_string())?;
+    // slug 候选:目标前缀下 pet.json 的标识字段;zip 文件名最后兜底
+    let mut candidates: Vec<String> = Vec::new();
+    for i in 0..archive.len() {
+        let Ok(mut f) = archive.by_index(i) else {
+            continue;
+        };
+        let Some((p, file)) = split_entry(&f) else {
+            continue;
+        };
+        if p != prefix || file != "pet.json" {
+            continue;
+        }
+        let mut content = Vec::new();
+        if std::io::Read::read_to_end(&mut f, &mut content).is_err() {
+            break;
+        }
+        if let Ok(v) = serde_json::from_slice::<Value>(&content) {
+            for key in ["slug", "id", "displayName", "name"] {
+                if let Some(s) = v.get(key).and_then(|x| x.as_str()) {
+                    candidates.push(s.to_string());
+                }
+            }
+        }
+        break;
+    }
+    let stem = std::path::Path::new(zip_name)
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_else(|| zip_name.to_string());
+    candidates.push(stem);
+    let sanitize = |s: &str| -> String {
+        s.chars()
+            .map(|c| {
+                if c.is_alphanumeric() || c == '_' || c == '-' {
+                    c
+                } else {
+                    '-'
+                }
+            })
+            .collect::<String>()
+            .trim_matches('-')
+            .to_string()
+    };
+    let slug = candidates
+        .iter()
+        .map(|c| sanitize(c))
+        .find(|s| valid_slug(s))
+        .ok_or_else(|| format!("无法得到合法宠物标识(pet.json 标识字段与文件名均不可用): {zip_name}"))?;
+    let dest = custom_pets_dir()
+        .ok_or_else(|| "配置目录未就绪,无法导入".to_string())?
+        .join(&slug);
+    if dest.exists() {
+        return Err(format!("已存在同名宠物: {slug}(先删除对应目录再导入)"));
+    }
+    // 第二遍:只解目标前缀下的三个文件,统一小写落盘
+    std::fs::create_dir_all(&dest).map_err(|e| format!("创建宠物目录失败: {e}"))?;
+    let mut has_json = false;
+    let mut has_sheet = false;
+    for i in 0..archive.len() {
+        let Ok(mut f) = archive.by_index(i) else {
+            continue;
+        };
+        let Some((p, file)) = split_entry(&f) else {
+            continue;
+        };
+        if p != prefix || !WANTED.contains(&file.as_str()) {
+            continue;
+        }
+        let mut content = Vec::new();
+        std::io::Read::read_to_end(&mut f, &mut content)
+            .map_err(|e| format!("解压 {file} 失败: {e}"))?;
+        std::fs::write(dest.join(&file), &content).map_err(|e| format!("写入 {file} 失败: {e}"))?;
+        has_json |= file == "pet.json";
+        has_sheet |= file.starts_with("spritesheet");
+    }
+    if !has_sheet {
+        let _ = std::fs::remove_dir_all(&dest);
+        return Err("包内未找到精灵图(spritesheet.webp/png)".to_string());
+    }
+    if !has_json {
+        // petdex 布局兜底:parse_pet_dir 对无格式标记的 pet.json 按固定行序解析
+        let minimal = serde_json::json!({ "name": slug }).to_string();
+        std::fs::write(dest.join("pet.json"), minimal).map_err(|e| format!("写入 pet.json 失败: {e}"))?;
+    }
+    match parse_pet_dir(&dest, &slug, "custom") {
+        Some(meta) => Ok(meta.info()),
+        None => {
+            let _ = std::fs::remove_dir_all(&dest);
+            Err("pet.json 校验失败:缺少关键字段(参考 docs/desktop-pet-design.md 的三种格式)".to_string())
+        }
+    }
 }

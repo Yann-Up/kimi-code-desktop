@@ -37,6 +37,8 @@ pub struct DesktopConfig {
     pub pet_enabled: Option<bool>,
     /// 当前激活宠物 slug(缺省 "kimi" 即内置;外部宠物为目录名,见 pet.rs 扫描逻辑)
     pub pet_slug: Option<String>,
+    /// 桌宠点击穿透(缺省关):开启后悬浮窗忽略所有鼠标事件(此时右键菜单无法从宠物唤起,需到设置页关闭)
+    pub pet_click_through: Option<bool>,
     /// 界面皮肤开关(实验性,缺省关):主页/统计/设置页右侧显示内置立绘
     pub skin_enabled: Option<bool>,
     /// 当前皮肤 slug(None = 注册表第一个;内置皮肤注册表在前端,见 src/components/skins.ts)

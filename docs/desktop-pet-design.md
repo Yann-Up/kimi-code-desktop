@@ -1,11 +1,18 @@
 # 桌宠(Desktop Pet)实验性功能设计
 
-> 状态:M1(悬浮窗 + 占位团子 + 设置开关)、M2(状态机 + WS 事件驱动)、M3(多宠物/目录扫描/外部格式兼容)已实现
+> 状态:M1(悬浮窗 + 占位团子 + 设置开关)、M2(状态机 + WS 事件驱动)、M3(多宠物/目录扫描/外部格式兼容)、M4(拖拽方向/review/工具脉冲/气泡/点击)、M5(右键菜单 + 点击穿透)已实现
+
+## M5 实现要点(2026-08-21):右键菜单 + 点击穿透
+
+- 右键菜单(前端自绘;原生 muda 菜单无法定制样式,弃用):PetWindow `onContextMenu` 在窗内弹自绘菜单——换宠物(悬停浮出子菜单,200ms 延迟关闭防平移误收;窗口仅 240 宽,子菜单浮左侧与主菜单部分重叠,靠 z-index 盖住)、点击穿透(带"已开启"徽标)、隐藏桌宠;关闭路径:遮罩点外关闭、遮罩上再右键换位重开、**窗口失焦(onFocusChanged)或 Esc 关闭**(补原生菜单的"点桌面其他地方收起"行为);菜单按实测尺寸收边在 240x250 窗口内(先 `visibility:hidden` 测量再落位防闪);菜单动作直调 `petSetActive` / `petSetClickThrough` / `petSetEnabled` 命令,Rust 侧无菜单代码。
+- 点击穿透:配置 `pet_click_through`(desktop-config.json);开启即 `set_ignore_cursor_events(true)`,拖动/右键/点击全部失效——**唯一关闭入口是设置页开关**(桌宠卡内已写明);`pet::show()` 建窗时按配置补齐。
+- `PetConfig` 载荷加 `clickThrough`,`pet_config_get` 与 `pet:config-changed` 共用 `pet_config_json`,设置页经事件同步三处状态(开关/宠物/穿透)。
+- 宠物包导入(2026-08-21):设置页"导入 zip"选文件,字节传 `pet_import_zip` 命令;Rust 侧 `pet::import_zip` 解压到 `<config_dir>/pets/<slug>`(与 skins 目录同级)。slug 决策:先读包内 pet.json 的标识字段(slug → id → displayName → name,清洗后首个合法候选生效),zip 文件名只作兜底——petdex 下载的包文件名都叫 zip.zip,按文件名命名会互相撞车。只解 pet.json 与 spritesheet.webp/png 三个文件(条目经 `enclosed_name` 过滤防 zip slip),包内可放根目录或子目录(取最浅一份);无 pet.json 但有精灵图时按 petdex 布局兜底生成最小 pet.json;落盘后过 `parse_pet_dir` 校验,失败清目录报错;同名目录已存在则拒绝。导入成功前端刷新列表并直接 `petSetActive` 换上新宠物。依赖 `zip` crate(default-features=false + deflate,纯 Rust 后端)。
 
 ## M3 实现要点(2026-08-18)
 
-- 宠物来源三处:内置注册表(打包 spritesheet,`pet.rs::builtin_pets()`,目前有 kimi 团子 / xiao-k 小K 两只;素材在 `src/assets/pets/<slug>/`,前端 `import.meta.glob` 按 slug 取图)、`<kimi_home>/pets/*`(source `kimi-code`)、`~/.petdex/pets/*`(source `petdex`);slug=目录名,去重 kimi-code 优先,坏条目跳过。
-- pet.json 三格式归一化(Rust `pet.rs::parse_pet_dir`):`schema=="kimi-desktop-pet/1"` 原生格式;`schemaVersion=="kimi-pet.v0"`(FeiZhuLulu/kimi-pet,animations 映射 thinking/tool_use/editing/terminal→running、waiting_approval→waiting、success→jumping、error→failed);无标记按 petdex 布局兜底(192x208、8 帧/行、固定行序)。
+- 宠物来源四处:内置注册表(打包 spritesheet,`pet.rs::builtin_pets()`;素材在 `src/assets/pets/<slug>/`,前端 `import.meta.glob` 按 slug 取图)、`<config_dir>/pets/*`(source `custom`,与 skins 目录同级,zip 导入落这里)、`<kimi_home>/pets/*`(source `kimi-code`,兼容旧布局)、`~/.petdex/pets/*`(source `petdex`);slug=目录名,去重 custom > kimi-code > petdex,坏条目跳过。
+- pet.json 三格式归一化(Rust `pet.rs::parse_pet_dir`):`schema=="kimi-desktop-pet/1"` 原生格式;`schemaVersion=="kimi-pet.v0"`(FeiZhuLulu/kimi-pet,animations 映射 thinking/tool_use/editing/terminal→running、waiting_approval→waiting、success→jumping、error→failed);无标记按 petdex 布局兜底(192x208、8 帧/行、固定行序)。展示名统一按 `name` → `displayName` → slug 取(kimi-pet.v0 在 displayName 后另有 `id` 兜底)。
 - 外部精灵图走自定义协议 `pet://`(Windows 前端 URL 形态 `http://pet.localhost/<slug>`,lib.rs `register_uri_scheme_protocol` 实现,slug 白名单防路径穿越,优先 spritesheet.webp 其次 .png);CSP img-src 已放行。
 - 配置 `pet_slug` 存 desktop-config.json;命令 `pet_list`/`pet_active_get`/`pet_set_active`(均不建窗,sync 即可);切换时 emit `pet:config-changed`(载荷完整 PetConfig `{enabled, slug}`),桌宠窗与设置页都靠它重载。
 > 参考:[crafter-station/petdex](https://github.com/crafter-station/petdex)
@@ -124,7 +131,7 @@ pet.json(schema `kimi-desktop-pet/1`):
 ## 安全与边界
 
 - 宠物窗口只渲染本地精灵图,不发起网络请求,不接触 token;与现有「Bearer 不出本机」红线无交集;
-- 悬浮窗不抢焦(focusable=false),支持点击穿透开关(后续);
+- 悬浮窗不抢焦(focusable=false);点击穿透已在 M5 落地(设置页 + 右键菜单开关);
 - 仅 Windows 验证,代码保持跨平台可行即可。
 
 ## 里程碑
@@ -132,7 +139,8 @@ pet.json(schema `kimi-desktop-pet/1`):
 - M1:悬浮窗 + 内置宠物 idle 动画 + 设置开关(不接事件,可拖动);
 - M2:状态机 + WS 事件驱动(含 tool-call 脉冲、节流);
 - M3:宠物目录扫描与切换、petdex 目录兼容;
-- M4:方向拖拽动画(running-left/right)+ review 状态 + 工具差异化反应(pet:tool 脉冲)+ 台词气泡 + 点击交互(见下节)。
+- M4:方向拖拽动画(running-left/right)+ review 状态 + 工具差异化反应(pet:tool 脉冲)+ 台词气泡 + 点击交互(见上节);
+- M5:右键菜单(换宠物/点击穿透/隐藏桌宠)+ 点击穿透(见「M5 实现要点」)。
 
 ## M4 规划(2026-08-18 定稿)
 

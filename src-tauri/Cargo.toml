@@ -37,6 +37,8 @@ keyring = "4"
 toml_edit = "0.22"
 # config.toml 解析为 JSON(模型/供应商设置页读取用)
 toml = "0.8"
+# 宠物包导入(zip 解压);只启用纯 Rust 的 deflate 后端,避开 C 构建依赖
+zip = { version = "2.2", default-features = false, features = ["deflate"] }
 
 [profile.release]
 lto = true
