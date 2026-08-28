@@ -278,11 +278,12 @@ impl PetState {
 
 /// 一次性动作(jumping/failed)的播放时长:播完回到基底状态
 const ONESHOT_DURATION: Duration = Duration::from_millis(1500);
-/// 泄漏清扫:长时间没有任何会话事件(volatile 帧也算活跃)而状态非 idle,
-/// 说明事件流断过,强制复位。取 60s:静默长命令(sleep/build 等)期间没有任何
+/// 泄漏清扫:长时间没有任何会话事件(volatile 帧也算活跃)即视为事件流断过,
+/// 强制复位。取 60s:静默长命令(sleep/build 等)期间没有任何
 /// 事件是常态,阈值太短会把正常执行误判成断流(10s 实测误杀,06:49)。
 /// 清扫只清 active_turns/active_subagents/oneshot,不清 waiting——审批挂起几分钟
-/// 无事件也是常态
+/// 无事件也是常态。清扫不按显示态跳过:泄漏的子代理不影响 state(非 review 时),
+/// 按 idle/sleep 跳过会让小跟班永久残留(见 init 内注释)
 const STALE_TIMEOUT: Duration = Duration::from_secs(60);
 /// M5 P5 时间维度:任一会话的 turn 连续运行超此时长,running 显示为 tired(毫秒,
 /// 与 TurnTrack.start_ts 同为事件时间戳口径)
@@ -305,8 +306,10 @@ struct Machine {
     active_turns: HashSet<String>,
     /// 有待审批/提问的会话(并集语义:全清空才退出 waiting)
     waiting: HashSet<String>,
-    /// M4→M5 P4:进行中的全部子代理,subagentId → subagentName(小写);
+    /// M4→M5 P4:进行中的全部子代理,"{session_id}:{subagentId}" → subagentName(小写);
     /// spawned 一律进入,completed/failed/suspended 按 id 退出。
+    /// subagentId 只在会话内唯一(每会话从 agent-0 重新编号,实测 121 个 id 里
+    /// 51 个跨会话复用),必须带 session_id 做复合键,否则多会话并发时互相误删。
     /// review 状态判定 = 集合中任一 name 含 "review"(保留 M4 语义);
     /// 集合大小即小跟班数量(pet:minions 载荷)。用单个 HashMap 而非两个集合,
     /// 避免 review 集与全集的配对移除逻辑漂移
@@ -599,7 +602,8 @@ pub fn on_session_event(app: &AppHandle, ftype: &str, session_id: &str, evt: &se
                     .unwrap_or("")
                     .to_lowercase();
                 let before = m.active_subagents.len();
-                m.active_subagents.insert(id.to_string(), name);
+                m.active_subagents
+                    .insert(format!("{session_id}:{id}"), name);
                 if m.active_subagents.len() != before {
                     minions = Some(m.active_subagents.len());
                 }
@@ -607,7 +611,7 @@ pub fn on_session_event(app: &AppHandle, ftype: &str, session_id: &str, evt: &se
         }
         "subagent.completed" | "subagent.failed" | "subagent.suspended" => {
             if let Some(id) = evt.get("subagentId").and_then(|v| v.as_str()) {
-                if m.active_subagents.remove(id).is_some() {
+                if m.active_subagents.remove(&format!("{session_id}:{id}")).is_some() {
                     minions = Some(m.active_subagents.len());
                 }
             }
@@ -654,9 +658,12 @@ pub fn init(app: &AppHandle) {
             let stale = m.last_activity.elapsed() > STALE_TIMEOUT;
             // M5 P4:子代理集合被清扫时归零广播(锁内只记标志,emit 在锁外)
             let mut minions: Option<usize> = None;
-            // sleep 与 idle 同为"无活动"显示态,不触发清扫(集合本就为空)
-            if stale && !matches!(m.state, PetState::Idle | PetState::Sleep) {
-                // waiting 不清:审批可以长时间挂起而无任何事件
+            if stale {
+                // waiting 不清:审批可以长时间挂起而无任何事件。
+                // 其余集合无差别清:不能按 state 跳过——服务端在会话结束/turn abort 时
+                // 不一定补发 subagent.completed(实测 6 会话 19 个子代理无终结事件),
+                // 泄漏的非 review 子代理不影响 state,若 idle/sleep 时跳过清扫,
+                // 小跟班会永久挂在窗上(08-24 用户实测反馈)
                 m.active_turns.clear();
                 if !m.active_subagents.is_empty() {
                     m.active_subagents.clear();

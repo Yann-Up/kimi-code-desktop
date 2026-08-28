@@ -10,7 +10,7 @@ export default function App() {
   const [phase, setPhase] = useState<'starting' | 'ready' | 'error'>('starting')
   const [serverError, setServerError] = useState<string | null>(null)
   const [installing, setInstalling] = useState(false)
-  const [updateInfo, setUpdateInfo] = useState<{ current: string; latest: string; source: string } | null>(null)
+  const [updateInfo, setUpdateInfo] = useState<{ current: string; latest: string; source: string; bin: string } | null>(null)
   const [upgrading, setUpgrading] = useState(false)
   const [upgradeMsg, setUpgradeMsg] = useState('')
   // 关窗确认框:null=不显示;否则值为"是否有后端在跑"(决定警告文案)
@@ -168,6 +168,9 @@ export default function App() {
               {updateInfo.source === 'home'
                 ? '更新通过 `kimi upgrade` 完成,更新后服务会自动重启'
                 : '当前为 npm 安装,更新通过 `npm update -g @moonshot-ai/kimi-code` 完成,更新后服务会自动重启'}
+            </p>
+            <p className="mt-1 truncate font-mono text-[11px] text-text-tertiary" title={updateInfo.bin}>
+              更新对象:{updateInfo.bin}
             </p>
             <div className="mt-4 flex justify-end gap-2">
               <button

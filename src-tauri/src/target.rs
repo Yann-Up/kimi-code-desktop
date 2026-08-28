@@ -110,15 +110,19 @@ pub(crate) fn sq(s: &str) -> String {
     format!("'{}'", s.replace('\'', "'\\''"))
 }
 
-/// 解析实例注册表内容(多个单行 JSON 首尾拼接)为 (port, pid) 列表;损坏条目跳过
-fn parse_server_instances(text: &str) -> Vec<(u16, u32)> {
+/// 解析实例注册表内容(多个单行 JSON 首尾拼接)为 (port, pid, heartbeat_at) 列表;损坏条目跳过
+fn parse_server_instances(text: &str) -> Vec<(u16, u32, u64)> {
     serde_json::Deserializer::from_str(text)
         .into_iter::<Value>()
         .filter_map(|item| {
             let v = item.ok()?;
             let port = u16::try_from(v.get("port")?.as_u64()?).ok()?;
             let pid = u32::try_from(v.get("pid")?.as_u64()?).ok()?;
-            Some((port, pid))
+            let heartbeat_at = v
+                .get("heartbeat_at")
+                .and_then(|h| h.as_u64())
+                .unwrap_or(0);
+            Some((port, pid, heartbeat_at))
         })
         .collect()
 }
@@ -1016,11 +1020,11 @@ impl ConnectionTarget {
         }
     }
 
-    /// 列举 kimi web 实例注册表(server/instances/*.json)中登记的 (port, pid)。
+    /// 列举 kimi web 实例注册表(server/instances/*.json)中登记的 (port, pid, heartbeat_at)。
     /// 供 server.rs 启动前回收残留实例(稳定 iframe 端口、避免孤儿累积)。
     /// Local 直读目录;WSL 经 wsl.exe cat;SSH 恒空(远端进程随 pty 断连收 SIGHUP,无孤儿)。
     /// 损坏/`.tmp` 文件静默忽略;任何通道错误都返回空——回收是尽力而为,不阻塞启动
-    pub(crate) async fn list_server_instances(&self) -> Vec<(u16, u32)> {
+    pub(crate) async fn list_server_instances(&self) -> Vec<(u16, u32, u64)> {
         let text = match self {
             ConnectionTarget::Local => {
                 let dir = kimi_home().join("server").join("instances");

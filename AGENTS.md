@@ -23,14 +23,14 @@ src/                    渲染进程(React)
   stores/ui.ts          界面状态(zustand)
 src-tauri/src/          Rust 后端
   lib.rs                Tauri 入口与命令注册
-  server.rs             spawn/管理 `kimi web` 进程,解析地址与 token
+  server.rs             spawn/管理 `kimi web` 进程,解析地址与 token;首选端口按构建类型分叉(release 58666 / dev 58766)
   rest.rs / ws.rs       REST 客户端与 WS 通知订阅器(/api/v1/*)
   cli.rs                CLI 自检测 / 安装 / 升级
   ssh.rs                进程内 SSH 客户端与端口转发
   config.rs / local_store.rs / target.rs   配置、本地数据直读、运行目标(本机/WSL/SSH)
   skin.rs               用户自选皮肤(实验性):扫描 <config_dir>/skins 下的 png/webp/jpg,经 skin:// 自定义协议供图;内置皮肤注册表在前端(src/components/skins.ts,构建时扫描 src/assets/skins);开关与选中存 desktop-config.json 的 skin_enabled/skin_slug,立绘渲染见 SkinStandee;对话页内透出(skin_in_chat):主窗口 initialization_script_for_all_frames 注入 assets/chat_skin_inject.js(仅回环源子框架生效,内含 origin 守卫),壳侧桥接见 src/components/chatSkinBridge.ts(postMessage 协议:ready/cfg,素材经壳 fetch 转 dataURL 投递),不碰 dist-web、官方升级零影响
   pet.rs                桌宠悬浮窗(实验性):透明置顶小窗 + 状态机(ws.rs 事件驱动);内置宠物注册表 builtin_pets()(素材 src/assets/pets/<slug>/),并扫描 <config_dir>/pets(custom,导入落点,与 skins 同级;后续"自定义存储路径"随 config::config_dir 一并切换)、<kimi_home>/pets(兼容旧布局)与 ~/.petdex/pets(兼容 kimi-pet.v0/petdex 布局),外部精灵图经 pet:// 自定义协议供图;右键唤前端自绘菜单(换宠物悬停子菜单/点击穿透/隐藏,PetWindow 内渲染,动作直调 petSet* 命令,失焦/Esc 关闭);支持设置页导入 zip 宠物包(pet::import_zip 解压校验到 <config_dir>/pets);开关存 desktop-config.json 的 pet_enabled/pet_slug/pet_click_through(穿透开启后窗口忽略鼠标,只能到设置页关闭);M5+M6 扩展:pet-menu 悬浮菜单窗(label pet-menu,失焦 hide 收起;单击开关菜单、双击唤回主窗 pet_restore_main)、pet:bubble/pet:minions/pet:menu-visible 事件(turn 概要/审批详情/配额提醒、活跃子代理计数、菜单开着压制气泡)、tired/sleep 时长显示态、闲置散步(pet_wander 配置 + pet_nudge 挪窗)、pet_menu_* 系列命令(钉选存 menu_pinned_sessions)
-  updater.rs            应用自动更新(tauri-plugin-updater + 静态 latest.json,minisign 签名校验):app_update_check/app_update_install 命令 + 启动延迟静默自检(dev 跳过);双下载源按序回退——CNB 镜像优先(cnb.cool 仓 updater 分支的 latest.json raw 链接)、GitHub Releases 兜底,check 外包 15s tokio 超时(不能用 UpdaterBuilder::timeout,它会同时掐断 download);签名公钥在 tauri.conf.json plugins.updater.pubkey,私钥 ~/.tauri/kimi-desktop.key 不入库(CI 走 TAURI_SIGNING_PRIVATE_KEY secret);发版见 .github/workflows/release.yml(push v* tag → 草稿 Release),正式发布(published)后 .github/workflows/sync-cnb.yml 自动把 tag 与 CNB 版 latest.json 同步到 CNB 镜像仓(CNB 仓 .cnb.yml 流水线建 Release 并回传安装器附件 setup.exe + msi;需 CNB_TOKEN secret,权限 repo-code 读写)
+  updater.rs            应用自动更新(tauri-plugin-updater + 静态 latest.json,minisign 签名校验):app_update_check/app_update_install 命令 + 启动延迟静默自检(dev 跳过);下载与安装分两步,安装前先 stop_all_backends 关停所有通道 kimi web(插件 install 是 ShellExecute 拉起 NSIS 后 std::process::exit,不触发 ExitRequested,不停则服务变孤儿占住首选端口、重启后端口顺延);双下载源按序回退——CNB 镜像优先(cnb.cool 仓 updater 分支的 latest.json raw 链接)、GitHub Releases 兜底,check 外包 15s tokio 超时(不能用 UpdaterBuilder::timeout,它会同时掐断 download);签名公钥在 tauri.conf.json plugins.updater.pubkey,私钥 ~/.tauri/kimi-desktop.key 不入库(CI 走 TAURI_SIGNING_PRIVATE_KEY secret);发版见 .github/workflows/release.yml(push v* tag → 草稿 Release),正式发布(published)后 .github/workflows/sync-cnb.yml 自动把 tag 与 CNB 版 latest.json 同步到 CNB 镜像仓(CNB 仓 .cnb.yml 流水线建 Release 并回传安装器附件 setup.exe + msi;需 CNB_TOKEN secret,权限 repo-code 读写)
 build/                  图标等资源;design/ 设计稿;docs/ 评审与跟踪文档;out/renderer 前端构建产物
 ```
 
@@ -38,7 +38,8 @@ build/                  图标等资源;design/ 设计稿;docs/ 评审与跟踪�
 
 ```bash
 npm install
-npm run tauri:dev        # 开发(vite dev 5188 + cargo 增量编译)
+npm run tauri:dev        # 开发(vite dev 5188 + cargo 增量编译);合并 src-tauri/tauri.dev.conf.json
+                         # (独立 identifier → 单实例锁/配置目录/WebView2 profile 与正式版隔离,可并存)
 npm run typecheck        # 渲染层与 vite 配置的 TS 检查(提交前必过)
 npm run build:renderer   # 仅构建前端 → out/renderer
 npm run tauri:build      # 打包当前平台安装包(产物在 src-tauri/target/release/bundle/);
@@ -53,6 +54,7 @@ cd src-tauri && cargo check   # Rust 侧检查(提交前必过)
   ⚠️ kimi_home **不一定是 `~/.kimi-code`**:`cli::kimi_home()` 的解析顺序是 用户自定义(desktop-config.json 的 kimi_home)> `KIMI_CODE_HOME` 环境变量 > 默认 `~/.kimi-code`。任何读写 kimi-code 数据目录的代码都必须走 `cli::kimi_home()`,严禁硬编码 `~/.kimi-code`(M3 实测:本机设了 `KIMI_CODE_HOME=D:\Administrator\kimi-code`,写默认目录会导致功能静默失效)。
 - **配置原子写**:`desktop-config.json` / `mcp.json` 先写临时文件再替换;mcp.json 写盘前留 `.kimi-desktop-bak` 备份。
 - **config.toml 合并写用 `toml_edit`** 以保留注释/格式;只读解析用 `toml`。
+- **本机 CLI 双候选选新**(`cli::ensure_local_bin_pick`):数据目录/bin 与 PATH 同时存在 kimi 且非同一文件时,启动后首次检测按 `--version` 选较新的生效(平局/探测失败维持 home 优先;custom/KIMI_CODE_BIN 覆盖绝对优先),避免数据目录残留旧版静默遮蔽 npm 全局新版;每次运行只比较一次,set_cli_bin/set_kimi_home 后失效重估。升级通道按生效来源分叉:home=`kimi upgrade`,其余=`npm update -g`。
 - 注释和文档用中文(README 中英双语),代码标识符用英文。
 - 日期/统计口径依赖**本地时区日历日**(chrono,不用 UTC)。
 
@@ -66,6 +68,7 @@ cd src-tauri && cargo check   # Rust 侧检查(提交前必过)
 ## 注意事项
 
 - 无测试套件;验证手段是 `npm run typecheck` + `cargo check` + 手动 `tauri:dev`。
+- **dev 与正式版并存设计**:`tauri:dev` 合并 `tauri.dev.conf.json`(identifier `...-dev`)→ 单实例锁、`app_data_dir`(desktop-config.json/logs/自定义 skins/pets)、WebView2 用户数据目录全部随 identifier 隔离;`server::START_PORT` 按 `cfg!(debug_assertions)` 分叉(dev 58766 / release 58666,顺延窗口互不重叠),reclaim 各管各的首选端口、互不回收;窗口标题/托盘 tooltip dev 加 `[dev]` 后缀(lib.rs `APP_DISPLAY_NAME`)。kimi_home 默认仍共享(真实会话/配额/token,CLI 注册表天然支持多实例);需要隔离数据时设 `KIMI_CODE_HOME=<scratch>` 再启动 dev 即可。
 - 仅 Windows(NSIS)验证过;改动尽量保持跨平台可行,但不要为未测试平台做投机性适配。
 - 许可证 MIT,引入运行时依赖时注意许可证兼容(勿引入 copyleft 组件)。
 - `token 时序竞争`、`崩溃自愈(server:exited)` 等时序逻辑见 README「关键实现细节」,改动前先读。

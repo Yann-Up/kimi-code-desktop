@@ -1,7 +1,8 @@
 //! server-manager: 管理 `kimi web` 服务进程的生命周期(本机 / WSL / SSH 三种连接目标)。
 //! - 检测 kimi CLI 是否存在及版本
-//! - 启动前回收首选端口(默认 58666)上的残留实例(崩溃/强杀留下的孤儿,POST shutdown +
-//!   pid 强杀兜底;其他端口上用户另开的 kimi web 不动),让端口恒定:iframe 源(origin)稳定,
+//! - 启动前回收首选端口(release 58666 / dev 58766)上的残留实例(崩溃/强杀/更新安装留下的孤儿:
+//!   token 可用时 POST shutdown + pid 强杀兜底;token 不可用但端口被占且注册表心跳新鲜时
+//!   按 pid 强杀;其他端口上用户另开的 kimi web 不动),让端口恒定:iframe 源(origin)稳定,
 //!   web UI 按源存 localStorage 的"新浏览器"验证才不会每次启动重弹
 //! - 选择空闲端口,按连接目标启动 `kimi web --no-open --port <p>`
 //!   (Local/WSL 为本地子进程;SSH 为 russh exec_keepalive + 进程内端口转发)
@@ -22,8 +23,14 @@ use crate::ssh::SshProcess;
 use crate::target::ConnectionTarget;
 
 /// 默认起始端口:配合启动前的残留实例回收(reclaim_stale_instances),iframe 源恒定为此端口;
-/// 仅当被 kimi 以外的程序占用时才 +1 顺延(free_port 兜底)。设置页可改(web_server_set)
-pub const START_PORT: u16 = 58666;
+/// 仅当被 kimi 以外的程序占用时才 +1 顺延(free_port 兜底)。设置页可改(web_server_set)。
+/// dev 构建用 58766:与正式版(58666)错开(两边顺延窗口各 50 个端口,互不重叠),
+/// 配合 dev 独立 identifier(tauri.dev.conf.json),dev 与正式版可并存,回收各管各的端口
+pub const START_PORT: u16 = if cfg!(debug_assertions) {
+    58766
+} else {
+    58666
+};
 const HEALTH_TIMEOUT: Duration = Duration::from_secs(45);
 /// 等待启动 banner 打印 token 的超时(CLI 0.29.2+ 只打印、不写 server.token);
 /// 超时后回退旧 CLI 的 server.token 文件轮询
@@ -32,7 +39,7 @@ const BANNER_TOKEN_TIMEOUT: Duration = Duration::from_secs(12);
 /// kimi web 启动参数(设置页「服务启动参数」可配;改动经 web_server_set 落盘并重启服务生效)
 #[derive(Clone)]
 pub struct WebOptions {
-    /// 首选端口(默认 58666;被占时 free_port 顺延)
+    /// 首选端口(默认 START_PORT,release 58666 / dev 58766;被占时 free_port 顺延)
     pub port: u16,
 }
 
@@ -147,56 +154,82 @@ pub struct ServerInfo {
 }
 
 /// 启动前回收占用首选端口的残留 kimi web 实例(仅 Local/WSL):
-/// 上次运行未优雅关停(应用崩溃/强杀;WSL 下 wsl.exe 会话结束、Linux 侧进程被 /init 收养)
-/// 会留下孤儿占住首选端口,新实例被迫端口漂移 → iframe 源(origin)变化 →
+/// 上次运行未优雅关停(应用崩溃/强杀/更新安装强杀;WSL 下 wsl.exe 会话结束、Linux 侧进程被
+/// /init 收养)会留下孤儿占住首选端口,新实例被迫端口漂移 → iframe 源(origin)变化 →
 /// web UI 存于 localStorage 的"新浏览器"验证状态每次启动都失效。
 /// 只处理首选端口上的实例:其他端口上的 kimi web 可能是用户有意开着的另一个 CLI 实例,不动。
-/// 先 POST shutdown 优雅关停,端口 8s 内不还则按注册表登记的 pid 兜底强杀。
-/// token 读不到(server.token 缺失)时整体跳过——回收是尽力而为,不阻塞启动
+/// 两条途径:
+/// 1. token 可读(server.token,新版 CLI 持久化复用)且实例健康:POST shutdown 优雅关停,
+///    端口 8s 内不还则按注册表登记的 pid 兜底强杀;
+/// 2. token 读不到或健康检查未过(旧 CLI 不写 server.token / token 已轮换):端口仍被占用
+///    且注册表心跳新鲜(CLI 每 15s 刷新 heartbeat_at)说明孤儿还活着,直接按 pid 强杀;
+///    心跳过期则是死进程的注册表残留(pid 可能已被系统复用),跳过。
+/// 整体尽力而为,不阻塞启动
 async fn reclaim_stale_instances(http: &reqwest::Client, target: &ConnectionTarget, preferred: u16) {
     if matches!(target, ConnectionTarget::Ssh { .. }) {
         return;
     }
-    let token = match target.read_token_once().await {
-        Ok(Some(t)) => t,
-        _ => return,
-    };
-    for (port, pid) in target.list_server_instances().await {
+    let token = target.read_token_once().await.ok().flatten();
+    for (port, pid, heartbeat_at) in target.list_server_instances().await {
         if port != preferred {
             continue; // 其他端口的实例不归本服务管(可能是另一个 kimi CLI 在跑)
         }
         let base = format!("http://127.0.0.1:{port}");
-        let healthy = http
-            .get(format!("{base}/api/v1/healthz"))
-            .bearer_auth(&token)
-            .timeout(Duration::from_millis(1500))
-            .send()
-            .await
-            .map(|r| r.status().is_success())
-            .unwrap_or(false);
-        if !healthy {
-            continue; // 进程已死、仅注册表残留,跳过
-        }
-        eprintln!("[kimi-web] 回收残留实例 port={port} pid={pid}");
-        let _ = http
-            .post(format!("{base}/api/v1/shutdown"))
-            .bearer_auth(&token)
-            .timeout(Duration::from_secs(3))
-            .send()
-            .await;
-        // 轮询等端口释放(进程退出后监听 socket 关闭),最多 8s,超时兜底强杀
-        let deadline = Instant::now() + Duration::from_secs(8);
-        loop {
-            if std::net::TcpListener::bind(("127.0.0.1", port)).is_ok() {
-                break;
+        let healthy = match &token {
+            Some(token) => http
+                .get(format!("{base}/api/v1/healthz"))
+                .bearer_auth(token)
+                .timeout(Duration::from_millis(1500))
+                .send()
+                .await
+                .map(|r| r.status().is_success())
+                .unwrap_or(false),
+            None => false,
+        };
+        if healthy {
+            let token = token.as_deref().unwrap_or_default();
+            eprintln!("[kimi-web] 回收残留实例 port={port} pid={pid}");
+            let _ = http
+                .post(format!("{base}/api/v1/shutdown"))
+                .bearer_auth(token)
+                .timeout(Duration::from_secs(3))
+                .send()
+                .await;
+            // 轮询等端口释放(进程退出后监听 socket 关闭),最多 8s,超时兜底强杀
+            let deadline = Instant::now() + Duration::from_secs(8);
+            loop {
+                if std::net::TcpListener::bind(("127.0.0.1", port)).is_ok() {
+                    break;
+                }
+                if Instant::now() > deadline {
+                    eprintln!("[kimi-web] 残留实例 port={port} 未在 8s 内退出,按注册表 pid={pid} 强杀");
+                    target.kill_pid(pid).await;
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(300)).await;
             }
-            if Instant::now() > deadline {
-                eprintln!("[kimi-web] 残留实例 port={port} 未在 8s 内退出,按注册表 pid={pid} 强杀");
-                target.kill_pid(pid).await;
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(300)).await;
+            continue;
         }
+        // token 缺失/无效或实例不健康:孤儿仍存活(端口被占 + 注册表心跳新鲜)则按 pid 强杀
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0);
+        let heartbeat_fresh = heartbeat_at > 0 && now_ms.saturating_sub(heartbeat_at) < 60_000;
+        let port_occupied = std::net::TcpListener::bind(("127.0.0.1", port)).is_err();
+        if heartbeat_fresh && port_occupied {
+            eprintln!("[kimi-web] 回收残留实例(无可用 token,按注册表 pid 强杀)port={port} pid={pid}");
+            target.kill_pid(pid).await;
+            // 等端口释放,最多 3s(taskkill 异步生效,不等会被后面的 free_port 顺延)
+            let deadline = Instant::now() + Duration::from_secs(3);
+            while Instant::now() < deadline {
+                if std::net::TcpListener::bind(("127.0.0.1", port)).is_ok() {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(300)).await;
+            }
+        }
+        // 否则:进程已死、仅注册表残留(心跳过期),跳过
     }
 }
 

@@ -31,7 +31,7 @@ pub struct DesktopConfig {
     /// 实验性功能开关:env 名 → 是否开启(启动 kimi web 时注入为环境变量;
     /// 缺 key 按各项默认 —— KIMI_CODE_EXPERIMENTAL_SECONDARY_MODEL 默认开,其余默认关)
     pub experimental: Option<std::collections::HashMap<String, bool>>,
-    /// kimi web 首选端口(None = 默认 58666;被占时仍 +1 顺延)
+    /// kimi web 首选端口(None = 默认 server::START_PORT,release 58666 / dev 58766;被占时仍 +1 顺延)
     pub web_port: Option<u16>,
     /// 桌宠悬浮窗开关(实验性,缺省关;见 pet.rs)
     pub pet_enabled: Option<bool>,
@@ -70,7 +70,7 @@ impl DesktopConfig {
             .unwrap_or_else(|| "local".to_string())
     }
 
-    /// kimi web 启动参数(未配置时取默认:端口 58666)
+    /// kimi web 启动参数(未配置时取默认:端口 server::START_PORT,release 58666 / dev 58766)
     pub fn web_options(&self) -> crate::server::WebOptions {
         crate::server::WebOptions {
             port: self.web_port.unwrap_or(crate::server::START_PORT),

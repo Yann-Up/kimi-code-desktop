@@ -38,6 +38,14 @@ use server::{ServerInfo, ServerManager, SharedServer};
 use updater::{app_update_check, app_update_install};
 use ws::WsClient;
 
+/// 窗口标题 / 托盘 tooltip 显示名:dev 构建(tauri.dev.conf.json,独立 identifier)
+/// 加 [dev] 后缀,与正式版并存时任务栏/托盘可区分
+const APP_DISPLAY_NAME: &str = if cfg!(debug_assertions) {
+    "Kimi Code Desktop [dev]"
+} else {
+    "Kimi Code Desktop"
+};
+
 /// 单个通道的后端运行时状态:server / REST / server_info / WS 均按通道隔离,
 /// 各通道可独立启停、同时在线。key 为通道 id("local" 为本机)。
 pub struct BackendState {
@@ -183,6 +191,36 @@ pub(crate) async fn handle_unexpected_exit(app: &AppHandle, channel: &str, detai
         }
     }
     let _ = app.emit("server:exited", json!({ "channel": channel, "detail": detail }));
+}
+
+/// 关停所有通道的 kimi web(进程退出 / 应用更新安装前共用):
+/// 逐通道清 REST/ServerInfo、关 WS、优雅停服务(POST shutdown → 等退出 → 强杀兜底)、
+/// 复位 backend_running 并广播 server:stopped。
+/// 更新场景必须做:updater 插件安装时是 std::process::exit 立即终止进程,
+/// 不会触发 ExitRequested,不先停服务则 kimi web 变孤儿占住首选端口,重启后端口顺延
+pub(crate) async fn stop_all_backends(app: &AppHandle) {
+    let state = app.state::<Arc<AppState>>();
+    let channels: Vec<String> = state.backends.lock().await.keys().cloned().collect();
+    for channel in channels {
+        let server = {
+            let map = state.backends.lock().await;
+            let Some(bs) = map.get(&channel) else {
+                continue;
+            };
+            bs.manual_stop.store(true, Ordering::SeqCst);
+            *bs.rest.lock().await = None;
+            *bs.server_info.lock().await = None;
+            if let Some(ws) = bs.ws.lock().await.take() {
+                ws.close().await;
+            }
+            bs.server.clone()
+        };
+        ServerManager::stop(&server, &state.http).await;
+        state
+            .with_backend(&channel, |bs| bs.backend_running.store(false, Ordering::SeqCst))
+            .await;
+        let _ = app.emit("server:stopped", json!({ "channel": channel }));
+    }
 }
 
 // ---------- app ----------
@@ -1151,10 +1189,12 @@ async fn set_connection_target(
 async fn get_cli_bin() -> Value {
     let conn_target = cli::connection_target();
     if conn_target.is_local() {
+        // detect 先行:内部完成 home/PATH 双候选比较,bin/source 反映比较结果
+        let version = cli::detect_installed().await;
         return json!({
             "bin": cli::kimi_bin(),
             "source": cli::kimi_bin_source(),
-            "version": cli::detect_installed().await,
+            "version": version,
         });
     }
     let (bin, version) = match conn_target.kimi_bin_resolved().await {
@@ -1404,7 +1444,7 @@ fn create_tray(app: &AppHandle) -> tauri::Result<()> {
     let menu = MenuBuilder::new(app).items(&[&show, &sep, &quit]).build()?;
     TrayIconBuilder::with_id("main-tray")
         .icon(icon)
-        .tooltip("Kimi Code Desktop")
+        .tooltip(APP_DISPLAY_NAME)
         .menu(&menu)
         .on_menu_event(|app, event| match event.id().as_ref() {
             "show" => restore_main(app),
@@ -1472,10 +1512,11 @@ async fn run_bootstrap(app: AppHandle, state: Arc<AppState>, channel: String) {
                         return;
                     }
                     if cli::is_newer(&latest, &current) {
-                        // source 供前端区分升级通道:home=kimi upgrade,其余=npm update -g
+                        // source 供前端区分升级通道:home=kimi upgrade,其余=npm update -g;
+                        // bin 为当前生效的二进制路径(弹窗透明化展示更新对象)
                         let _ = app2.emit(
                             "cli:update-available",
-                            json!({ "current": current, "latest": latest, "source": cli::kimi_bin_source() }),
+                            json!({ "current": current, "latest": latest, "source": cli::kimi_bin_source(), "bin": cli::kimi_bin() }),
                         );
                     }
                 }
@@ -1679,7 +1720,7 @@ pub fn run() {
             // on_new_window(builder 级钩子),iframe 内 window.open/target=_blank 必须接管
             // 转系统浏览器,否则官方 UI 外链会被 WebView2 静默吞掉
             tauri::WebviewWindowBuilder::new(app.handle(), "main", tauri::WebviewUrl::default())
-                .title("Kimi Code Desktop")
+                .title(APP_DISPLAY_NAME)
                 .inner_size(1440.0, 900.0)
                 .min_inner_size(1024.0, 640.0)
                 .decorations(false)
@@ -1737,17 +1778,7 @@ pub fn run() {
                 api.prevent_exit();
                 let h = handle.clone();
                 tauri::async_runtime::spawn(async move {
-                    let s = h.state::<Arc<AppState>>();
-                    let servers: Vec<SharedServer> = s
-                        .backends
-                        .lock()
-                        .await
-                        .values()
-                        .map(|b| b.server.clone())
-                        .collect();
-                    for server in servers {
-                        ServerManager::stop(&server, &s.http).await;
-                    }
+                    stop_all_backends(&h).await;
                     h.exit(0);
                 });
             }

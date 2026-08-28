@@ -23,7 +23,7 @@
 - **悬浮菜单(P3)**:新 Tauri 窗口 label `pet-menu`,`index.html?window=pet-menu` 分流渲染 `src/components/pet/PetMenu.tsx`;锚定宠物窗顶边居中 + 屏幕 clamp;Rust 侧 `on_window_event` 失焦收起(`ever_focused` 守卫防建窗抢焦误收,hide 不 close 保留前端状态);会话列表走 REST `/api/v1/sessions` 10s 轮询(窗口 hidden 暂停);钉选会话存 desktop-config.json `menu_pinned_sessions`(`pet_menu_pin_toggle`/`pet_menu_pins_get`);快捷行「主窗口/统计/设置」走 async 命令 `pet_menu_navigate`(先 `restore_main` 再 emit `app:navigate {view, sessionId?}`,主窗 App.tsx listen 切 view;先 restore 后 emit,主窗隐藏时 webview 存活、listen 不丢)。
 - **跳会话已落地**:官方 web UI(0.37.2 起)支持 `/sessions/<id>` 路径路由(核实依据:前端产物 `selectSession`/`onSessionRoutePopState`);ShellHome 消费 `stores/ui.ts` 的 `pendingSessionFocus`,拼 `/sessions/<id>?_=<ts>#token` 重载 iframe。新 capability `src-tauri/capabilities/pet-menu.json`(只放 event listen/unlisten)。
 - **信息气泡(P2)**:新事件 `pet:bubble {text, tone: info|warn}`(`emit_bubble`,同类 2s 合并、全局 1s 限流)。触发源:turn.ended 概要(时长优先取载荷 `durationMs`,缺失回退自算;工具数按会话累计 `tool.call.started`)、approval.requested 详情(`tool_input_display.command` → `action` → `tool_name` 依次取,截断 40 字符,同会话 waiting 中不重复;字段名经 `server/events/*.jsonl` 实测)、配额提醒(ws.rs 新周期任务 5min 轮询 `/api/v1/oauth/usage`,≥80% info / ≥95% warn,每档每自然日一次)。前端气泡 warn 档变色、220px 截断;STATE_BUBBLE 摘掉 jumping(概要气泡取代)。
-- **小跟班(P4)**:`review_agents` 泛化为 `active_subagents: HashMap<subagentId, name>`,review 判定 = 任一 name 含 "review";新事件 `pet:minions {count}`(数量变化即发,STALE 清空补发 0)。前端 MinionSprite 独立小 canvas(DOM overlay,0.45 缩放 idle 行循环 + CSS bob),最多 3 只,>3 挂「+N」角标;不进 displayed 优先级链。
+- **小跟班(P4)**:`review_agents` 泛化为 `active_subagents: HashMap<{session_id}:{subagentId}, name>`(复合键,id 仅会话内唯一),review 判定 = 任一 name 含 "review";新事件 `pet:minions {count}`(数量变化即发,STALE 清空补发 0)。前端 MinionSprite 独立小 canvas(DOM overlay,0.45 缩放 idle 行循环 + CSS bob),最多 3 只,>3 挂「+N」角标;不进 displayed 优先级链。
 - **时间维度 + 散步(P5)**:PetState 新增 `tired`(running 分支细分:任一会话 turn 连续运行 >3min)与 `sleep`(idle 分支:last_activity >5min);init() 巡检改 500ms tick 无条件 recompute,时长到点无新事件也切换。前端 `resolveAnim` 回退 tired→running、sleep→idle,STATE_BUBBLE 各加一句;时段彩蛋纯前端(localStorage `kimi.petGreetedDate` 每日一句按本地时段)。闲置散步:配置 `pet_wander`(缺省开,设置页开关,新命令 `pet_set_wander`;`pet_config_json` 载荷统一加 `wander`),async 命令 `pet_nudge(dx)`(clamp 宠物所在显示器范围);前端 30-60s 随机走 100-300px(仅 idle/sleep 且无 minions 且未拖拽),撞边自动反向,移动时复用 running-left/right 动画。
 - **契约三处同步**:`kimi-api.ts` / `tauri.ts` / `lib.rs` 注册一致——命令 `pet_restore_main` / `pet_menu_toggle` / `pet_menu_hide` / `pet_menu_navigate` / `pet_menu_pin_toggle` / `pet_menu_pins_get` / `pet_set_wander` / `pet_nudge`,事件订阅 `onPetBubble` / `onPetMinions` / `onPetMenuVisible`。
 
@@ -181,7 +181,7 @@ pet.json(schema `kimi-desktop-pet/1`):
 - 进入:`subagent.spawned` 且 `subagentName` 含 "review"(大小写不敏感;CLI 无内置 review profile,该名字来自用户/项目自定义子代理,如 `~/.kimi-code/subagents/review.md`);
 - 退出:`subagent.completed` / `subagent.failed` / `subagent.suspended`(按 `subagentId` 配对);
 - 事件载荷已核实(服务端源码):spawned 带 `subagentId`/`subagentName`;completed/failed/suspended 带 `subagentId`;均在 v1 推送集合内(仅 transcript 订阅者被抑制,我们是纯 v1,不受影响);
-- 聚合与优先级:按 `subagentId` 建集合(与 active_turns 同构),**waiting > 一次性动作 > review > running > idle**;STALE 清扫连同 active_turns 一起清;
+- 聚合与优先级:按 `{session_id}:{subagentId}` 复合键建集合(subagentId 只在会话内唯一,实测跨会话大量复用),**waiting > 一次性动作 > review > running > idle**;STALE 清扫连同 active_turns 一起清(不按 idle/sleep 显示态跳过:服务端会话结束/abort 时可能不补发终结事件,泄漏的非 review 子代理不影响 state,跳过会导致小跟班永久残留——08-24 修复);注意子代理可合法地比 turn 活得久(实测 288 条 completed 晚于 prompt.completed),turn 结束不能清子代理;
 - Rust `PetState` 加 `Review`("review"),spritesheet 用 petdex 行序第 8 行。
 
 **素材侧配套**(三种 pet.json 归一化都要补 states):

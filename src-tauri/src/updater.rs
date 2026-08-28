@@ -71,8 +71,8 @@ async fn download_and_install(app: AppHandle) -> Result<(), String> {
     };
     let mut downloaded: u64 = 0;
     let progress_app = app.clone();
-    update
-        .download_and_install(
+    let bytes = update
+        .download(
             move |chunk_len, total| {
                 downloaded += chunk_len as u64;
                 let _ = progress_app.emit(
@@ -83,7 +83,14 @@ async fn download_and_install(app: AppHandle) -> Result<(), String> {
             || {},
         )
         .await
-        .map_err(|e| format!("下载/安装更新失败: {e}"))?;
+        .map_err(|e| format!("下载更新失败: {e}"))?;
+    // 关键:install 在 Windows 上是 ShellExecute 拉起 NSIS 安装器后 std::process::exit(0)
+    // 立即终止本进程——不会触发 ExitRequested,优雅关停完全不执行。
+    // 不先停服务的话 kimi web 变孤儿继续占住首选端口,新版启动时端口被迫顺延。
+    crate::stop_all_backends(&app).await;
+    update
+        .install(bytes)
+        .map_err(|e| format!("安装更新失败: {e}"))?;
     // 重启进新版本(Windows 上 NSIS 安装器已接管进程,此行实际不会执行到)
     tauri::process::restart(&app.env());
 }

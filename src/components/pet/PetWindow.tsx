@@ -158,6 +158,8 @@ function MinionSprite({ meta, index }: { meta: PetMeta; index: number }) {
     img.src = meta.source === 'builtin' ? builtinSheetUrl(meta.slug) : `http://pet.localhost/${meta.slug}`
     let raf = 0
     let start = 0
+    // 卸载早于 img.onload 时,onload 仍会启动 rAF 且无人取消(画进已分离的 canvas)
+    let disposed = false
     const draw = (ts: number, frames: number) => {
       if (!start) start = ts
       const idx = Math.floor(((ts - start) / 1000) * anim.fps) % frames
@@ -167,9 +169,13 @@ function MinionSprite({ meta, index }: { meta: PetMeta; index: number }) {
       raf = requestAnimationFrame((t) => draw(t, frames))
     }
     img.onload = () => {
+      if (disposed) return
       raf = requestAnimationFrame((t) => draw(t, detectFrames(img, fw, fh, anim)))
     }
-    return () => cancelAnimationFrame(raf)
+    return () => {
+      disposed = true
+      cancelAnimationFrame(raf)
+    }
   }, [meta])
   return (
     <canvas
@@ -494,6 +500,8 @@ export function PetWindow() {
     img.src = meta.source === 'builtin' ? builtinSheetUrl(meta.slug) : `http://pet.localhost/${meta.slug}`
     let raf = 0
     let start = 0
+    // 卸载早于 img.onload 时,onload 仍会启动 rAF 且无人取消(与 MinionSprite 同)
+    let disposed = false
     const draw = (ts: number, frames: number) => {
       if (!start) start = ts
       const elapsed = (ts - start) / 1000
@@ -512,10 +520,14 @@ export function PetWindow() {
       if (loop || idx < frames - 1) raf = requestAnimationFrame((t) => draw(t, frames))
     }
     img.onload = () => {
+      if (disposed) return
       const frames = detectFrames(img, fw, fh, anim)
       raf = requestAnimationFrame((t) => draw(t, frames))
     }
-    return () => cancelAnimationFrame(raf)
+    return () => {
+      disposed = true
+      cancelAnimationFrame(raf)
+    }
   }, [displayed, meta])
 
   return (

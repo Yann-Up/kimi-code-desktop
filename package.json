@@ -8,7 +8,7 @@
     "dev:renderer": "vite --config vite.renderer.config.mts",
     "build:renderer": "vite build --config vite.renderer.config.mts",
     "tauri": "tauri",
-    "tauri:dev": "tauri dev --config src-tauri/tauri.conf.json",
+    "tauri:dev": "tauri dev --config src-tauri/tauri.dev.conf.json",
     "tauri:build": "tauri build --config src-tauri/tauri.conf.json"
   },
   "devDependencies": {

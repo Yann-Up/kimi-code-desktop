@@ -1,6 +1,8 @@
 //! cli-manager: Kimi Code CLI 的自检测、自动安装与升级。
 //! - 未安装:首次启动时执行官方安装脚本自动下载
-//! - 已安装:对比 npm registry 最新版,有新版本时交给 UI 询问用户,确认后 `kimi upgrade`
+//! - 已安装:对比 npm registry 最新版,有新版本时交给 UI 询问用户;
+//!   确认后按来源升级(home=`kimi upgrade`,path/custom/env=`npm update -g`)
+//! - 本机双候选:数据目录/bin 与 PATH 同时存在 kimi 时按 --version 选较新的生效
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -23,6 +25,11 @@ static CLI_BIN_OVERRIDE: RwLock<Option<String>> = RwLock::new(None);
 /// 用户指定的远端 CLI 二进制路径(仅 WSL/SSH 目标生效);
 /// 多通道下表示"当前激活通道"的远端覆盖,随激活通道切换刷新
 static REMOTE_BIN_OVERRIDE: RwLock<Option<String>> = RwLock::new(None);
+
+/// 本机 CLI 双候选(home/bin 与 PATH)比较结果:
+/// Some(true)=PATH 候选较新,优先生效;Some(false)=维持 home 优先;None=未比较/无需比较。
+/// 每次运行最多比较一次(首个 detect_installed 触发),设置变更时失效重估
+static LOCAL_BIN_PICK: RwLock<Option<bool>> = RwLock::new(None);
 
 /// 通道 id → 连接目标(含 "local"),启动加载与配置变更后刷新
 static CHANNEL_TARGETS: std::sync::LazyLock<RwLock<HashMap<String, ConnectionTarget>>> =
@@ -87,6 +94,7 @@ pub fn channel_id_for(conn: &ConnectionConfig) -> String {
 /// 设置/读取自定义目录覆盖(设置页 set_kimi_home 用)
 pub fn set_kimi_home_override(path: Option<PathBuf>) {
     *KIMI_HOME_OVERRIDE.write().unwrap() = path;
+    invalidate_local_bin_pick();
 }
 
 pub fn kimi_home_override() -> Option<PathBuf> {
@@ -95,6 +103,7 @@ pub fn kimi_home_override() -> Option<PathBuf> {
 
 pub fn set_cli_bin_override(bin: Option<String>) {
     *CLI_BIN_OVERRIDE.write().unwrap() = bin;
+    invalidate_local_bin_pick();
 }
 
 pub fn cli_bin_override() -> Option<String> {
@@ -167,7 +176,21 @@ pub fn kimi_home_source() -> &'static str {
     }
 }
 
-/// 解析 kimi 可执行文件:用户自定义 > KIMI_CODE_BIN 环境变量 > 当前数据目录/bin > 默认目录/bin > PATH
+/// home 候选:数据目录/bin 或默认目录/bin 下的 kimi(现行 home 段优先级)
+fn home_bin_candidate() -> Option<String> {
+    for home in [kimi_home(), default_kimi_home()] {
+        for name in ["kimi.exe", "kimi"] {
+            let p = home.join("bin").join(name);
+            if p.exists() {
+                return Some(p.to_string_lossy().into_owned());
+            }
+        }
+    }
+    None
+}
+
+/// 解析 kimi 可执行文件:用户自定义 > KIMI_CODE_BIN 环境变量 > 双候选比较结果
+/// (PATH 较新时 PATH 优先,否则数据目录/bin > 默认目录/bin)> PATH
 /// (自定义数据目录通常不含二进制,回退到默认安装位置)
 pub fn kimi_bin() -> String {
     if let Some(b) = cli_bin_override() {
@@ -178,13 +201,14 @@ pub fn kimi_bin() -> String {
             return b;
         }
     }
-    for home in [kimi_home(), default_kimi_home()] {
-        for name in ["kimi.exe", "kimi"] {
-            let p = home.join("bin").join(name);
-            if p.exists() {
-                return p.to_string_lossy().into_owned();
-            }
+    // 双候选比较选定 PATH 时优先之(PATH 上的候选消失则自然回退 home)
+    if *LOCAL_BIN_PICK.read().unwrap() == Some(true) {
+        if let Some(p) = resolve_on_path("kimi") {
+            return p;
         }
+    }
+    if let Some(p) = home_bin_candidate() {
+        return p;
     }
     // PATH 兜底:Windows 上 CreateProcess 只自动补 .exe,裸 "kimi" 永远找不到 npm 全局
     // 安装的 kimi.cmd shim,先用 where.exe 解析出实际路径(.cmd 由 hidden_command 走
@@ -219,7 +243,8 @@ fn resolve_on_path(name: &str) -> Option<String> {
 }
 
 /// 当前 CLI 二进制来源(设置页展示/升级守卫用):
-/// custom=设置指定,env=KIMI_CODE_BIN,home=数据目录或默认目录安装,path=PATH 上的(如 npm 全局)
+/// custom=设置指定,env=KIMI_CODE_BIN,home=数据目录或默认目录安装,path=PATH 上的(如 npm 全局);
+/// 双候选比较选定 PATH 时(较新)返回 path,与 kimi_bin 的实际解析一致
 pub fn kimi_bin_source() -> &'static str {
     if cli_bin_override().is_some() {
         return "custom";
@@ -227,14 +252,76 @@ pub fn kimi_bin_source() -> &'static str {
     if std::env::var("KIMI_CODE_BIN").map(|b| !b.is_empty()).unwrap_or(false) {
         return "env";
     }
-    for home in [kimi_home(), default_kimi_home()] {
-        for name in ["kimi.exe", "kimi"] {
-            if home.join("bin").join(name).exists() {
-                return "home";
-            }
-        }
+    if *LOCAL_BIN_PICK.read().unwrap() == Some(true) && resolve_on_path("kimi").is_some() {
+        return "path";
+    }
+    if home_bin_candidate().is_some() {
+        return "home";
     }
     "path"
+}
+
+/// 路径等价判断:Windows 下大小写/分隔符不敏感
+fn paths_equal(a: &str, b: &str) -> bool {
+    if cfg!(windows) {
+        a.replace('/', "\\").eq_ignore_ascii_case(&b.replace('/', "\\"))
+    } else {
+        a == b
+    }
+}
+
+/// 短探测指定二进制的版本(双候选比较用;超时/失败返回 None)
+async fn probe_version(bin: &str) -> Option<String> {
+    let out = tokio::time::timeout(
+        Duration::from_secs(5),
+        hidden_command(bin)
+            .arg("--version")
+            .kill_on_drop(true)
+            .output(),
+    )
+    .await
+    .ok()?
+    .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let v = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    if v.is_empty() {
+        None
+    } else {
+        Some(v)
+    }
+}
+
+/// 本机双候选比较:home/bin 与 PATH 各有 kimi 且非同一文件时,选 --version 较新的生效
+/// (避免数据目录残留旧版静默遮蔽 npm 全局新版);版本并列/任一侧探测失败维持 home 优先。
+/// custom/env 覆盖优先于本比较;每次运行最多比较一次,结果缓存于 LOCAL_BIN_PICK
+pub async fn ensure_local_bin_pick() {
+    if cli_bin_override().is_some()
+        || std::env::var("KIMI_CODE_BIN").map(|b| !b.is_empty()).unwrap_or(false)
+    {
+        return;
+    }
+    if LOCAL_BIN_PICK.read().unwrap().is_some() {
+        return;
+    }
+    let pick = match (home_bin_candidate(), resolve_on_path("kimi")) {
+        (Some(home), Some(path)) if !paths_equal(&home, &path) => {
+            let (hv, pv) = tokio::join!(probe_version(&home), probe_version(&path));
+            match (hv, pv) {
+                (Some(hv), Some(pv)) => is_newer(&pv, &hv),
+                _ => false,
+            }
+        }
+        // 单一候选或同一文件:无需比较,维持现行 home 优先
+        _ => false,
+    };
+    *LOCAL_BIN_PICK.write().unwrap() = Some(pick);
+}
+
+/// 使双候选比较结果失效(自定义 CLI/数据目录变更后重估)
+pub fn invalidate_local_bin_pick() {
+    *LOCAL_BIN_PICK.write().unwrap() = None;
 }
 
 /// 构造子进程命令;Windows 下 GUI 应用拉起控制台程序时隐藏黑窗(CREATE_NO_WINDOW)。
@@ -269,6 +356,8 @@ pub async fn detect_installed() -> Option<String> {
     if !target.is_local() {
         return target.detect_cli().await.ok().filter(|v| !v.is_empty());
     }
+    // 本机:先完成 home/PATH 双候选比较(每次运行一次),再探测生效二进制的版本
+    ensure_local_bin_pick().await;
     // kill_on_drop:超时(timeout 返回)后子进程随之被杀,不留后台残留
     let out = tokio::time::timeout(
         Duration::from_secs(15),
