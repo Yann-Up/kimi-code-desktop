@@ -53,7 +53,7 @@ const FEATURES: FeatureDef[] = [
   {
     env: 'KIMI_CODE_EXPERIMENTAL_TOWER',
     label: 'tower 模式',
-    desc: '协调多个 agent 围绕同一目标协作(tower mode)'
+    desc: '协调多个 agent 围绕同一目标协作(tower mode)。注意:CLI 0.39.0 的 Web UI 尚无 /tower 入口,开启后目前只能在终端 TUI 里用(KIMI_CODE_EXPERIMENTAL_TOWER=1 kimi,然后 /tower on)'
   },
   {
     env: 'KIMI_CODE_EXPERIMENTAL_WAIT_FOR',
