@@ -9,6 +9,25 @@ import type {
 /** 壳内视图:顶部导航的三个 tab(对话 / 统计 / 设置) */
 export type ShellView = 'chat' | 'stats' | 'settings'
 
+/** 壳主题:跟随官方 web UI(chatPrefsBridge 上报);持久化 localStorage kimi.theme */
+export type ShellTheme = 'light' | 'dark'
+/** 壳语言:跟随官方 web UI(kimi-locale);持久化 localStorage kimi.locale */
+export type ShellLocale = 'zh' | 'en'
+
+/** data-theme 应用:亮态不设属性(默认令牌),暗态置 dark(theme.css 按属性覆盖) */
+function applyThemeAttr(theme: ShellTheme) {
+  if (theme === 'dark') document.documentElement.dataset.theme = 'dark'
+  else delete document.documentElement.dataset.theme
+}
+
+function loadTheme(): ShellTheme {
+  return localStorage.getItem('kimi.theme') === 'dark' ? 'dark' : 'light'
+}
+
+function loadLocale(): ShellLocale {
+  return localStorage.getItem('kimi.locale') === 'en' ? 'en' : 'zh'
+}
+
 /** 向导打开模式:switch = 切换激活通道目标(原行为);add = 添加通道(仅追加不切换) */
 export type OnboardingMode = 'switch' | 'add'
 
@@ -33,6 +52,12 @@ interface UiState {
   quotaRefreshSecs: number
   /** 设置页字体缩放(百分比,100=标准;持久化 localStorage,经 CSS zoom 生效) */
   settingsZoom: number
+  /** 壳主题(chatPrefsBridge 随官方 UI 上报写入;持久化 kimi.theme) */
+  theme: ShellTheme
+  /** 壳语言(chatPrefsBridge 随官方 UI 上报写入;持久化 kimi.locale) */
+  locale: ShellLocale
+  /** 对话 iframe 桥接健康(chatPrefsBridge 自检上报;null=未收到/服务未启动) */
+  bridgeHealth: { ok: boolean; reason?: string; detail?: string } | null
   /** 应用自身更新信息(启动静默自检/设置页手动检查写入;null=无更新或未检查) */
   appUpdate: AppUpdateInfo | null
   /** 应用更新下载中标记(全局:设置页切走再回来不丢失,也用于禁用重复触发) */
@@ -46,6 +71,9 @@ interface UiState {
   setSettingsSection: (s: string) => void
   setQuotaRefreshSecs: (secs: number) => void
   setSettingsZoom: (pct: number) => void
+  setTheme: (t: ShellTheme) => void
+  setLocale: (l: ShellLocale) => void
+  setBridgeHealth: (h: UiState['bridgeHealth']) => void
   setAppUpdate: (info: AppUpdateInfo | null) => void
   setAppInstalling: (v: boolean) => void
   setAppProgress: (p: AppUpdateProgress | null) => void
@@ -99,6 +127,19 @@ export const useUi = create<UiState>((set) => ({
     localStorage.setItem('kimi.settingsZoom', String(pct))
     set({ settingsZoom: pct })
   },
+  theme: loadTheme(),
+  locale: loadLocale(),
+  setTheme: (t) => {
+    localStorage.setItem('kimi.theme', t)
+    applyThemeAttr(t)
+    set({ theme: t })
+  },
+  setLocale: (l) => {
+    localStorage.setItem('kimi.locale', l)
+    set({ locale: l })
+  },
+  bridgeHealth: null,
+  setBridgeHealth: (h) => set({ bridgeHealth: h }),
   setAppUpdate: (info) => set({ appUpdate: info }),
   setAppInstalling: (v) => set({ appInstalling: v }),
   setAppProgress: (p) => set({ appProgress: p }),
@@ -130,3 +171,18 @@ export const useUi = create<UiState>((set) => ({
   closeOnboarding: () => set({ onboardingOpen: false, onboardingTarget: null }),
   setPendingSessionFocus: (id) => set({ pendingSessionFocus: id })
 }))
+
+// 启动即按持久化值落地 data-theme(三种窗口共用本 store,同源共享 localStorage)
+applyThemeAttr(useUi.getState().theme)
+
+// 跨窗同步:桌宠/菜单窗与主窗同源,storage 事件只在「其他窗口」触发——
+// 主窗 chatPrefsBridge 写入后,桌宠窗经这里跟随主题/语言
+window.addEventListener('storage', (e) => {
+  if (e.key === 'kimi.theme') {
+    const t = loadTheme()
+    applyThemeAttr(t)
+    useUi.setState({ theme: t })
+  } else if (e.key === 'kimi.locale') {
+    useUi.setState({ locale: loadLocale() })
+  }
+})

@@ -6,8 +6,13 @@ import { useEffect, useState } from 'react'
 import { Section, Card, GroupLabel } from '../../components/settings/common'
 import { listAllSkins, resolveSkin, type SkinInfo } from '../../components/skins'
 import type { PetInfo } from '../../platform/kimi-api'
+import { useUi } from '../../stores/ui'
+import { Select } from '../../components/ui/Select'
+import { Switch } from '../../components/ui/Switch'
 
 export function DesktopExperimentalSettings() {
+  // 对话 iframe 桥接健康(chatPrefsBridge 自检上报;官方改版导致契约失效时此处可见)
+  const bridgeHealth = useUi((s) => s.bridgeHealth)
   // 桌宠:开关状态与写入中标记
   const [petEnabled, setPetEnabled] = useState(false)
   const [petBusy, setPetBusy] = useState(false)
@@ -97,19 +102,16 @@ export function DesktopExperimentalSettings() {
         {/* 桌宠:透明置顶悬浮窗,渲染本地 spritesheet */}
         <div className="flex items-center justify-between">
           <div>
-            <p className="text-[13.5px] font-medium">桌宠</p>
+            <p className="text-[13px] font-[475]">桌宠</p>
             <p className="text-[12px] text-text-tertiary">
               在桌面悬浮一只宠物,随 Kimi Code 任务状态切换动作(左键拖动)
             </p>
             {petError && <p className="mt-1 text-[12px] text-danger">{petError}</p>}
           </div>
-          <button
-            className={`relative h-6 w-11 shrink-0 rounded-full transition-colors ${
-              petEnabled ? 'bg-primary' : 'bg-border'
-            } disabled:opacity-50`}
+          <Switch
+            checked={petEnabled}
             disabled={petBusy}
-            onClick={() => {
-              const next = !petEnabled
+            onChange={(next) => {
               setPetBusy(true)
               setPetError('')
               window.kimiApi
@@ -118,19 +120,13 @@ export function DesktopExperimentalSettings() {
                 .catch((e) => setPetError(e instanceof Error ? e.message : String(e)))
                 .finally(() => setPetBusy(false))
             }}
-          >
-            <span
-              className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-all ${
-                petEnabled ? 'left-[22px]' : 'left-0.5'
-              }`}
-            />
-          </button>
+          />
         </div>
         {/* 宠物选择(内置排第一,外部宠物按目录扫描);切换后桌宠窗经 pet:config-changed 重载 */}
         {petEnabled && (
           <div className="mt-3 flex items-center justify-between gap-3 border-t border-border pt-3">
             <div className="min-w-0">
-              <p className="text-[13.5px] font-medium">宠物形象</p>
+              <p className="text-[13px] font-[475]">宠物形象</p>
               <p className="text-[12px] text-text-tertiary">
                 外部宠物扫描自应用数据目录的 pets/(导入的宠物存这里)、kimi-code 数据目录与 ~/.petdex/pets/(需含 pet.json 与精灵图);切换即时生效
               </p>
@@ -141,7 +137,7 @@ export function DesktopExperimentalSettings() {
             <div className="flex shrink-0 items-center gap-2">
               {/* 导入宠物包:zip 字节传 Rust 解压校验到应用数据目录 pets/<slug>,成功后直接换上 */}
               <label
-                className={`cursor-pointer rounded-lg border border-border bg-surface px-2.5 py-1.5 text-[13px] text-text-secondary hover:border-primary/50 ${
+                className={`cursor-pointer rounded-lg border border-border bg-surface px-2.5 py-1.5 text-[13px] text-text hover:border-primary/50 ${
                   petBusy ? 'pointer-events-none opacity-50' : ''
                 }`}
               >
@@ -175,29 +171,27 @@ export function DesktopExperimentalSettings() {
                   }}
                 />
               </label>
-              <select
-                className="rounded-lg border border-border bg-surface px-2.5 py-1.5 text-[13px] outline-none disabled:opacity-50"
+              <Select
+                className="w-40"
                 value={petSlug}
                 disabled={petBusy}
-                onChange={(e) => {
-                  const slug = e.target.value
+                onChange={(slug) => {
                   setPetError('')
                   window.kimiApi
                     .petSetActive(slug)
                     .then(() => setPetSlug(slug))
                     .catch((err) => setPetError(err instanceof Error ? err.message : String(err)))
                 }}
-              >
-                {/* 激活宠物不在扫描结果里(目录被删等)时兜底展示,避免 select 失控 */}
-                {!petOptions.some((p) => p.slug === petSlug) && (
-                  <option value={petSlug}>{petSlug}</option>
-                )}
-                {petOptions.map((p) => (
-                  <option key={p.slug} value={p.slug}>
-                    {p.name}
-                  </option>
-                ))}
-              </select>
+                options={
+                  // 激活宠物不在扫描结果里(目录被删等)时兜底展示,避免选项缺失
+                  petOptions.some((p) => p.slug === petSlug)
+                    ? petOptions.map((p) => ({ value: p.slug, label: p.name }))
+                    : [
+                        { value: petSlug, label: petSlug },
+                        ...petOptions.map((p) => ({ value: p.slug, label: p.name }))
+                      ]
+                }
+              />
             </div>
           </div>
         )}
@@ -205,18 +199,15 @@ export function DesktopExperimentalSettings() {
         {petEnabled && (
           <div className="mt-3 flex items-center justify-between border-t border-border pt-3">
             <div className="min-w-0">
-              <p className="text-[13.5px] font-medium">点击穿透</p>
+              <p className="text-[13px] font-[475]">点击穿透</p>
               <p className="text-[12px] text-text-tertiary">
                 开启后鼠标直接穿过桌宠(无法拖动或右键),需回本页关闭
               </p>
             </div>
-            <button
-              className={`relative h-6 w-11 shrink-0 rounded-full transition-colors ${
-                petClickThrough ? 'bg-primary' : 'bg-border'
-              } disabled:opacity-50`}
+            <Switch
+              checked={petClickThrough}
               disabled={petBusy}
-              onClick={() => {
-                const next = !petClickThrough
+              onChange={(next) => {
                 setPetBusy(true)
                 setPetError('')
                 window.kimiApi
@@ -225,13 +216,7 @@ export function DesktopExperimentalSettings() {
                   .catch((e) => setPetError(e instanceof Error ? e.message : String(e)))
                   .finally(() => setPetBusy(false))
               }}
-            >
-              <span
-                className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-all ${
-                  petClickThrough ? 'left-[22px]' : 'left-0.5'
-                }`}
-              />
-            </button>
+            />
           </div>
         )}
         {/* 闲置散步(桌宠 M5 P5):开关写 desktop-config.json 的 pet_wander,
@@ -239,18 +224,15 @@ export function DesktopExperimentalSettings() {
         {petEnabled && (
           <div className="mt-3 flex items-center justify-between gap-3 border-t border-border pt-3">
             <div className="min-w-0">
-              <p className="text-[13.5px] font-medium">闲置时四处走动</p>
+              <p className="text-[13px] font-[475]">闲置时四处走动</p>
               <p className="text-[12px] text-text-tertiary">
                 空闲时宠物会在屏幕上随机溜达,来活了就停下
               </p>
             </div>
-            <button
-              className={`relative h-6 w-11 shrink-0 rounded-full transition-colors ${
-                petWander ? 'bg-primary' : 'bg-border'
-              } disabled:opacity-50`}
+            <Switch
+              checked={petWander}
               disabled={petBusy}
-              onClick={() => {
-                const next = !petWander
+              onChange={(next) => {
                 setPetBusy(true)
                 setPetError('')
                 window.kimiApi
@@ -259,13 +241,7 @@ export function DesktopExperimentalSettings() {
                   .catch((e) => setPetError(e instanceof Error ? e.message : String(e)))
                   .finally(() => setPetBusy(false))
               }}
-            >
-              <span
-                className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-all ${
-                  petWander ? 'left-[22px]' : 'left-0.5'
-                }`}
-              />
-            </button>
+            />
           </div>
         )}
       </Card>
@@ -274,19 +250,16 @@ export function DesktopExperimentalSettings() {
         {/* 皮肤立绘:主页/统计/设置页右侧显示内置立绘(SkinStandee),对话 iframe 不生效 */}
         <div className="flex items-center justify-between">
           <div>
-            <p className="text-[13.5px] font-medium">背景立绘</p>
+            <p className="text-[13px] font-[475]">背景立绘</p>
             <p className="text-[12px] text-text-tertiary">
               在主页、统计、设置页右侧显示内置立绘(对话页不生效)
             </p>
             {skinError && <p className="mt-1 text-[12px] text-danger">{skinError}</p>}
           </div>
-          <button
-            className={`relative h-6 w-11 shrink-0 rounded-full transition-colors ${
-              skinEnabled ? 'bg-primary' : 'bg-border'
-            } disabled:opacity-50`}
+          <Switch
+            checked={skinEnabled}
             disabled={skinBusy}
-            onClick={() => {
-              const next = !skinEnabled
+            onChange={(next) => {
               setSkinBusy(true)
               setSkinError('')
               window.kimiApi
@@ -295,13 +268,7 @@ export function DesktopExperimentalSettings() {
                 .catch((e) => setSkinError(e instanceof Error ? e.message : String(e)))
                 .finally(() => setSkinBusy(false))
             }}
-          >
-            <span
-              className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-all ${
-                skinEnabled ? 'left-[22px]' : 'left-0.5'
-              }`}
-            />
-          </button>
+          />
         </div>
         {/* 皮肤选择(内置 + 自选);切换后立绘经 skin:config-changed 即时换图 */}
         {skinEnabled && skinOptions.length > 0 && (
@@ -315,7 +282,7 @@ export function DesktopExperimentalSettings() {
                 draggable={false}
               />
               <div className="min-w-0">
-                <p className="text-[13.5px] font-medium">皮肤形象</p>
+                <p className="text-[13px] font-[475]">皮肤形象</p>
                 <p className="text-[12px] text-text-tertiary">
                   除内置皮肤外,也可把自己的图片(png/webp/jpg)放进皮肤目录使用,
                   <button
@@ -335,33 +302,29 @@ export function DesktopExperimentalSettings() {
                 </p>
               </div>
             </div>
-            <select
-              className="shrink-0 rounded-lg border border-border bg-surface px-2.5 py-1.5 text-[13px] outline-none disabled:opacity-50"
-              value={resolveSkin(skinOptions, skinSlug)?.slug}
+            <Select
+              className="w-44 shrink-0"
+              value={resolveSkin(skinOptions, skinSlug)?.slug ?? ''}
               disabled={skinBusy}
-              onChange={(e) => {
-                const slug = e.target.value
+              onChange={(slug) => {
                 setSkinError('')
                 window.kimiApi
                   .skinSetActive(slug)
                   .then(() => setSkinSlug(slug))
                   .catch((err) => setSkinError(err instanceof Error ? err.message : String(err)))
               }}
-            >
-              {skinOptions.map((s) => (
-                <option key={s.slug} value={s.slug}>
-                  {s.name}
-                  {s.source === 'custom' ? '(自选)' : ''}
-                </option>
-              ))}
-            </select>
+              options={skinOptions.map((s) => ({
+                value: s.slug,
+                label: s.name + (s.source === 'custom' ? '(自选)' : '')
+              }))}
+            />
           </div>
         )}
         {/* 卡片不透明度:拖动即持久化并发 skin:config-changed,SkinStandee 即时更新 CSS 变量 */}
         {skinEnabled && (
           <div className="mt-3 flex items-center justify-between gap-3 border-t border-border pt-3">
             <div className="min-w-0">
-              <p className="text-[13.5px] font-medium">卡片不透明度</p>
+              <p className="text-[13px] font-[475]">卡片不透明度</p>
               <p className="text-[12px] text-text-tertiary">
                 数值越低,立绘从卡片下透出越明显(30% - 100%)
               </p>
@@ -395,18 +358,15 @@ export function DesktopExperimentalSettings() {
         {skinEnabled && (
           <div className="mt-3 flex items-center justify-between gap-3 border-t border-border pt-3">
             <div className="min-w-0">
-              <p className="text-[13.5px] font-medium">对话页内显示立绘</p>
+              <p className="text-[13px] font-[475]">对话页内显示立绘</p>
               <p className="text-[12px] text-text-tertiary">
                 在对话窗口(官方 web UI)右下角叠加显示当前皮肤立绘
               </p>
             </div>
-            <button
-              className={`relative h-6 w-11 shrink-0 rounded-full transition-colors ${
-                skinInChat ? 'bg-primary' : 'bg-border'
-              } disabled:opacity-50`}
+            <Switch
+              checked={skinInChat}
               disabled={skinBusy}
-              onClick={() => {
-                const next = !skinInChat
+              onChange={(next) => {
                 setSkinBusy(true)
                 setSkinError('')
                 window.kimiApi
@@ -415,15 +375,43 @@ export function DesktopExperimentalSettings() {
                   .catch((e) => setSkinError(e instanceof Error ? e.message : String(e)))
                   .finally(() => setSkinBusy(false))
               }}
-            >
-              <span
-                className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-all ${
-                  skinInChat ? 'left-[22px]' : 'left-0.5'
-                }`}
-              />
-            </button>
+            />
           </div>
         )}
+      </Card>
+
+      {/* 页面桥接:皮肤立绘与主题/语言跟随都依赖注入官方 web UI 的桥接脚本,
+          官方改版导致契约失效时降级为"不生效但不影响官方页面",此处给出可见状态 */}
+      <GroupLabel>页面桥接</GroupLabel>
+      <Card>
+        <div className="flex items-center justify-between gap-3">
+          <div className="min-w-0">
+            <p className="text-[13px] font-[475]">官方页面桥接</p>
+            <p className="text-[12px] text-text-tertiary">
+              皮肤立绘、主题/语言跟随依赖注入官方 web UI 的桥接脚本
+            </p>
+            {bridgeHealth?.detail && (
+              <p className="mt-1 break-all font-mono text-[11px] text-text-tertiary">
+                {bridgeHealth.detail}
+              </p>
+            )}
+          </div>
+          <span
+            className={`shrink-0 rounded-full px-2.5 py-1 text-[11.5px] font-medium ${
+              bridgeHealth === null
+                ? 'bg-fill text-text-tertiary'
+                : bridgeHealth.ok
+                  ? 'bg-success-soft text-success'
+                  : 'bg-warning-soft text-warning'
+            }`}
+          >
+            {bridgeHealth === null
+              ? '未连接(对话服务未启动)'
+              : bridgeHealth.ok
+                ? '正常'
+                : '降级:官方主题契约缺失(官方可能已改版)'}
+          </span>
+        </div>
       </Card>
     </Section>
   )

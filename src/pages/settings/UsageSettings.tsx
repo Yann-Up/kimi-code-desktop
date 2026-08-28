@@ -2,6 +2,7 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'rea
 import { CalendarDays, Coins, Cpu, Flame, Layers, MessagesSquare } from 'lucide-react'
 import { Section, Card, GroupLabel, Empty } from '../../components/settings/common'
 import { shortWorkspace } from '../stats/ApiCallsTable'
+import { useUi } from '../../stores/ui'
 
 interface DailyUsage {
   date: string // YYYY-MM-DD
@@ -29,8 +30,12 @@ const HEATMAP_WEEKS = 52
 const HEATMAP_DAYS = HEATMAP_WEEKS * 7
 /** 堆叠/donut 调色板:蓝/绿/橙/紫/青/灰(其他) */
 const MODEL_COLORS = ['#2563eb', '#16a34a', '#ea580c', '#7c3aed', '#0891b2', '#64748b']
-/** 热力图 5 档:灰(无)→浅蓝→深蓝 */
-const HEAT_COLORS = ['#f1f5f9', '#dbeafe', '#93c5fd', '#3b82f6', '#1e40af']
+/** 热力图 5 档:面板灰(无)→浅蓝→深蓝;暗色主题换暗基底 + 亮高端(跟随壳主题) */
+const HEAT_COLORS_LIGHT = ['#f5f5f5', '#dbeafe', '#93c5fd', '#1783ff', '#0f5fd0']
+const HEAT_COLORS_DARK = ['#1f1f1f', '#0d3a75', '#1460c8', '#1a88ff', '#7ab8ff']
+function useHeatColors() {
+  return useUi((s) => s.theme) === 'dark' ? HEAT_COLORS_DARK : HEAT_COLORS_LIGHT
+}
 
 /** 按天趋势「按 Token 类型」模式系列(配色对齐今日实时趋势) */
 const TOKEN_TYPE_SERIES = [
@@ -97,6 +102,7 @@ function StatCard(props: { icon: typeof Coins; label: string; value: string; sub
 
 /** GitHub 风格活跃热力图:每列一周(周日起),每格一天 */
 function Heatmap({ days }: { days: DailyUsage[] }) {
+  const heatColors = useHeatColors()
   const { weeks, monthLabels } = useMemo(() => {
     const totals = new Map(days.map((d) => [d.date, d.total]))
     const today = todayZero()
@@ -160,7 +166,7 @@ function Heatmap({ days }: { days: DailyUsage[] }) {
                 title={`${c.key} · ${c.total > 0 ? `${fmtTokens(c.total)} tokens` : '无记录'}`}
                 className="aspect-square w-full min-w-0 rounded-[3px] transition-transform hover:scale-125"
                 style={{
-                  background: HEAT_COLORS[level(c.total)],
+                  background: heatColors[level(c.total)],
                   visibility: c.future ? 'hidden' : 'visible'
                 }}
               />
@@ -220,7 +226,7 @@ function TrendChart({
               >
                 <div className="flex h-full w-full max-w-7 flex-col justify-end gap-px">
                   {d.total === 0 ? (
-                    <div className="h-[2px] w-full rounded-sm bg-surface-tertiary" />
+                    <div className="h-[2px] w-full rounded-sm bg-fill" />
                   ) : (
                     d.parts.map((p, i) =>
                       p.v > 0 ? (
@@ -350,7 +356,7 @@ function WorkspaceRank({ entries }: { entries: [string, number][] }) {
           <span className="w-28 shrink-0 truncate text-[12px] text-text-secondary">
             {shortWorkspace(wd)}
           </span>
-          <div className="h-3.5 min-w-0 flex-1 overflow-hidden rounded-sm bg-surface-tertiary">
+          <div className="h-3.5 min-w-0 flex-1 overflow-hidden rounded-sm bg-fill">
             <div
               className="h-full rounded-sm bg-primary transition-all"
               style={{ width: `${(v / max) * 100}%` }}
@@ -631,7 +637,7 @@ function LiveTrend() {
                         cy={y(hoverBucket[s.key as SeriesKey])}
                         r={3}
                         fill={s.color}
-                        stroke="#fff"
+                        stroke="var(--color-surface)"
                         strokeWidth={1.5}
                       />
                     ))}
@@ -686,6 +692,7 @@ function LiveTrend() {
 }
 
 export function UsageSettings() {
+  const heatColors = useHeatColors()
   const [range, setRange] = useState<RangeDays>(30)
   // 364 天全量(仅请求一次):热力图 + 统计卡中可从 days 推导的字段(tokens/models/activeDays/streak)
   const [data, setData] = useState<UsageDailyReport | null>(null)
@@ -872,7 +879,7 @@ export function UsageSettings() {
       {/* 近 N 天:时间筛选只作用于本分区 */}
       <div className="mb-1 mt-5 flex items-center justify-between gap-3">
         <h3 className="text-[13px] font-semibold text-primary">{rangeLabel}</h3>
-        <div className="inline-flex shrink-0 rounded-lg border border-border bg-surface-tertiary p-0.5">
+        <div className="inline-flex shrink-0 rounded-lg border border-border bg-fill p-0.5">
           {([1, 7, 30] as const).map((r) => (
             <button
               key={r}
@@ -903,7 +910,7 @@ export function UsageSettings() {
         ) : (
           <Card>
             <div className="mb-2 flex items-center justify-between">
-              <div className="inline-flex rounded-lg border border-border bg-surface-tertiary p-0.5">
+              <div className="inline-flex rounded-lg border border-border bg-fill p-0.5">
                 {(
                   [
                     ['model', '按模型'],
@@ -985,7 +992,7 @@ export function UsageSettings() {
           <Heatmap days={data.days} />
           <div className="mt-3 flex items-center justify-end gap-1 text-[11px] text-text-tertiary">
             较少
-            {HEAT_COLORS.map((c) => (
+            {heatColors.map((c) => (
               <span key={c} className="h-[11px] w-[11px] rounded-[2px]" style={{ background: c }} />
             ))}
             较多

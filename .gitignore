@@ -10,3 +10,4 @@ release
 .design-tmp/
 src-tauri/target/
 src-tauri/gen/
+tsconfig.node.tsbuildinfo

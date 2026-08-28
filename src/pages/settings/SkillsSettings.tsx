@@ -23,11 +23,11 @@ function pathSummary(p: string): string {
 /** 技能来源徽标(卡片与详情弹层共用) */
 function ScopeBadge({ scope }: { scope: string }) {
   return scope === 'agents' ? (
-    <span className="shrink-0 rounded-full border border-border bg-surface-tertiary px-1.5 py-px text-[11px] text-text-tertiary">
+    <span className="shrink-0 rounded-full border border-border bg-fill px-1.5 py-px text-[11px] text-text-tertiary">
       ~/.agents
     </span>
   ) : (
-    <span className="shrink-0 rounded-full border border-border bg-surface-tertiary px-1.5 py-px text-[11px] text-text-tertiary">
+    <span className="shrink-0 rounded-full border border-border bg-fill px-1.5 py-px text-[11px] text-text-tertiary">
       数据目录
     </span>
   )
@@ -69,7 +69,7 @@ export function SkillsSettings() {
               <Card className="h-full transition-colors hover:border-primary/40">
                 <div className="flex items-center gap-2">
                   <Wand2 size={14} className="shrink-0 text-primary" />
-                  <span className="truncate text-[13.5px] font-medium">{s.name}</span>
+                  <span className="truncate text-[13px] font-[475]">{s.name}</span>
                   <ScopeBadge scope={s.scope} />
                 </div>
                 {s.description && (
@@ -104,7 +104,7 @@ export function SkillsSettings() {
                 <ScopeBadge scope={selected.scope} />
               </div>
               <button
-                className="rounded p-1 text-text-tertiary hover:bg-surface-tertiary"
+                className="rounded p-1 text-text-tertiary hover:bg-fill hover:text-text"
                 onClick={() => setSelected(null)}
               >
                 <X size={16} />

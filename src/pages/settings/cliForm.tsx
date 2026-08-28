@@ -1,6 +1,6 @@
 /**
  * CLI 配置表单共享原语:字段行 + 输入控件 + 保存栏 + 加载/离线门面。
- * 风格对齐 components/settings/common 的白底卡片(13px 左右字号、border-border 圆角)。
+ * 风格对齐官方设置页灰面板(components/settings/common 的 Card + components/ui 控件)。
  * 约定:空输入不提交对应键(服务端为深合并语义,无法删除已设置的键)。
  */
 import { useState } from 'react'
@@ -8,6 +8,9 @@ import type { ReactNode } from 'react'
 import { FolderOpen, Plus, Trash2 } from 'lucide-react'
 import { Section, Empty } from '../../components/settings/common'
 import { FolderPickerDialog } from '../../components/FolderPickerDialog'
+import { Select } from '../../components/ui/Select'
+import { Switch } from '../../components/ui/Switch'
+import { inputCls as uiInputCls } from '../../components/ui/Input'
 import type { CliConfig } from '../../hooks/useCliConfig'
 
 /**
@@ -65,7 +68,7 @@ export function FieldRow(props: { label: string; desc?: string; control: ReactNo
   return (
     <div className="flex items-start justify-between gap-4">
       <div className="min-w-0 flex-1">
-        <p className="text-[13.5px] font-medium">{props.label}</p>
+        <p className="text-[13px] font-[475]">{props.label}</p>
         {props.desc && <p className="mt-0.5 text-[12px] text-text-tertiary">{props.desc}</p>}
       </div>
       <div className="flex shrink-0 items-center">{props.control}</div>
@@ -73,8 +76,7 @@ export function FieldRow(props: { label: string; desc?: string; control: ReactNo
   )
 }
 
-const controlCls =
-  'w-64 rounded-lg border border-border bg-surface px-2.5 py-1.5 text-[13px] outline-none transition-colors focus:border-primary placeholder:text-text-tertiary'
+const controlCls = uiInputCls('md', 'w-64')
 
 export function TextField(props: {
   label: string
@@ -90,7 +92,7 @@ export function TextField(props: {
       desc={props.desc}
       control={
         <input
-          className={`${controlCls} ${props.mono ? 'font-mono text-[12px]' : ''}`}
+          className={`${controlCls} ${props.mono ? 'font-mono' : ''}`}
           placeholder={props.placeholder}
           value={props.value}
           onChange={(e) => props.onChange(e.target.value)}
@@ -114,7 +116,7 @@ export function NumberField(props: {
       desc={props.desc}
       control={
         <input
-          className={`${controlCls} font-mono text-[12px]`}
+          className={`${controlCls} font-mono`}
           inputMode="numeric"
           placeholder={props.placeholder}
           value={props.value}
@@ -140,42 +142,19 @@ export function SelectField(props: {
       label={props.label}
       desc={props.desc}
       control={
-        <select
-          className={controlCls}
-          value={props.value}
-          onChange={(e) => props.onChange(e.target.value)}
-        >
-          {opts.map((o) => (
-            <option key={o.value} value={o.value}>
-              {o.label}
-            </option>
-          ))}
-        </select>
+        <Select className="w-64" value={props.value} options={opts} onChange={props.onChange} />
       }
     />
   )
 }
 
-/** 开关行(与 MCP 设置页的开关同款) */
+/** 开关行(复刻官方 .ui-switch,见 components/ui/Switch) */
 export function ToggleField(props: { label: string; desc?: string; checked: boolean; onChange: (v: boolean) => void }) {
   return (
     <FieldRow
       label={props.label}
       desc={props.desc}
-      control={
-        <button
-          className={`relative h-5 w-9 shrink-0 rounded-full transition-colors ${
-            props.checked ? 'bg-success' : 'bg-border'
-          }`}
-          onClick={() => props.onChange(!props.checked)}
-        >
-          <span
-            className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition-all ${
-              props.checked ? 'left-[18px]' : 'left-0.5'
-            }`}
-          />
-        </button>
-      }
+      control={<Switch checked={props.checked} onChange={props.onChange} />}
     />
   )
 }
@@ -192,13 +171,13 @@ export function PathListField(props: {
   const [picking, setPicking] = useState(false)
   return (
     <div>
-      <p className="text-[13.5px] font-medium">{props.label}</p>
+      <p className="text-[13px] font-[475]">{props.label}</p>
       {props.desc && <p className="mt-0.5 text-[12px] text-text-tertiary">{props.desc}</p>}
       <div className="mt-2 space-y-1.5">
         {props.values.map((v, i) => (
           <div key={i} className="flex items-center gap-2">
             <input
-              className="min-w-0 flex-1 rounded-lg border border-border bg-surface px-2.5 py-1.5 font-mono text-[12px] outline-none transition-colors focus:border-primary placeholder:text-text-tertiary"
+              className={uiInputCls('sm', 'min-w-0 flex-1 font-mono')}
               placeholder={props.placeholder}
               value={v}
               onChange={(e) => props.onChange(props.values.map((x, j) => (j === i ? e.target.value : x)))}
@@ -340,7 +319,7 @@ export function CliConfigGate(props: {
         />
         <div className="flex justify-end">
           <button
-            className="rounded-lg border border-border px-3 py-1.5 text-[13px] text-text-secondary hover:bg-surface-tertiary"
+            className="rounded-lg border border-border bg-elevated px-3.5 py-2 text-[13px] text-text hover:bg-hover"
             onClick={props.onRetry}
           >
             重试

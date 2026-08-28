@@ -96,7 +96,7 @@ export function FolderPickerDialog(props: {
             </span>
           </div>
           <button
-            className="rounded p-1 text-text-tertiary hover:bg-surface-tertiary"
+            className="rounded p-1 text-text-tertiary hover:bg-surface-tertiary hover:text-text"
             onClick={props.onClose}
           >
             <X size={16} />

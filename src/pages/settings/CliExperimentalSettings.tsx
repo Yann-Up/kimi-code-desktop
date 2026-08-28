@@ -129,13 +129,13 @@ function RemoteControlLink() {
           <p className="break-all font-mono text-[12px] text-primary">{url}</p>
           <div className="mt-1 flex items-center gap-2">
             <button
-              className="rounded-md border border-border px-2 py-0.5 text-[11.5px] text-text-secondary transition-colors hover:bg-surface"
+              className="rounded-md border border-border px-2 py-0.5 text-[11.5px] text-text transition-colors hover:bg-surface"
               onClick={() => void copy()}
             >
               {copied ? '已复制' : '复制链接'}
             </button>
             <button
-              className="rounded-md border border-border px-2 py-0.5 text-[11.5px] text-text-secondary transition-colors hover:bg-surface"
+              className="rounded-md border border-border px-2 py-0.5 text-[11.5px] text-text transition-colors hover:bg-surface"
               onClick={() => void load()}
             >
               刷新

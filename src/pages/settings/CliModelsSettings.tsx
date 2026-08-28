@@ -7,6 +7,8 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Bot, Boxes, ChevronDown, ChevronRight, Cpu, Eye, EyeOff, Pencil, Plus, Star, Trash2 } from 'lucide-react'
 import { Card, Empty, GroupLabel, Section } from '../../components/settings/common'
+import { Select as UiSelect } from '../../components/ui/Select'
+import { inputCls as uiInputCls } from '../../components/ui/Input'
 import { ToggleField } from './cliForm'
 
 /* ---------------- 数据提取小工具(config.toml 解析结果为 snake_case) ---------------- */
@@ -51,8 +53,7 @@ function fmtCtx(n: unknown): string {
 
 /* ---------------- 小控件 ---------------- */
 
-const inputCls =
-  'rounded-lg border border-border bg-surface px-2.5 py-1.5 text-[12.5px] outline-none transition-colors focus:border-primary placeholder:text-text-tertiary'
+const inputCls = uiInputCls('md')
 
 function Row(props: { label: string; children: React.ReactNode }) {
   return (
@@ -71,7 +72,7 @@ function TextInput(props: {
 }) {
   return (
     <input
-      className={`w-full max-w-xl ${inputCls} ${props.mono ? 'font-mono text-[12px]' : ''}`}
+      className={`w-full max-w-xl ${inputCls} ${props.mono ? 'font-mono' : ''}`}
       value={props.value}
       placeholder={props.placeholder}
       onChange={(e) => props.onChange(e.target.value)}
@@ -80,19 +81,12 @@ function TextInput(props: {
 }
 
 function Select(props: { value: string; onChange: (v: string) => void; options: string[]; allowEmpty?: string }) {
+  const opts = [
+    ...(props.allowEmpty !== undefined ? [{ value: '', label: props.allowEmpty }] : []),
+    ...props.options.map((o) => ({ value: o, label: o }))
+  ]
   return (
-    <select
-      className={`w-full max-w-xl ${inputCls}`}
-      value={props.value}
-      onChange={(e) => props.onChange(e.target.value)}
-    >
-      {props.allowEmpty !== undefined && <option value="">{props.allowEmpty}</option>}
-      {props.options.map((o) => (
-        <option key={o} value={o}>
-          {o}
-        </option>
-      ))}
-    </select>
+    <UiSelect className="w-full max-w-xl" value={props.value} options={opts} onChange={props.onChange} />
   )
 }
 
@@ -103,7 +97,7 @@ function SecretInput(props: { value: string; onChange: (v: string) => void; plac
     <div className="relative w-full max-w-xl">
       <input
         type={show ? 'text' : 'password'}
-        className={`w-full pr-8 font-mono text-[12px] ${inputCls}`}
+        className={`w-full pr-8 font-mono ${inputCls}`}
         value={props.value}
         placeholder={props.placeholder}
         onChange={(e) => props.onChange(e.target.value)}
@@ -208,7 +202,7 @@ export function CliModelsSettings() {
           <Empty text={`读取失败:${error}`} />
           <div className="mt-2 flex justify-end">
             <button
-              className="rounded-lg border border-border px-3 py-1.5 text-[13px] text-text-secondary hover:bg-surface-tertiary"
+              className="rounded-lg border border-border bg-elevated px-3.5 py-2 text-[13px] text-text hover:bg-hover"
               onClick={() => void reload()}
             >
               重试
@@ -474,7 +468,7 @@ function ModelsForm({ config, reload }: { config: Rec; reload: (silent?: boolean
               </button>
             )}
             <button
-              className="rounded-lg border border-border p-1.5 text-text-tertiary hover:bg-surface-tertiary"
+              className="rounded-lg border border-border p-1.5 text-text-tertiary hover:bg-fill hover:text-text"
               title="编辑"
               onClick={() => (editing ? setEditModel(null) : startEditModel(alias))}
             >
@@ -546,21 +540,21 @@ function ModelsForm({ config, reload }: { config: Rec; reload: (silent?: boolean
               <div className="flex items-center gap-2">
                 <Boxes size={14} className="shrink-0 text-primary" />
                 <span className="truncate font-mono text-[13px] font-medium">{name}</span>
-                <span className="rounded bg-surface-tertiary px-1.5 py-0.5 font-mono text-[11px] text-text-tertiary">
+                <span className="rounded bg-fill px-1.5 py-0.5 font-mono text-[11px] text-text-tertiary">
                   {strOf(p.type) || '?'}
                 </span>
                 <span
                   className={`rounded px-1.5 py-0.5 text-[11px] ${
                     strOf(p.api_key) || asRec(p.oauth).key
                       ? 'bg-success-soft text-success'
-                      : 'bg-surface-tertiary text-text-tertiary'
+                      : 'bg-fill text-text-tertiary'
                   }`}
                 >
                   {strOf(p.api_key) ? '密钥已配置' : asRec(p.oauth).key ? 'OAuth 登录' : '未配置密钥'}
                 </span>
                 <div className="ml-auto flex shrink-0 gap-1.5">
                   <button
-                    className="rounded-lg border border-border p-1.5 text-text-tertiary hover:bg-surface-tertiary"
+                    className="rounded-lg border border-border p-1.5 text-text-tertiary hover:bg-fill hover:text-text"
                     title="编辑"
                     onClick={() => (editing ? setEditProvider(null) : startEditProvider(name))}
                   >
@@ -594,7 +588,7 @@ function ModelsForm({ config, reload }: { config: Rec; reload: (silent?: boolean
                     <SecretInput value={providerDraft.api_key} onChange={(v) => setProviderDraft({ ...providerDraft, api_key: v })} placeholder="sk-...(清空则删除密钥)" />
                   </Row>
                   <div className="flex justify-end gap-2 pt-1">
-                    <button className="rounded-lg border border-border px-3 py-1 text-[12.5px] text-text-secondary hover:bg-surface-tertiary" onClick={() => setEditProvider(null)}>
+                    <button className="rounded-lg border border-border px-3 py-1 text-[12.5px] text-text hover:bg-fill" onClick={() => setEditProvider(null)}>
                       取消
                     </button>
                     <button className="rounded-lg bg-primary px-3 py-1 text-[12.5px] font-medium text-white hover:bg-primary-hover disabled:opacity-50" disabled={saving} onClick={() => void saveProvider()}>
@@ -622,7 +616,7 @@ function ModelsForm({ config, reload }: { config: Rec; reload: (silent?: boolean
                 <SecretInput value={providerDraft.api_key} onChange={(v) => setProviderDraft({ ...providerDraft, api_key: v })} placeholder="sk-...(可留空)" />
               </Row>
               <div className="flex justify-end gap-2 pt-1">
-                <button className="rounded-lg border border-border px-3 py-1 text-[12.5px] text-text-secondary hover:bg-surface-tertiary" onClick={() => setEditProvider(null)}>
+                <button className="rounded-lg border border-border px-3 py-1 text-[12.5px] text-text hover:bg-fill" onClick={() => setEditProvider(null)}>
                   取消
                 </button>
                 <button className="rounded-lg bg-primary px-3 py-1 text-[12.5px] font-medium text-white hover:bg-primary-hover disabled:opacity-50" disabled={saving} onClick={() => void saveProvider()}>
@@ -657,7 +651,7 @@ function ModelsForm({ config, reload }: { config: Rec; reload: (silent?: boolean
             <div key={g.provider} className="space-y-2">
               <button
                 type="button"
-                className="flex w-full items-center gap-1.5 rounded-md px-1 py-0.5 text-left text-[12px] font-medium text-text-secondary hover:bg-surface-tertiary"
+                className="flex w-full items-center gap-1.5 rounded-md px-1 py-0.5 text-left text-[12px] font-medium text-text-secondary hover:bg-fill hover:text-text"
                 title={folded ? '展开' : '折叠'}
                 onClick={() =>
                   setCollapsed((prev) => {
@@ -827,7 +821,7 @@ function ModelsForm({ config, reload }: { config: Rec; reload: (silent?: boolean
                     </button>
                   )}
                   <button
-                    className="rounded-lg border border-border p-1.5 text-text-tertiary hover:bg-surface-tertiary"
+                    className="rounded-lg border border-border p-1.5 text-text-tertiary hover:bg-fill hover:text-text"
                     title="编辑描述"
                     onClick={() => (editing ? setEditSecModel(null) : startEditSecModel(alias))}
                   >
@@ -862,7 +856,7 @@ function ModelsForm({ config, reload }: { config: Rec; reload: (silent?: boolean
                     />
                   </Row>
                   <div className="flex justify-end gap-2 pt-1">
-                    <button className="rounded-lg border border-border px-3 py-1 text-[12.5px] text-text-secondary hover:bg-surface-tertiary" onClick={() => setEditSecModel(null)}>
+                    <button className="rounded-lg border border-border px-3 py-1 text-[12.5px] text-text hover:bg-fill" onClick={() => setEditSecModel(null)}>
                       取消
                     </button>
                     <button className="rounded-lg bg-primary px-3 py-1 text-[12.5px] font-medium text-white hover:bg-primary-hover disabled:opacity-50" disabled={saving} onClick={() => void saveSecModel()}>
@@ -892,7 +886,7 @@ function ModelsForm({ config, reload }: { config: Rec; reload: (silent?: boolean
                 />
               </Row>
               <div className="flex justify-end gap-2 pt-1">
-                <button className="rounded-lg border border-border px-3 py-1 text-[12.5px] text-text-secondary hover:bg-surface-tertiary" onClick={() => setEditSecModel(null)}>
+                <button className="rounded-lg border border-border px-3 py-1 text-[12.5px] text-text hover:bg-fill" onClick={() => setEditSecModel(null)}>
                   取消
                 </button>
                 <button className="rounded-lg bg-primary px-3 py-1 text-[12.5px] font-medium text-white hover:bg-primary-hover disabled:opacity-50" disabled={saving} onClick={() => void saveSecModel()}>
@@ -971,7 +965,7 @@ function ModelEditor(props: {
         <Select value={d.default_effort} onChange={(v) => onChange({ ...d, default_effort: v })} options={d.support_efforts} allowEmpty="未设置(跟随全局/内置)" />
       </Row>
       <div className="flex justify-end gap-2 pt-1">
-        <button className="rounded-lg border border-border px-3 py-1 text-[12.5px] text-text-secondary hover:bg-surface-tertiary" onClick={props.onCancel}>
+        <button className="rounded-lg border border-border px-3 py-1 text-[12.5px] text-text hover:bg-fill" onClick={props.onCancel}>
           取消
         </button>
         <button className="rounded-lg bg-primary px-3 py-1 text-[12.5px] font-medium text-white hover:bg-primary-hover disabled:opacity-50" disabled={props.saving} onClick={props.onSave}>

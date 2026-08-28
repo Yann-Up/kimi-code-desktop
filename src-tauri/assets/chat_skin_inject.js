@@ -1,10 +1,12 @@
-// 对话页内皮肤立绘注入脚本(实验性)。
+// 对话页内注入脚本(实验性):皮肤立绘 + 主题/语言上报两个模块。
 // 由主窗口 initialization_script_for_all_frames 注入(lib.rs 建窗处 include_str! 内嵌),
 // 在 document-start 于每个框架执行;仅在官方 web UI iframe(回环源子框架)内工作。
 // 通信协议(与 src/components/chatSkinBridge.ts 对应,消息均带 __kimiChatSkin 标识):
-//   iframe → 壳:{__kimiChatSkin:'ready'}        初始化完成后主动向壳要配置
+//   iframe → 壳:{__kimiChatSkin:'ready', nonce}   初始化完成后主动向壳要配置
 //   壳 → iframe:{__kimiChatSkin:'cfg', enabled, dataUrl}  配置下发(dataUrl 为皮肤图 data: URL)
-// 安全约束:只接受父窗口(壳)的消息且校验壳 origin;任何异常静默吞掉,绝不影响官方页面。
+// 主题/语言协议见文件尾部 prefs 模块注释(与 src/components/chatPrefsBridge.ts 对应)。
+// 安全约束:只接受父窗口(壳)的消息且校验壳 origin;任何异常静默吞掉,绝不影响官方页面;
+// 上行消息携带 nonce(window.name,壳建 iframe 时下发,壳侧校验来源框架与 nonce 匹配)。
 (function () {
   'use strict';
   // 只进子框架;只认回环源(本机/WSL/SSH 通道的 web UI 均经 127.0.0.1 回环访问)
@@ -12,6 +14,7 @@
   if (!/^http:\/\/(127\.0\.0\.1|localhost|\[::1\]):\d+$/.test(location.origin)) return;
 
   var TAG = '__kimiChatSkin';
+  var NONCE = window.name || '';
   var CONTAINER_ID = 'kimi-chat-skin';
   var STYLE_ID = 'kimi-chat-skin-style';
   // 壳侧 origin 白名单:prod 为 tauri 自定义协议域,dev 为 vite dev server
@@ -78,7 +81,7 @@
   // 初始化完成向壳要配置(iframe 每次导航/重载都会重发,壳按最新配置回复)
   function notifyReady() {
     try {
-      window.parent.postMessage({ __kimiChatSkin: 'ready' }, '*');
+      window.parent.postMessage({ __kimiChatSkin: 'ready', nonce: NONCE }, '*');
     } catch (err) { /* 静默 */ }
   }
   if (document.readyState === 'loading') {
@@ -86,4 +89,152 @@
   } else {
     notifyReady();
   }
+})();
+
+// 主题/语言上报(与 src/components/chatPrefsBridge.ts 对应,消息带 __kimiChatPrefs 标识):
+//   iframe → 壳:{__kimiChatPrefs:'state', theme:'light'|'dark', locale:'zh'|'en', nonce}
+//   iframe → 壳:{__kimiChatPrefs:'health', ok, reason?, detail?, nonce}  每次页面加载自检一次
+//   壳 → iframe:{__kimiChatPrefs:'set', theme:'light'|'dark'}  标题栏主题切换反推(见文件尾部)
+// 读取官方 web UI 内部存储:localStorage kimi-web.color-scheme(light|dark|system,
+// system 经 matchMedia 解析成实际明暗再上报)与 kimi-locale(en|zh,缺省按
+// navigator.language 是否 zh 开头回退,与官方逻辑对齐)。变更感知:hook localStorage
+// setItem/removeItem(官方切主题/语言第一步即写存储,同步拦截同一帧上报,壳与 iframe
+// 基本同时变色)+ data-color-scheme 属性 MutationObserver + matchMedia change
+// (system 态随系统)+ 1s 轮询(多重兜底,官方内部实现变更时降级不失效)。
+// 健康自检(fail-open 的可观测面):加载 3s 后检查官方主题机制是否还在(data-color-scheme
+// 属性 / .dark class / style.colorScheme 任一存在即视为存活;localStorage 键缺省合法,
+// 不作判据),不在则上报降级,壳设置页可见——键名是官方内部实现,升级改名只会降级不会崩。
+(function () {
+  'use strict';
+  // 与皮肤模块同一守卫:只进回环源子框架
+  if (window === window.parent) return;
+  if (!/^http:\/\/(127\.0\.0\.1|localhost|\[::1\]):\d+$/.test(location.origin)) return;
+
+  var TAG = '__kimiChatPrefs';
+  var NONCE = window.name || '';
+  // 壳侧 origin 白名单:与皮肤模块一致(prod tauri 自定义协议域,dev vite 5188)
+  var PARENT_ORIGINS = ['https://tauri.localhost', 'http://tauri.localhost', 'http://localhost:5188'];
+  var lastTheme = null;
+  var lastLocale = null;
+
+  function resolveTheme() {
+    var raw = null;
+    try { raw = localStorage.getItem('kimi-web.color-scheme'); } catch (err) { /* 静默 */ }
+    if (raw !== 'light' && raw !== 'dark' && raw !== 'system') {
+      // 键缺失/改名:从 DOM 属性兜底(官方把当前主题写到 data-color-scheme)
+      try { raw = document.documentElement.getAttribute('data-color-scheme'); } catch (err) { /* 静默 */ }
+    }
+    if (raw === 'dark') return 'dark';
+    if (raw === 'light') return 'light';
+    // system 或未知:按系统偏好解析,壳只认明暗两态
+    try { return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'; } catch (err) { return 'light'; }
+  }
+
+  function resolveLocale() {
+    var raw = null;
+    try { raw = localStorage.getItem('kimi-locale'); } catch (err) { /* 静默 */ }
+    if (raw === 'en' || raw === 'zh') return raw;
+    try { return /^zh/i.test(navigator.language || '') ? 'zh' : 'en'; } catch (err) { return 'zh'; }
+  }
+
+  function report() {
+    try {
+      var theme = resolveTheme();
+      var locale = resolveLocale();
+      if (theme === lastTheme && locale === lastLocale) return; // 无变化不发
+      lastTheme = theme;
+      lastLocale = locale;
+      window.parent.postMessage({ __kimiChatPrefs: 'state', theme: theme, locale: locale, nonce: NONCE }, '*');
+    } catch (err) { /* 静默:绝不影响官方页面 */ }
+  }
+
+  // 健康自检:官方主题机制存活判定以 DOM 信号为准(localStorage 键缺省合法,不作判据);
+  // 每帧只报一次,结果上壳(设置页"页面桥接"状态)可见
+  var healthSent = false;
+  function healthCheck() {
+    if (healthSent) return;
+    healthSent = true;
+    try {
+      var root = document.documentElement;
+      var domAlive =
+        root.hasAttribute('data-color-scheme') ||
+        root.classList.contains('dark') ||
+        !!root.style.colorScheme;
+      var themeKey = null;
+      var localeKey = null;
+      try {
+        themeKey = localStorage.getItem('kimi-web.color-scheme');
+        localeKey = localStorage.getItem('kimi-locale');
+      } catch (err) { /* 静默 */ }
+      window.parent.postMessage({
+        __kimiChatPrefs: 'health',
+        ok: domAlive,
+        reason: domAlive ? undefined : 'theme-dom-contract-missing',
+        detail:
+          'color-scheme-key=' + (themeKey === null ? 'absent' : themeKey) +
+          ';locale-key=' + (localeKey === null ? 'absent' : localeKey),
+        nonce: NONCE
+      }, '*');
+    } catch (err) { /* 静默 */ }
+  }
+
+  // 低延迟同步的关键:hook localStorage 写入。官方切主题/语言第一步就是写
+  // kimi-web.color-scheme / kimi-locale(参考 kickside 的桥接做法),同步拦截同一帧上报,
+  // 壳与 iframe 基本同时变色;MutationObserver/轮询只作兜底
+  try {
+    var WATCH_KEYS = { 'kimi-web.color-scheme': 1, 'kimi-locale': 1 };
+    var origSet = localStorage.setItem.bind(localStorage);
+    localStorage.setItem = function (key, value) {
+      var r = origSet(key, value);
+      if (WATCH_KEYS[key]) report();
+      return r;
+    };
+    var origRemove = localStorage.removeItem.bind(localStorage);
+    localStorage.removeItem = function (key) {
+      var r = origRemove(key);
+      if (WATCH_KEYS[key]) report();
+      return r;
+    };
+  } catch (err) { /* 静默 */ }
+
+  // 初始上报(iframe 每次导航/重载重发,壳按最新值落地)
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', report);
+  } else {
+    report();
+  }
+  // 官方切主题写 documentElement 的 data-color-scheme 属性
+  try {
+    new MutationObserver(report).observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ['data-color-scheme']
+    });
+  } catch (err) { /* 静默 */ }
+  // system 态下系统明暗切换
+  try {
+    var mq = window.matchMedia('(prefers-color-scheme: dark)');
+    if (mq.addEventListener) mq.addEventListener('change', report);
+  } catch (err) { /* 静默 */ }
+  // 语言切换无 DOM 信号,轮询兜底(也兜住主题的其他写入路径)
+  setInterval(report, 1000);
+  // 加载 3s 后自检一次(等官方 React 完成首轮主题应用再判定)
+  setTimeout(healthCheck, 3000);
+
+  // 壳 → iframe:{__kimiChatPrefs:'set', theme:'light'|'dark'}(标题栏主题切换反推)
+  // 写 localStorage + data-color-scheme + style.colorScheme:官方 bundle 自带
+  // MutationObserver 监听 data-color-scheme,CSS 又完全属性驱动,无刷新即可跟随。
+  // 已知行为:会把官方的 system 态写成显式 light/dark。只收父窗口(壳)且校验 origin。
+  window.addEventListener('message', function (e) {
+    try {
+      var d = e.data;
+      if (!d || d[TAG] !== 'set') return;
+      if (e.source !== window.parent) return;
+      if (PARENT_ORIGINS.indexOf(e.origin) < 0) return;
+      if (d.theme !== 'light' && d.theme !== 'dark') return;
+      lastTheme = d.theme; // 防回声:hook setItem 触发的 report 值相同,不会回发
+      try { localStorage.setItem('kimi-web.color-scheme', d.theme); } catch (err) { /* 静默 */ }
+      document.documentElement.dataset.colorScheme = d.theme;
+      document.documentElement.style.colorScheme = d.theme;
+    } catch (err) { /* 静默:绝不影响官方页面 */ }
+  });
 })();

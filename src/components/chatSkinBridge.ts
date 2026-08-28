@@ -13,10 +13,9 @@
 import { useEffect, useRef, useState } from 'react'
 import type { SkinConfig } from '../platform/kimi-api'
 import { listAllSkins, resolveSkin, type SkinInfo } from './skins'
+import { LOOPBACK_ORIGIN, verifyBridgeMessage } from './bridgeGuard'
 
 const TAG = '__kimiChatSkin'
-/** 回环源判定:与注入脚本一致(本机/WSL/SSH 通道的 web UI 均经回环访问) */
-const LOOPBACK_ORIGIN = /^http:\/\/(127\.0\.0\.1|localhost|\[::1\]):\d+$/
 
 /** 拉取皮肤图并转 data: URL(经 FileReader,兼容自定义协议返回的 blob) */
 async function toDataUrl(url: string): Promise<string> {
@@ -87,10 +86,10 @@ export function useChatSkinBridge(): ChatSkinBridge {
   useEffect(() => {
     disposedRef.current = false
 
-    /** ready 应答:回复发起方(e.source),targetOrigin 用其实际 origin */
+    /** ready 应答:bridgeGuard 三重校验(origin + 来源框架 + nonce)后回复发起方 */
     const onMessage = (e: MessageEvent) => {
       if (!e.data || e.data[TAG] !== 'ready') return
-      if (!LOOPBACK_ORIGIN.test(e.origin)) return
+      if (!verifyBridgeMessage(e)) return
       void buildPayload()
         .then((payload) => {
           if (!disposedRef.current) (e.source as WindowProxy | null)?.postMessage(payload, e.origin)

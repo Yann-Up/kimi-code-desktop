@@ -1,0 +1,97 @@
+// 键用点分命名(如 'nav.chat');zh/en 两语必须成对;插值用 {name} 占位
+export default {
+  zh: {
+    // 区块标题与描述
+    'settings.mcp.serverConfig': '服务器配置',
+    'settings.mcp.desc':
+      '全局(用户级)MCP 服务器配置,文件位于当前数据目录下:\n{path}\n项目级 .kimi-code/mcp.json 不在此管理;保存后重启 MCP 服务器生效',
+    'settings.mcp.dataDirName': '数据目录',
+    // 工具栏
+    'settings.mcp.modeVisual': '可视化',
+    'settings.mcp.modeJson': '原始 JSON',
+    'settings.mcp.unsaved': '有未保存的更改',
+    'settings.mcp.undo': '撤销',
+    'settings.mcp.saving': '保存中…',
+    'settings.mcp.save': '保存配置',
+    // 保存 / 读取反馈
+    'settings.mcp.savedOk': '已保存(配置已自动备份),重启 MCP 服务器后生效',
+    'settings.mcp.saveFailed': '保存失败:{error}',
+    'settings.mcp.readFailed': '配置读取失败(将使用空配置):{error}',
+    // 服务器列表
+    'settings.mcp.empty': '暂无 MCP 服务器配置,点击下方“添加服务器”开始',
+    'settings.mcp.disabled': '已禁用',
+    'settings.mcp.clickDisable': '点击禁用',
+    'settings.mcp.clickEnable': '点击启用',
+    'settings.mcp.confirmDelete': '确认删除?',
+    'settings.mcp.delete': '删除',
+    // 编辑表单
+    'settings.mcp.type': '类型',
+    'settings.mcp.typeStdio': 'stdio(本地命令)',
+    'settings.mcp.typeHttp': 'http(远程)',
+    'settings.mcp.typeSse': 'sse(远程)',
+    'settings.mcp.enable': '启用',
+    'settings.mcp.argsLabel': 'args(每行一个)',
+    'settings.mcp.envLabel': 'env(每行 KEY=VALUE)',
+    'settings.mcp.envLabelOptional': 'env(每行 KEY=VALUE,可选)',
+    'settings.mcp.headersLabel': 'headers(每行 KEY=VALUE)',
+    'settings.mcp.headersLabelOptional': 'headers(每行 KEY=VALUE,可选)',
+    'settings.mcp.cancel': '取消',
+    'settings.mcp.apply': '应用更改',
+    // 添加服务器
+    'settings.mcp.name': '名称',
+    'settings.mcp.add': '添加',
+    'settings.mcp.addServer': '添加服务器',
+    // 校验 / 错误
+    'settings.mcp.errNeedCommand': 'stdio 类型必须填写 command',
+    'settings.mcp.errNeedUrl': 'http/sse 类型必须填写 url',
+    'settings.mcp.errNeedName': '请填写服务器名称',
+    'settings.mcp.errNameExists': '服务器 “{name}” 已存在',
+    'settings.mcp.errTopObject': '顶层必须是 JSON 对象',
+    'settings.mcp.errSwitchVisual': '无法切换到可视化模式:{error}',
+    'settings.mcp.errJsonParse': 'JSON 解析失败:{error}'
+  } as Record<string, string>,
+  en: {
+    'settings.mcp.serverConfig': 'Server Configuration',
+    'settings.mcp.desc':
+      'Global (user-level) MCP server configuration. The file lives in the current data directory:\n{path}\nProject-level .kimi-code/mcp.json is not managed here; restart MCP servers after saving for changes to take effect',
+    'settings.mcp.dataDirName': 'data directory',
+    'settings.mcp.modeVisual': 'Visual',
+    'settings.mcp.modeJson': 'Raw JSON',
+    'settings.mcp.unsaved': 'Unsaved changes',
+    'settings.mcp.undo': 'Undo',
+    'settings.mcp.saving': 'Saving…',
+    'settings.mcp.save': 'Save',
+    'settings.mcp.savedOk':
+      'Saved (a backup was created automatically). Restart MCP servers for changes to take effect',
+    'settings.mcp.saveFailed': 'Save failed: {error}',
+    'settings.mcp.readFailed': 'Failed to read configuration (an empty config will be used): {error}',
+    'settings.mcp.empty': 'No MCP servers configured yet. Click "Add Server" below to get started',
+    'settings.mcp.disabled': 'Disabled',
+    'settings.mcp.clickDisable': 'Click to disable',
+    'settings.mcp.clickEnable': 'Click to enable',
+    'settings.mcp.confirmDelete': 'Confirm delete?',
+    'settings.mcp.delete': 'Delete',
+    'settings.mcp.type': 'Type',
+    'settings.mcp.typeStdio': 'stdio (local command)',
+    'settings.mcp.typeHttp': 'http (remote)',
+    'settings.mcp.typeSse': 'sse (remote)',
+    'settings.mcp.enable': 'Enabled',
+    'settings.mcp.argsLabel': 'args (one per line)',
+    'settings.mcp.envLabel': 'env (KEY=VALUE per line)',
+    'settings.mcp.envLabelOptional': 'env (KEY=VALUE per line, optional)',
+    'settings.mcp.headersLabel': 'headers (KEY=VALUE per line)',
+    'settings.mcp.headersLabelOptional': 'headers (KEY=VALUE per line, optional)',
+    'settings.mcp.cancel': 'Cancel',
+    'settings.mcp.apply': 'Apply',
+    'settings.mcp.name': 'Name',
+    'settings.mcp.add': 'Add',
+    'settings.mcp.addServer': 'Add Server',
+    'settings.mcp.errNeedCommand': 'command is required for stdio type',
+    'settings.mcp.errNeedUrl': 'url is required for http/sse type',
+    'settings.mcp.errNeedName': 'Please enter a server name',
+    'settings.mcp.errNameExists': 'Server "{name}" already exists',
+    'settings.mcp.errTopObject': 'Top level must be a JSON object',
+    'settings.mcp.errSwitchVisual': 'Cannot switch to visual mode: {error}',
+    'settings.mcp.errJsonParse': 'Failed to parse JSON: {error}'
+  } as Record<string, string>
+}

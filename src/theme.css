@@ -1,25 +1,98 @@
 @import 'tailwindcss';
 
+/* UI 字体对齐官方 kimi web(实测 dist-web):拉丁 Schibsted Grotesk Variable + 中文 Noto Sans SC
+   Variable,均为 OFL 开源字体,woff2 打包在 src/assets/fonts(官方同款文件,安装包 +约 7.9MB,
+   其中 Noto Sans SC 全量 CJK 可变字体 7.8MB);官方 mono 为 JetBrains Mono Variable,未打包,沿用系统等宽 */
+@font-face {
+  font-family: 'Schibsted Grotesk Variable';
+  src: url('./assets/fonts/SchibstedGrotesk-Variable.woff2') format('woff2-variations');
+  font-weight: 400 900;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Noto Sans SC Variable';
+  src: url('./assets/fonts/NotoSansSC-Variable.woff2') format('woff2-variations');
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
 @theme {
-  /* Kimi Web 风格:白底 + 蓝色主色 */
-  --color-primary: #2563eb;
-  --color-primary-hover: #1d4ed8;
-  --color-primary-soft: #eff6ff;
-  --color-primary-border: #bfdbfe;
+  /* 对齐官方 kimi web UI 浅色(实测 CLI 0.39.0 dist-web):白底 + 官方蓝 #1783ff */
+  --color-primary: #1783ff;
+  --color-primary-hover: #167ff7;
+  --color-primary-soft: #e8f3ff;
+  --color-primary-border: rgb(23 131 255 / 0.25);
   --color-surface: #ffffff;
-  --color-surface-secondary: #f8fafc;
-  --color-surface-tertiary: #f1f5f9;
-  --color-border: #e2e8f0;
-  --color-border-light: #f1f5f9;
-  --color-text: #0f172a;
-  --color-text-secondary: #475569;
-  --color-text-tertiary: #94a3b8;
-  --color-success: #16a34a;
-  --color-success-soft: #f0fdf4;
-  --color-danger: #dc2626;
-  --color-danger-soft: #fef2f2;
-  --color-warning: #d97706;
-  --color-warning-soft: #fffbeb;
+  --color-surface-secondary: #f9fbfc;
+  --color-surface-tertiary: #f5f5f5;
+  --color-border: rgb(0 0 0 / 0.13);
+  --color-border-light: rgb(0 0 0 / 0.05);
+  --color-text: rgb(0 0 0 / 0.9);
+  --color-text-secondary: rgb(0 0 0 / 0.6);
+  --color-text-tertiary: rgb(0 0 0 / 0.45);
+  --color-success: #0e7a38;
+  --color-success-soft: rgb(14 122 56 / 0.08);
+  --color-danger: #c0392b;
+  --color-danger-soft: rgb(192 57 43 / 0.08);
+  --color-warning: #a9610a;
+  --color-warning-soft: rgb(169 97 10 / 0.08);
+  /* 官方控件配套:line-strong(form 控件边框)/ hover 底 / 菜单毛玻璃底与阴影 */
+  --color-border-strong: rgb(0 0 0 / 0.15);
+  --color-hover: rgb(0 0 0 / 0.03);
+  --color-menu-bg: rgb(255 255 255 / 0.95);
+  --menu-shadow: 0 12px 32px rgb(16 24 40 / 0.12), 0 4px 10px rgb(16 24 40 / 0.08);
+  /* 官方设置页配套:fill = 灰面板上的徽章/分段控件槽底;elevated = 灰面板上的凸起面(按钮/分段选中项) */
+  --color-fill: rgb(0 0 0 / 0.05);
+  --color-elevated: #ffffff;
+  /* 官方 .ui-input:surface-overlay 底(浅纯白/深 10% 白)+ shadow-xs */
+  --color-input-bg: #ffffff;
+  --shadow-xs: 0 1px 2px rgb(16 24 40 / 0.04);
+}
+
+/* 暗色令牌:跟随官方 web UI 主题(chat_skin_inject.js 上报 → chatPrefsBridge →
+   stores/ui.ts 写 documentElement[data-theme]);@theme 变量编译在 :root 上,
+   这里按属性选择器覆盖即可,组件类名零改动。
+   中性色对齐官方深色(纯中性灰,#121212 系,非 zinc);soft 色用同色系低透明度叠底 */
+[data-theme='dark'] {
+  --color-primary: #1a88ff;
+  --color-primary-hover: #258eff;
+  --color-primary-soft: rgb(26 136 255 / 0.1);
+  --color-primary-border: rgb(26 136 255 / 0.28);
+  --color-surface: #121212;
+  --color-surface-secondary: #0d0d0d;
+  --color-surface-tertiary: #1f1f1f;
+  --color-border: rgb(255 255 255 / 0.12);
+  --color-border-light: rgb(255 255 255 / 0.05);
+  --color-text: rgb(255 255 255 / 0.84);
+  --color-text-secondary: rgb(255 255 255 / 0.56);
+  --color-text-tertiary: rgb(255 255 255 / 0.42);
+  --color-success: #3fb950;
+  --color-success-soft: rgb(63 185 80 / 0.12);
+  --color-danger: #f85149;
+  --color-danger-soft: rgb(248 81 73 / 0.12);
+  --color-warning: #d29922;
+  --color-warning-soft: rgb(210 153 34 / 0.12);
+  --color-border-strong: rgb(255 255 255 / 0.18);
+  --color-hover: rgb(255 255 255 / 0.05);
+  --color-menu-bg: rgb(41 41 41 / 0.95);
+  --menu-shadow: 0 12px 32px rgb(0 0 0 / 0.34), 0 4px 10px rgb(0 0 0 / 0.28);
+  --color-fill: rgb(255 255 255 / 0.07);
+  --color-elevated: #383838;
+  --color-input-bg: rgb(255 255 255 / 0.1);
+  --shadow-xs: 0 1px 2px rgb(0 0 0 / 0.2);
+  /* 滚动条与皮肤卡片底色随主题走 */
+  --scrollbar-thumb: rgb(255 255 255 / 0.16);
+  --scrollbar-thumb-hover: rgb(255 255 255 / 0.28);
+  --skin-card-bg: 31 31 31;
+}
+
+:root {
+  --scrollbar-thumb: rgb(0 0 0 / 0.2);
+  --scrollbar-thumb-hover: rgb(0 0 0 / 0.3);
+  /* 皮肤卡片底色 = 卡片面板色(surface-tertiary),皮肤开启时按透明度叠在立绘上 */
+  --skin-card-bg: 245 245 245;
 }
 
 html,
@@ -29,10 +102,23 @@ body,
   margin: 0;
   background: var(--color-surface);
   color: var(--color-text);
+  /* 对齐官方 --font-ui 栈(拉丁 Schibsted Grotesk Variable → 中文 Noto Sans SC Variable → 系统兜底) */
   font-family:
-    -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB',
-    'Microsoft YaHei', sans-serif;
+    'Schibsted Grotesk Variable',
+    'Noto Sans SC Variable',
+    'PingFang SC',
+    'Hiragino Sans GB',
+    'Microsoft YaHei',
+    -apple-system,
+    BlinkMacSystemFont,
+    'Segoe UI',
+    sans-serif;
   font-size: 14px;
+  font-weight: 400;
+  line-height: 1.5;
+  font-optical-sizing: auto;
+  -webkit-font-smoothing: antialiased;
+  font-synthesis: none;
   overflow: hidden;
   user-select: none;
 }
@@ -45,17 +131,30 @@ body,
   -webkit-app-region: no-drag;
 }
 
+/* Tailwind 4 preflight 不再给 button 默认 pointer;对齐官方 web UI 交互,可点击元素一律手型 */
+button:not(:disabled),
+[role='button'],
+[role='radio'],
+[role='option'],
+[role='switch'],
+select:not(:disabled) {
+  cursor: pointer;
+}
+button:disabled {
+  cursor: not-allowed;
+}
+
 /* 滚动条 */
 ::-webkit-scrollbar {
   width: 8px;
   height: 8px;
 }
 ::-webkit-scrollbar-thumb {
-  background: #cbd5e1;
+  background: var(--scrollbar-thumb);
   border-radius: 4px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: #94a3b8;
+  background: var(--scrollbar-thumb-hover);
 }
 ::-webkit-scrollbar-track {
   background: transparent;
@@ -124,7 +223,7 @@ body,
    透出垫底立绘;表格等密集内容不在此列,保持不透明。
    不透明度由 --skin-card-opacity 控制(设置页滑块,缺省 0.82) */
 .skin-on .skin-card {
-  background: rgb(255 255 255 / var(--skin-card-opacity, 0.82));
+  background: rgb(var(--skin-card-bg) / var(--skin-card-opacity, 0.82));
   backdrop-filter: blur(8px);
 }
 
@@ -172,6 +271,21 @@ body,
 
 .pet-bubble-in {
   animation: pet-bubble-in 100ms ease-out;
+}
+
+/* 官方弹层动画(select/菜单):scale(.97)+translateY(2px),.16s ease-out */
+@keyframes menu-pop-in {
+  from {
+    opacity: 0;
+    transform: scale(0.97) translateY(2px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+.menu-pop-in {
+  animation: menu-pop-in 0.16s cubic-bezier(0.16, 1, 0.3, 1);
 }
 .logo-breathe {
   animation: logo-breathe 1.6s ease-in-out infinite;

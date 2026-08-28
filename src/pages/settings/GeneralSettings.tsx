@@ -6,6 +6,9 @@ import type {
   WebServerOptions
 } from '../../platform/kimi-api'
 import { useUi } from '../../stores/ui'
+import { Select } from '../../components/ui/Select'
+import { Segmented } from '../../components/ui/Segmented'
+import { inputCls as uiInputCls } from '../../components/ui/Input'
 
 interface AppInfo {
   appVersion: string
@@ -94,16 +97,16 @@ function CliSourceCard(props: {
     <>
       <div className="flex items-center justify-between gap-3">
         <div className="min-w-0">
-          <p className="text-[13.5px] font-medium">Kimi Code CLI 可执行文件</p>
+          <p className="text-[13px] font-[475]">Kimi Code CLI 可执行文件</p>
           <p className="mt-0.5 truncate font-mono text-[12px] text-text-secondary">
             {cliInfo?.bin ?? '—'}
             {cliInfo && (
-              <span className="ml-2 rounded bg-surface-tertiary px-1.5 py-0.5 font-sans text-[11px] text-text-tertiary">
+              <span className="ml-2 rounded bg-fill px-1.5 py-0.5 font-sans text-[11px] text-text-tertiary">
                 {CLI_SOURCE_LABEL[cliInfo.source]}
               </span>
             )}
             {cliInfo?.version && (
-              <span className="ml-2 rounded bg-surface-tertiary px-1.5 py-0.5 font-sans text-[11px] text-text-tertiary">
+              <span className="ml-2 rounded bg-fill px-1.5 py-0.5 font-sans text-[11px] text-text-tertiary">
                 v{cliInfo.version}
               </span>
             )}
@@ -112,7 +115,7 @@ function CliSourceCard(props: {
         </div>
         <div className="flex shrink-0 gap-2">
           <button
-            className="rounded-lg border border-border px-3 py-1.5 text-[13px] text-text-secondary hover:bg-surface-tertiary disabled:opacity-50"
+            className="rounded-lg border border-border bg-elevated px-3.5 py-2 text-[13px] text-text hover:bg-hover disabled:opacity-50"
             disabled={checking || upgrade.busy || switching}
             onClick={onCheck}
           >
@@ -120,7 +123,7 @@ function CliSourceCard(props: {
           </button>
           {upgrade.visible && (
             <button
-              className="rounded-lg border border-border px-3 py-1.5 text-[13px] text-text-secondary hover:bg-surface-tertiary disabled:opacity-50"
+              className="rounded-lg border border-border bg-elevated px-3.5 py-2 text-[13px] text-text hover:bg-hover disabled:opacity-50"
               disabled={upgrade.busy || switching}
               onClick={upgrade.onUpgrade}
             >
@@ -129,7 +132,7 @@ function CliSourceCard(props: {
           )}
           {cliInfo?.source === 'custom' && (
             <button
-              className="rounded-lg border border-border px-3 py-1.5 text-[13px] text-text-secondary hover:bg-surface-tertiary disabled:opacity-50"
+              className="rounded-lg border border-border bg-elevated px-3.5 py-2 text-[13px] text-text hover:bg-hover disabled:opacity-50"
               disabled={switching}
               onClick={onReset}
             >
@@ -137,7 +140,7 @@ function CliSourceCard(props: {
             </button>
           )}
           <button
-            className="rounded-lg border border-border px-3 py-1.5 text-[13px] text-text-secondary hover:bg-surface-tertiary disabled:opacity-50"
+            className="rounded-lg border border-border bg-elevated px-3.5 py-2 text-[13px] text-text hover:bg-hover disabled:opacity-50"
             disabled={switching}
             onClick={onToggleEditing}
           >
@@ -148,7 +151,7 @@ function CliSourceCard(props: {
       {editing && (
         <div className="mt-3 flex items-center gap-2">
           <input
-            className="min-w-0 flex-1 rounded-lg border border-border bg-surface px-2.5 py-1.5 font-mono text-[12px] outline-none placeholder:text-text-tertiary"
+            className={uiInputCls('sm', 'min-w-0 flex-1 font-mono')}
             placeholder={placeholder}
             value={pathText}
             onChange={(e) => onPathTextChange(e.target.value)}
@@ -424,7 +427,7 @@ export function GeneralSettings() {
       <Card>
         <div className="flex items-center justify-between gap-3">
           <div className="min-w-0">
-            <p className="text-[13.5px] font-medium">
+            <p className="text-[13px] font-[475]">
               桌面应用更新
               {appUpdate && (
                 <span className="ml-2 rounded bg-success-soft px-1.5 py-0.5 text-[11px] text-success">
@@ -439,7 +442,7 @@ export function GeneralSettings() {
           </div>
           <div className="flex shrink-0 gap-2">
             <button
-              className="rounded-lg border border-border px-3 py-1.5 text-[13px] text-text-secondary hover:bg-surface-tertiary disabled:opacity-50"
+              className="rounded-lg border border-border bg-elevated px-3.5 py-2 text-[13px] text-text hover:bg-hover disabled:opacity-50"
               disabled={appChecking || appInstalling}
               onClick={checkAppUpdate}
             >
@@ -461,7 +464,7 @@ export function GeneralSettings() {
         )}
         {appInstalling && appProgress && (
           <div className="mt-3">
-            <div className="h-1.5 overflow-hidden rounded-full bg-surface-tertiary">
+            <div className="h-1.5 overflow-hidden rounded-full bg-fill">
               <div
                 className={`h-full rounded-full bg-primary ${appProgress.total ? 'transition-all' : 'animate-pulse'}`}
                 style={{
@@ -495,11 +498,11 @@ export function GeneralSettings() {
       <Card>
         <div className="flex items-center justify-between gap-3">
           <div className="min-w-0">
-            <p className="text-[13.5px] font-medium">Kimi Code 数据目录</p>
+            <p className="text-[13px] font-[475]">Kimi Code 数据目录</p>
             <p className="mt-0.5 truncate font-mono text-[12px] text-text-secondary">
               {homeInfo?.home ?? '—'}
               {homeInfo && (
-                <span className="ml-2 rounded bg-surface-tertiary px-1.5 py-0.5 font-sans text-[11px] text-text-tertiary">
+                <span className="ml-2 rounded bg-fill px-1.5 py-0.5 font-sans text-[11px] text-text-tertiary">
                   {SOURCE_LABEL[homeInfo.source]}
                 </span>
               )}
@@ -511,7 +514,7 @@ export function GeneralSettings() {
           <div className="flex shrink-0 gap-2">
             {homeInfo?.source === 'custom' && (
               <button
-                className="rounded-lg border border-border px-3 py-1.5 text-[13px] text-text-secondary hover:bg-surface-tertiary disabled:opacity-50"
+                className="rounded-lg border border-border bg-elevated px-3.5 py-2 text-[13px] text-text hover:bg-hover disabled:opacity-50"
                 disabled={switching}
                 onClick={() => void switchHome(null)}
               >
@@ -519,7 +522,7 @@ export function GeneralSettings() {
               </button>
             )}
             <button
-              className="rounded-lg border border-border px-3 py-1.5 text-[13px] text-text-secondary hover:bg-surface-tertiary disabled:opacity-50"
+              className="rounded-lg border border-border bg-elevated px-3.5 py-2 text-[13px] text-text hover:bg-hover disabled:opacity-50"
               disabled={switching}
               onClick={() => setPickingHome(true)}
             >
@@ -606,14 +609,14 @@ export function GeneralSettings() {
       <Card>
         <div className="flex items-center justify-between">
           <div>
-            <p className="text-[13.5px] font-medium">
+            <p className="text-[13px] font-[475]">
               kimi web 服务
               {svcRunning !== null && (
                 <span
                   className={`ml-2 rounded px-1.5 py-0.5 text-[11px] ${
                     svcRunning
                       ? 'bg-success-soft text-success'
-                      : 'bg-surface-tertiary text-text-tertiary'
+                      : 'bg-fill text-text-tertiary'
                   }`}
                 >
                   {svcRunning ? '运行中' : '未启动'}
@@ -631,7 +634,7 @@ export function GeneralSettings() {
             )}
           </div>
           <button
-            className="rounded-lg border border-border px-3 py-1.5 text-[13px] text-text-secondary hover:bg-surface-tertiary disabled:opacity-50"
+            className="rounded-lg border border-border bg-elevated px-3.5 py-2 text-[13px] text-text hover:bg-hover disabled:opacity-50"
             disabled={svcBusy || svcRunning === null}
             onClick={() => void toggleService()}
           >
@@ -645,13 +648,13 @@ export function GeneralSettings() {
         <div className="space-y-4">
           <div className="flex items-center justify-between gap-3">
             <div className="min-w-0">
-              <p className="text-[13.5px] font-medium">服务端口</p>
+              <p className="text-[13px] font-[475]">服务端口</p>
               <p className="mt-0.5 text-[12px] text-text-tertiary">
                 kimi web 绑定的首选端口(默认 58666);被占用时自动顺延,保存后运行中的服务会自动重启
               </p>
             </div>
             <input
-              className="w-28 shrink-0 rounded-lg border border-border bg-surface px-2.5 py-1.5 font-mono text-[12px] outline-none disabled:opacity-50"
+              className={uiInputCls('sm', 'w-28 shrink-0 font-mono')}
               value={webPortText}
               disabled={!webOpts || webSaving}
               onChange={(e) => setWebPortText(e.target.value)}
@@ -682,19 +685,19 @@ export function GeneralSettings() {
         {/* 设置页字体大小:存 localStorage,SettingsPage 根节点经 CSS zoom 响应式生效 */}
         <div className="flex items-center justify-between">
           <div>
-            <p className="text-[13.5px] font-medium">设置页字体大小</p>
+            <p className="text-[13px] font-[475]">设置页字体大小</p>
             <p className="text-[12px] text-text-tertiary">整体缩放设置页的字体与控件(立即生效,仅影响设置页)</p>
           </div>
-          <select
-            className="rounded-lg border border-border bg-surface px-2.5 py-1.5 text-[13px] outline-none"
-            value={settingsZoom}
-            onChange={(e) => useUi.getState().setSettingsZoom(Number(e.target.value))}
-          >
-            <option value={90}>较小(90%)</option>
-            <option value={100}>标准(100%,默认)</option>
-            <option value={110}>较大(110%)</option>
-            <option value={125}>特大(125%)</option>
-          </select>
+          <Segmented
+            value={String(settingsZoom)}
+            options={[
+              { value: '90', label: '较小' },
+              { value: '100', label: '标准' },
+              { value: '110', label: '较大' },
+              { value: '125', label: '特大' }
+            ]}
+            onChange={(v) => useUi.getState().setSettingsZoom(Number(v))}
+          />
         </div>
       </Card>
 
@@ -703,20 +706,21 @@ export function GeneralSettings() {
         {/* 额度条刷新间隔:存 localStorage,QuotaStrip 响应式生效 */}
         <div className="flex items-center justify-between">
           <div>
-            <p className="text-[13.5px] font-medium">额度条刷新间隔</p>
+            <p className="text-[13px] font-[475]">额度条刷新间隔</p>
             <p className="text-[12px] text-text-tertiary">顶部额度/余额的自动刷新频率(每轮对话结束也会立即刷新)</p>
           </div>
-          <select
-            className="rounded-lg border border-border bg-surface px-2.5 py-1.5 text-[13px] outline-none"
-            value={quotaRefreshSecs}
-            onChange={(e) => useUi.getState().setQuotaRefreshSecs(Number(e.target.value))}
-          >
-            <option value={30}>30 秒</option>
-            <option value={60}>1 分钟(默认)</option>
-            <option value={120}>2 分钟</option>
-            <option value={300}>5 分钟</option>
-            <option value={0}>关闭自动刷新</option>
-          </select>
+          <Select
+            className="w-[170px]"
+            value={String(quotaRefreshSecs)}
+            options={[
+              { value: '30', label: '30 秒' },
+              { value: '60', label: '1 分钟(默认)' },
+              { value: '120', label: '2 分钟' },
+              { value: '300', label: '5 分钟' },
+              { value: '0', label: '关闭自动刷新' }
+            ]}
+            onChange={(v) => useUi.getState().setQuotaRefreshSecs(Number(v))}
+          />
         </div>
       </Card>
 
@@ -724,13 +728,13 @@ export function GeneralSettings() {
       <Card>
         <div className="flex items-center justify-between">
           <div>
-            <p className="text-[13.5px] font-medium">运行日志</p>
+            <p className="text-[13px] font-[475]">运行日志</p>
             <p className="text-[12px] text-text-tertiary">
               WS 事件流日志默认开启(ws.log),遇到渲染/连接问题请把日志发给开发者
             </p>
           </div>
           <button
-            className="rounded-lg border border-border px-3 py-1.5 text-[13px] text-text-secondary hover:bg-surface-tertiary"
+            className="rounded-lg border border-border bg-elevated px-3.5 py-2 text-[13px] text-text hover:bg-hover"
             onClick={() => window.kimiApi.openLogs()}
           >
             打开日志目录

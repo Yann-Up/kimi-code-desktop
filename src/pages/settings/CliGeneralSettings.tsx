@@ -7,6 +7,8 @@
  */
 import { useEffect, useState } from 'react'
 import { Card, GroupLabel } from '../../components/settings/common'
+import { Segmented } from '../../components/ui/Segmented'
+import { inputCls as uiInputCls } from '../../components/ui/Input'
 import { useCliConfig, type CliConfig } from '../../hooks/useCliConfig'
 import {
   bool,
@@ -24,9 +26,9 @@ import {
 } from './cliForm'
 
 const PERMISSION_OPTIONS = [
-  { value: 'manual', label: 'manual(每次询问)' },
-  { value: 'yolo', label: 'yolo(自动批准工具)' },
-  { value: 'auto', label: 'auto(完全自主)' }
+  { value: 'manual', label: '逐条确认' },
+  { value: 'yolo', label: '自动通过' },
+  { value: 'auto', label: '完全自主' }
 ]
 
 export function CliGeneralSettings() {
@@ -50,7 +52,7 @@ export function CliGeneralSettings() {
 function DefaultDirs(props: { tiers: { label: string; paths: string[]; note?: string }[] }) {
   return (
     <div>
-      <p className="text-[13.5px] font-medium">默认搜索目录</p>
+      <p className="text-[13px] font-[475]">默认搜索目录</p>
       <p className="mt-0.5 text-[12px] text-text-tertiary">
         按优先级从高到低排列;出现同名条目时,高优先级层级的生效
       </p>
@@ -126,7 +128,7 @@ function GeneralForm({ config, saveSection, home, offline }: { config: CliConfig
             desc="未在配置中发现 models 定义,可直接填写模型别名(如 kimi-code/k3)"
             control={
               <input
-                className="w-64 rounded-lg border border-border bg-surface px-2.5 py-1.5 font-mono text-[12px] outline-none placeholder:text-text-tertiary"
+                className={uiInputCls('md', 'w-64 font-mono')}
                 placeholder="如 kimi-code/k3"
                 value={defaultModel}
                 onChange={(e) => setDefaultModel(e.target.value)}
@@ -134,12 +136,16 @@ function GeneralForm({ config, saveSection, home, offline }: { config: CliConfig
             }
           />
         )}
-        <SelectField
+        <FieldRow
           label="默认权限模式"
           desc="新会话的工具调用审批策略:manual=每次询问、yolo=自动批准工具(仍可能提问)、auto=完全自主"
-          value={permissionMode}
-          onChange={setPermissionMode}
-          options={PERMISSION_OPTIONS}
+          control={
+            <Segmented
+              value={permissionMode || 'manual'}
+              options={PERMISSION_OPTIONS}
+              onChange={setPermissionMode}
+            />
+          }
         />
         <ToggleField
           label="默认计划模式"

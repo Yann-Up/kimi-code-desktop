@@ -1,9 +1,9 @@
 /**
- * QuotaStrip: 主壳顶部导航行右侧的额度条 + 停止服务入口。
+ * QuotaStrip: 标题栏铺平式用量直显(壳的特色:用户一眼看到当前用量,不藏进弹层)。
  * 数据:GET /api/v1/oauth/usage(kind=ok 时 summary/limits 各窗口额度);
  * 窗口驱动渲染(5 小时/1 周/月度,服务端返回什么显示什么)。
  * 每 N 秒轮询(设置页可配)+ 轮次结束(session:turn-ended)自动刷新。
- * 服务未运行时不显示"停止服务"按钮,并清空额度显示。
+ * 服务未运行时整条隐藏(对话页占位图会提示);停止服务按钮在条尾,带确认弹窗。
  */
 import { useEffect, useState } from 'react'
 import { OctagonX, Zap } from 'lucide-react'
@@ -80,6 +80,7 @@ function meterColor(pct: number): string {
   return 'var(--color-primary)'
 }
 
+/** 铺平式迷你额度计:一行「标签 + 占比(彩色) + 重置倒计时」+ 底部 3px 进度条 */
 function QuotaMeter({ w }: { w: QuotaWindow }) {
   const used = typeof w.used === 'number' ? w.used : 0
   const limit = typeof w.limit === 'number' && w.limit > 0 ? w.limit : 0
@@ -88,22 +89,18 @@ function QuotaMeter({ w }: { w: QuotaWindow }) {
   const color = limit > 0 ? meterColor(pct) : 'var(--color-text)'
   return (
     <div
-      className="flex w-44 shrink-0 flex-col justify-center gap-1.5"
+      className="flex w-[104px] shrink-0 flex-col justify-center gap-1"
       title={`${windowLabel(w)}额度:已用 ${used}${limit ? ` / ${limit}` : ''}${hint ? `,${hint}` : ''}`}
     >
-      <div className="flex items-baseline justify-between gap-2">
-        <span className="shrink-0 text-[12.5px] font-medium text-text-secondary">
-          {windowLabel(w)}
-        </span>
-        <span className="shrink-0 text-[13.5px] font-semibold tabular-nums" style={{ color }}>
+      <div className="flex items-baseline gap-1 whitespace-nowrap text-[11px]">
+        <span className="shrink-0 text-text-tertiary">{windowLabel(w)}</span>
+        <span className="shrink-0 text-[12.5px] font-semibold tabular-nums" style={{ color }}>
           {limit === 100 ? `${used}%` : limit > 0 ? `${used}/${limit}` : `${used}`}
-          {hint && (
-            <span className="ml-1.5 text-[11px] font-normal text-text-tertiary">{hint}</span>
-          )}
         </span>
+        {hint && <span className="truncate text-text-tertiary">{hint}</span>}
       </div>
       {limit > 0 && (
-        <span className="h-1.5 w-full overflow-hidden rounded-full bg-surface-tertiary">
+        <span className="h-[3px] w-full overflow-hidden rounded-full bg-surface-tertiary">
           <span
             className="block h-full rounded-full transition-all duration-500"
             style={{ width: `${pct}%`, background: color }}
@@ -272,55 +269,56 @@ export function QuotaStrip() {
       : null
 
   return (
-    <div className="flex min-h-12 shrink-0 items-center justify-between gap-4 px-4 py-1.5">
-      <div className="flex min-w-0 items-center gap-6">
-        {svcRunning && live && <LiveMetricsBlock m={live} active={liveActive} />}
-        {windows.map((w, i) => (
-          <QuotaMeter key={i} w={w} />
-        ))}
-        {/* booster 钱包:余额 + 月度消费上限(账号有才显示) */}
-        {wallet && typeof wallet.balance_cents === 'number' && (
-          <div
-            className="flex shrink-0 flex-col justify-center"
-            title={`booster 钱包余额(总额 ${fmtMoney(wallet.total_cents, currency)})`}
-          >
-            <span className="text-[12.5px] font-medium text-text-secondary">钱包</span>
-            <span className="text-[13.5px] font-semibold tabular-nums text-text">
-              {fmtMoney(wallet.balance_cents, currency)}
+    <div className="relative flex h-full items-center gap-3">
+      {/* 铺平直显:实时指标胶囊 + 各窗口迷你额度计 + 钱包 + 停止服务 */}
+      {svcRunning && (
+        <>
+          {live && <LiveMetricsBlock m={live} active={liveActive} />}
+          {windows.map((w, i) => (
+            <QuotaMeter key={i} w={w} />
+          ))}
+          {/* booster 钱包:余额(账号有才显示,悬浮看总额) */}
+          {wallet && typeof wallet.balance_cents === 'number' && (
+            <span
+              className="flex shrink-0 items-baseline gap-1 whitespace-nowrap text-[11px] text-text-tertiary"
+              title={`booster 钱包余额(总额 ${fmtMoney(wallet.total_cents, currency)})`}
+            >
+              钱包
+              <span className="text-[12.5px] font-semibold tabular-nums text-text">
+                {fmtMoney(wallet.balance_cents, currency)}
+              </span>
             </span>
-          </div>
-        )}
-        {monthlyPct !== null && wallet && (
-          <div
-            className="flex w-44 shrink-0 flex-col justify-center gap-1.5"
-            title={`月度消费上限:已用 ${fmtMoney(wallet.monthly_used_cents, currency)} / ${fmtMoney(wallet.monthly_charge_limit_cents, currency)}`}
-          >
-            <div className="flex items-baseline justify-between gap-2">
-              <span className="shrink-0 text-[12.5px] font-medium text-text-secondary">月度</span>
-              <span
-                className="shrink-0 text-[13.5px] font-semibold tabular-nums"
-                style={{ color: meterColor(monthlyPct) }}
-              >
-                {monthlyPct.toFixed(0)}%
+          )}
+          {monthlyPct !== null && wallet && (
+            <div
+              className="flex w-[72px] shrink-0 flex-col justify-center gap-1"
+              title={`月度消费上限:已用 ${fmtMoney(wallet.monthly_used_cents, currency)} / ${fmtMoney(wallet.monthly_charge_limit_cents, currency)}`}
+            >
+              <div className="flex items-baseline gap-1 whitespace-nowrap text-[11px]">
+                <span className="text-text-tertiary">月度</span>
+                <span
+                  className="text-[12.5px] font-semibold tabular-nums"
+                  style={{ color: meterColor(monthlyPct) }}
+                >
+                  {monthlyPct.toFixed(0)}%
+                </span>
+              </div>
+              <span className="h-[3px] w-full overflow-hidden rounded-full bg-surface-tertiary">
+                <span
+                  className="block h-full rounded-full transition-all duration-500"
+                  style={{ width: `${monthlyPct}%`, background: meterColor(monthlyPct) }}
+                />
               </span>
             </div>
-            <span className="h-1.5 w-full overflow-hidden rounded-full bg-surface-tertiary">
-              <span
-                className="block h-full rounded-full transition-all duration-500"
-                style={{ width: `${monthlyPct}%`, background: meterColor(monthlyPct) }}
-              />
-            </span>
-          </div>
-        )}
-      </div>
-      {svcRunning && (
-        <button
-          className="flex shrink-0 items-center gap-1.5 rounded-md px-2.5 py-1.5 text-[12.5px] text-text-tertiary hover:bg-danger-soft hover:text-danger"
-          title="停止 Kimi CLI 服务"
-          onClick={() => setConfirming(true)}
-        >
-          <OctagonX size={14} /> 停止服务
-        </button>
+          )}
+          <button
+            className="no-drag flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-text-tertiary transition-colors hover:bg-danger-soft hover:text-danger"
+            title="停止 Kimi Code 服务"
+            onClick={() => setConfirming(true)}
+          >
+            <OctagonX size={15} />
+          </button>
+        </>
       )}
 
       {/* 停止服务确认:停服务会杀掉所有进行中的会话,统一弹确认 */}
@@ -333,7 +331,7 @@ export function QuotaStrip() {
             </p>
             <div className="mt-4 flex justify-end gap-2">
               <button
-                className="rounded-lg border border-border px-4 py-1.5 text-[13px] text-text-secondary hover:bg-surface-tertiary disabled:opacity-50"
+                className="rounded-lg border border-border bg-elevated px-4 py-2 text-[13px] text-text hover:bg-hover disabled:opacity-50"
                 disabled={stopping}
                 onClick={() => setConfirming(false)}
               >

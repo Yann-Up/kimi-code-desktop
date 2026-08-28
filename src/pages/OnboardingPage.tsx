@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { ArrowLeft, Loader2, Monitor, Server, Terminal, X } from 'lucide-react'
 import type { ConnectionTargetConfig } from '../platform/kimi-api'
+import { inputCls as uiInputCls } from '../components/ui/Input'
 import { useUi } from '../stores/ui'
 
 type Target = ConnectionTargetConfig['target']
@@ -8,8 +9,7 @@ type Target = ConnectionTargetConfig['target']
 /** 测试结果:成功带版本号,失败带错误文案 */
 type TestResult = { ok: true; version: string } | { ok: false; error: string } | null
 
-const inputCls =
-  'w-full rounded-lg border border-border bg-surface px-2.5 py-1.5 font-mono text-[12px] outline-none placeholder:text-text-tertiary'
+const inputCls = uiInputCls('sm', 'w-full font-mono')
 
 /**
  * 连接目标向导:选择 kimi web 服务的运行目标(本机 / WSL / SSH),
@@ -139,7 +139,7 @@ export function OnboardingPage({
         {/* 重进入模式(设置页触发)可取消,仅关闭向导 */}
         {onCancel && (
           <button
-            className="absolute -top-2 right-0 rounded-lg p-1.5 text-text-tertiary hover:bg-surface-tertiary hover:text-text-secondary"
+            className="absolute -top-2 right-0 rounded-lg p-1.5 text-text-tertiary hover:bg-surface-tertiary hover:text-text"
             title="取消"
             onClick={onCancel}
           >
@@ -213,7 +213,7 @@ export function OnboardingPage({
           <div className="mt-4 rounded-xl border border-border bg-surface p-4">
             {target === 'wsl' ? (
               <div className="space-y-2">
-                <p className="text-[13.5px] font-medium">WSL 发行版</p>
+                <p className="text-[13px] font-[475]">WSL 发行版</p>
                 <input
                   className={inputCls}
                   placeholder="发行版名称(留空 = 默认发行版,如 Ubuntu)"
@@ -226,7 +226,7 @@ export function OnboardingPage({
               </div>
             ) : (
               <div className="space-y-2">
-                <p className="text-[13.5px] font-medium">SSH 连接</p>
+                <p className="text-[13px] font-[475]">SSH 连接</p>
                 <div className="flex gap-2">
                   {/* 主机框 flex-1 占据剩余宽度;端口用固定宽度的包裹 div,
                       避免 inputCls 的 w-full 与 w-24 宽度类冲突把主机框挤没 */}
@@ -325,7 +325,7 @@ export function OnboardingPage({
 
             <div className="mt-3 flex items-center justify-between">
               <button
-                className="flex items-center gap-1 rounded-lg border border-border px-3 py-1.5 text-[13px] text-text-secondary hover:bg-surface-tertiary"
+                className="flex items-center gap-1 rounded-lg border border-border bg-elevated px-3.5 py-2 text-[13px] text-text hover:bg-hover"
                 onClick={() => {
                   setTarget(null)
                   setTestResult(null)
@@ -336,7 +336,7 @@ export function OnboardingPage({
               </button>
               <div className="flex gap-2">
                 <button
-                  className="flex items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-[13px] text-text-secondary hover:bg-surface-tertiary disabled:opacity-50"
+                  className="flex items-center gap-1.5 rounded-lg border border-border bg-elevated px-3.5 py-2 text-[13px] text-text hover:bg-hover disabled:opacity-50"
                   disabled={testing || !canTest}
                   onClick={() => void testConnection()}
                 >

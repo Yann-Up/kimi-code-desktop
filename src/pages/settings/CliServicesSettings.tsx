@@ -90,7 +90,7 @@ function ServicesForm({ config, saveSection, offline }: { config: CliConfig; sav
           value={fetchUrl}
           onChange={setFetchUrl}
         />
-        <p className="rounded-lg bg-surface-tertiary px-2.5 py-1.5 text-[11.5px] text-text-tertiary">
+        <p className="rounded-lg bg-fill px-2.5 py-1.5 text-[11.5px] text-text-tertiary">
           api_key 由登录流程写入管理,请勿在此处手工填写
         </p>
       </Card>

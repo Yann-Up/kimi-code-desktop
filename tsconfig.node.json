@@ -1,14 +1,11 @@
 {
   "compilerOptions": {
-    "target": "ES2022",
+    "composite": true,
+    "skipLibCheck": true,
     "module": "ESNext",
     "moduleResolution": "bundler",
-    "strict": true,
-    "esModuleInterop": true,
-    "skipLibCheck": true,
-    "resolveJsonModule": true,
+    "allowSyntheticDefaultImports": true,
     "types": ["node"]
   },
-  "include": ["vite.renderer.config.mts"],
-  "exclude": ["node_modules", "out"]
+  "include": ["vite.config.ts"]
 }

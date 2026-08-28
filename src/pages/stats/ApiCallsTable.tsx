@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { ChevronLeft, ChevronRight, Coins, Cpu, Gauge, RefreshCw, Timer, Zap } from 'lucide-react'
 import { Section, Card, Empty } from '../../components/settings/common'
+import { Select } from '../../components/ui/Select'
 import type { ApiCallItem, ApiCallsResult } from '../../platform/kimi-api'
 
 /** tokens 人性化:亿 / 万 / 原值(与 UsageSettings 口径一致) */
@@ -254,20 +255,16 @@ export function ApiCallsTable() {
                 共 {fmtCount(data?.total ?? 0)} 条 · 第 {data?.page ?? page} / {totalPages} 页
               </p>
               <div className="flex items-center gap-2">
-                <select
-                  className="cursor-pointer rounded-md border border-border bg-surface px-2 py-1 text-[12px] text-text-secondary outline-none"
-                  value={pageSize}
-                  onChange={(e) => {
-                    setPageSize(Number(e.target.value))
+                <Select
+                  size="sm"
+                  className="px-2 text-[12px]"
+                  value={String(pageSize)}
+                  options={PAGE_SIZES.map((s) => ({ value: String(s), label: `${s} 条/页` }))}
+                  onChange={(v) => {
+                    setPageSize(Number(v))
                     setPage(1)
                   }}
-                >
-                  {PAGE_SIZES.map((s) => (
-                    <option key={s} value={s}>
-                      {s} 条/页
-                    </option>
-                  ))}
-                </select>
+                />
                 <button
                   className="flex h-7 w-7 items-center justify-center rounded-md border border-border text-text-secondary transition-colors hover:border-primary-border hover:text-primary disabled:opacity-40"
                   disabled={loading || page <= 1}

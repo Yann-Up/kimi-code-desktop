@@ -6,8 +6,17 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { ChevronDown, Plus, Save, Trash2, Undo2 } from 'lucide-react'
 import { Section, Card, GroupLabel } from '../../components/settings/common'
+import { Select } from '../../components/ui/Select'
+import { Switch } from '../../components/ui/Switch'
+import { inputCls as uiInputCls, textareaCls } from '../../components/ui/Input'
 
 type ServerType = 'stdio' | 'http' | 'sse'
+
+const TYPE_OPTIONS: { value: ServerType; label: string }[] = [
+  { value: 'stdio', label: 'stdio(本地命令)' },
+  { value: 'http', label: 'http(远程)' },
+  { value: 'sse', label: 'sse(远程)' }
+]
 
 interface ServerDraft {
   type: ServerType
@@ -92,8 +101,7 @@ function buildFromDraft(cur: Record<string, unknown>, d: ServerDraft): Record<st
   return out
 }
 
-const inputCls =
-  'w-full rounded-lg border border-border bg-surface px-2.5 py-1.5 text-[13px] outline-none transition-colors focus:border-primary'
+const inputCls = uiInputCls('md', 'w-full')
 const fieldLabelCls = 'mb-1 block text-[12px] font-medium text-text-secondary'
 
 export function McpSettings() {
@@ -331,7 +339,7 @@ export function McpSettings() {
       <Card>
         {/* 工具栏:模式切换 + 撤销/保存 */}
         <div className="flex items-center gap-2">
-          <div className="flex rounded-lg bg-surface-tertiary p-0.5">
+          <div className="flex rounded-lg bg-fill p-0.5">
             {(['visual', 'json'] as const).map((m) => (
               <button
                 key={m}
@@ -351,7 +359,7 @@ export function McpSettings() {
           )}
           <div className="ml-auto flex items-center gap-2">
             <button
-              className="inline-flex items-center gap-1 rounded-lg border border-border px-2.5 py-1.5 text-[12.5px] text-text-secondary transition-colors hover:bg-surface-tertiary hover:text-text disabled:opacity-50"
+              className="inline-flex items-center gap-1 rounded-lg border border-border px-2.5 py-1.5 text-[12.5px] text-text transition-colors hover:bg-fill disabled:opacity-50"
               disabled={!dirty || saving}
               onClick={undo}
             >
@@ -422,28 +430,20 @@ export function McpSettings() {
                         className={`shrink-0 text-text-tertiary transition-transform ${isOpen ? '' : '-rotate-90'}`}
                       />
                       <span className="truncate text-[13px] font-medium">{name}</span>
-                      <span className="shrink-0 rounded bg-surface-tertiary px-1.5 py-0.5 font-mono text-[10.5px] uppercase text-text-secondary">
+                      <span className="shrink-0 rounded bg-fill px-1.5 py-0.5 font-mono text-[10.5px] uppercase text-text-secondary">
                         {type}
                       </span>
                       {!enabled && (
-                        <span className="shrink-0 rounded bg-surface-tertiary px-1.5 py-0.5 text-[10.5px] text-text-tertiary">
+                        <span className="shrink-0 rounded bg-fill px-1.5 py-0.5 text-[10.5px] text-text-tertiary">
                           已禁用
                         </span>
                       )}
                     </button>
-                    <button
-                      className={`relative h-5 w-9 shrink-0 rounded-full transition-colors ${
-                        enabled ? 'bg-success' : 'bg-border'
-                      }`}
+                    <Switch
+                      checked={enabled}
                       title={enabled ? '点击禁用' : '点击启用'}
-                      onClick={() => toggleEnabled(name)}
-                    >
-                      <span
-                        className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition-all ${
-                          enabled ? 'left-[18px]' : 'left-0.5'
-                        }`}
-                      />
-                    </button>
+                      onChange={() => toggleEnabled(name)}
+                    />
                     {confirmDel === name ? (
                       <button
                         className="shrink-0 rounded-lg bg-danger px-2.5 py-1 text-[12px] font-medium text-white transition-colors hover:opacity-90"
@@ -468,30 +468,20 @@ export function McpSettings() {
                       <div className="grid grid-cols-2 gap-3">
                         <div>
                           <label className={fieldLabelCls}>类型</label>
-                          <select
-                            className={inputCls}
+                          <Select
+                            className="w-full"
+                            size="md"
                             value={draft.type}
-                            onChange={(e) => setDraft({ ...draft, type: e.target.value as ServerType })}
-                          >
-                            <option value="stdio">stdio(本地命令)</option>
-                            <option value="http">http(远程)</option>
-                            <option value="sse">sse(远程)</option>
-                          </select>
+                            onChange={(v) => setDraft({ ...draft, type: v as ServerType })}
+                            options={TYPE_OPTIONS}
+                          />
                         </div>
                         <div className="flex items-end pb-1.5">
                           <label className="inline-flex items-center gap-2 text-[12.5px] text-text-secondary">
-                            <button
-                              className={`relative h-5 w-9 rounded-full transition-colors ${
-                                draft.enabled ? 'bg-success' : 'bg-border'
-                              }`}
-                              onClick={() => setDraft({ ...draft, enabled: !draft.enabled })}
-                            >
-                              <span
-                                className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition-all ${
-                                  draft.enabled ? 'left-[18px]' : 'left-0.5'
-                                }`}
-                              />
-                            </button>
+                            <Switch
+                              checked={draft.enabled}
+                              onChange={(next) => setDraft({ ...draft, enabled: next })}
+                            />
                             启用
                           </label>
                         </div>
@@ -511,7 +501,7 @@ export function McpSettings() {
                           <div>
                             <label className={fieldLabelCls}>args(每行一个)</label>
                             <textarea
-                              className={`${inputCls} h-20 resize-y font-mono text-[12px]`}
+                              className={textareaCls('w-full h-20 font-mono')}
                               placeholder={'-y\n@modelcontextprotocol/server-filesystem\n/path'}
                               value={draft.argsText}
                               onChange={(e) => setDraft({ ...draft, argsText: e.target.value })}
@@ -520,7 +510,7 @@ export function McpSettings() {
                           <div>
                             <label className={fieldLabelCls}>env(每行 KEY=VALUE)</label>
                             <textarea
-                              className={`${inputCls} h-16 resize-y font-mono text-[12px]`}
+                              className={textareaCls('w-full h-16 font-mono')}
                               placeholder="API_KEY=xxx"
                               value={draft.envText}
                               onChange={(e) => setDraft({ ...draft, envText: e.target.value })}
@@ -541,7 +531,7 @@ export function McpSettings() {
                           <div>
                             <label className={fieldLabelCls}>headers(每行 KEY=VALUE)</label>
                             <textarea
-                              className={`${inputCls} h-16 resize-y font-mono text-[12px]`}
+                              className={textareaCls('w-full h-16 font-mono')}
                               placeholder="Authorization=Bearer xxx"
                               value={draft.headersText}
                               onChange={(e) => setDraft({ ...draft, headersText: e.target.value })}
@@ -553,7 +543,7 @@ export function McpSettings() {
                       {draftErr && <p className="text-[12px] text-danger">{draftErr}</p>}
                       <div className="flex justify-end gap-2">
                         <button
-                          className="rounded-lg border border-border px-3 py-1.5 text-[12.5px] text-text-secondary transition-colors hover:bg-surface-tertiary"
+                          className="rounded-lg border border-border px-3 py-1.5 text-[12.5px] text-text transition-colors hover:bg-fill"
                           onClick={() => openEditor(name)}
                         >
                           取消
@@ -586,15 +576,13 @@ export function McpSettings() {
                   </div>
                   <div>
                     <label className={fieldLabelCls}>类型</label>
-                    <select
-                      className={inputCls}
+                    <Select
+                      className="w-full"
+                      size="md"
                       value={addType}
-                      onChange={(e) => setAddType(e.target.value as ServerType)}
-                    >
-                      <option value="stdio">stdio(本地命令)</option>
-                      <option value="http">http(远程)</option>
-                      <option value="sse">sse(远程)</option>
-                    </select>
+                      onChange={(v) => setAddType(v as ServerType)}
+                      options={TYPE_OPTIONS}
+                    />
                   </div>
                 </div>
                 {addType === 'stdio' ? (
@@ -611,7 +599,7 @@ export function McpSettings() {
                     <div>
                       <label className={fieldLabelCls}>args(每行一个)</label>
                       <textarea
-                        className={`${inputCls} h-20 resize-y font-mono text-[12px]`}
+                        className={textareaCls('w-full h-20 font-mono')}
                         value={addArgs}
                         onChange={(e) => setAddArgs(e.target.value)}
                       />
@@ -619,7 +607,7 @@ export function McpSettings() {
                     <div>
                       <label className={fieldLabelCls}>env(每行 KEY=VALUE,可选)</label>
                       <textarea
-                        className={`${inputCls} h-16 resize-y font-mono text-[12px]`}
+                        className={textareaCls('w-full h-16 font-mono')}
                         value={addEnv}
                         onChange={(e) => setAddEnv(e.target.value)}
                       />
@@ -639,7 +627,7 @@ export function McpSettings() {
                     <div>
                       <label className={fieldLabelCls}>headers(每行 KEY=VALUE,可选)</label>
                       <textarea
-                        className={`${inputCls} h-16 resize-y font-mono text-[12px]`}
+                        className={textareaCls('w-full h-16 font-mono')}
                         value={addHeaders}
                         onChange={(e) => setAddHeaders(e.target.value)}
                       />
@@ -649,7 +637,7 @@ export function McpSettings() {
                 {addErr && <p className="text-[12px] text-danger">{addErr}</p>}
                 <div className="flex justify-end gap-2">
                   <button
-                    className="rounded-lg border border-border px-3 py-1.5 text-[12.5px] text-text-secondary transition-colors hover:bg-surface-tertiary"
+                    className="rounded-lg border border-border px-3 py-1.5 text-[12.5px] text-text transition-colors hover:bg-fill"
                     onClick={() => {
                       setShowAdd(false)
                       setAddErr('')

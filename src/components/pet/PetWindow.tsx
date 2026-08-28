@@ -599,7 +599,7 @@ export function PetWindow() {
       {menuAt && (
         <div
           ref={menuRef}
-          className="absolute z-20 w-44 rounded-xl border border-border bg-white/95 p-1 shadow-lg backdrop-blur-sm"
+          className="absolute z-20 w-44 rounded-xl border border-border bg-surface/95 p-1 shadow-lg backdrop-blur-sm"
           style={
             menuPos
               ? { left: menuPos.x, top: menuPos.y }
@@ -650,7 +650,7 @@ export function PetWindow() {
           靠 z-30 盖住主菜单;移回主菜单其他项(closeSubNow)或点外即收起 */}
       {menuAt && menuPos && subOpen && (
         <div
-          className="absolute z-30 w-36 rounded-xl border border-border bg-white/95 p-1 shadow-lg backdrop-blur-sm"
+          className="absolute z-30 w-36 rounded-xl border border-border bg-surface/95 p-1 shadow-lg backdrop-blur-sm"
           style={{
             left: Math.max(4, menuPos.x - 144 - 4),
             top: Math.max(4, Math.min(menuPos.y, window.innerHeight - 168))
@@ -697,7 +697,7 @@ export function PetWindow() {
               className={`max-w-[220px] truncate whitespace-nowrap rounded-xl border px-2 py-1 text-[12px] shadow ${
                 bubble.tone === 'warn'
                   ? 'border-warning bg-warning-soft text-warning'
-                  : 'border-border bg-white/95 text-text-secondary'
+                  : 'border-border bg-surface/95 text-text-secondary'
               }`}
             >
               {bubble.text}
@@ -707,7 +707,7 @@ export function PetWindow() {
               className={`-mt-1 h-2 w-2 rotate-45 border-b border-r ${
                 bubble.tone === 'warn'
                   ? 'border-warning bg-warning-soft'
-                  : 'border-border bg-white/95'
+                  : 'border-border bg-surface/95'
               }`}
             />
           </div>
@@ -727,7 +727,7 @@ export function PetWindow() {
                     <div key={i} className="relative">
                       <MinionSprite meta={meta} index={i} />
                       {i === 2 && minionCount > 3 && (
-                        <span className="absolute -right-1 top-0 rounded-full border border-border bg-white/95 px-1 text-[10px] leading-4 text-text-secondary shadow">
+                        <span className="absolute -right-1 top-0 rounded-full border border-border bg-surface/95 px-1 text-[10px] leading-4 text-text-secondary shadow">
                           +{minionCount - 3}
                         </span>
                       )}

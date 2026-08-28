@@ -87,7 +87,7 @@ export function ChannelsSettings() {
               <div
                 key={c.id}
                 className={`flex items-center gap-3 rounded-lg px-3 py-2.5 ${
-                  isActive ? 'bg-primary-soft' : 'hover:bg-surface-tertiary'
+                  isActive ? 'bg-primary-soft' : 'hover:bg-fill'
                 }`}
               >
                 <Icon size={15} className="shrink-0 text-text-tertiary" />
@@ -108,7 +108,7 @@ export function ChannelsSettings() {
                 <div className="flex shrink-0 items-center gap-2">
                   {!isActive && c.id !== 'local' && (
                     <button
-                      className="rounded-lg border border-border px-2.5 py-1 text-[12px] text-text-secondary hover:bg-surface-tertiary disabled:opacity-50"
+                      className="rounded-lg border border-border px-2.5 py-1 text-[12px] text-text hover:bg-fill disabled:opacity-50"
                       disabled={busy}
                       onClick={() => void setActiveChannel(c.id)}
                     >
@@ -118,7 +118,7 @@ export function ChannelsSettings() {
                   <button
                     className={`rounded-lg px-3 py-1 text-[12.5px] font-medium disabled:opacity-50 ${
                       c.running
-                        ? 'border border-border text-text-secondary hover:bg-surface-tertiary'
+                        ? 'border border-border text-text hover:bg-fill'
                         : 'bg-primary text-white hover:bg-primary-hover'
                     }`}
                     disabled={busy}

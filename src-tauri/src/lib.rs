@@ -1743,9 +1743,11 @@ pub fn run() {
                     }
                     NewWindowResponse::Deny
                 })
-                // 对话页内皮肤立绘(实验性):注入脚本在官方 web UI iframe(回环源子框架)内
-                // 挂载立绘容器,与壳侧 chatSkinBridge.ts 经 postMessage 收发配置;
-                // 脚本自带子框架/回环 origin 守卫,主框架与其他页面不受影响
+                // 对话页内注入(实验性):皮肤立绘 + 主题/语言双向同步(prefs 模块)。
+                // 注入脚本在官方 web UI iframe(回环源子框架)内工作,与壳侧
+                // chatSkinBridge.ts / chatPrefsBridge.ts 经 postMessage 收发;
+                // 脚本自带子框架/回环 origin 守卫,上行消息壳侧另有 bridgeGuard 三重校验,
+                // 主框架与其他页面不受影响
                 .initialization_script_for_all_frames(include_str!("../assets/chat_skin_inject.js"))
                 .build()?;
             create_tray(app.handle())?;

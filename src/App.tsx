@@ -174,7 +174,7 @@ export default function App() {
             </p>
             <div className="mt-4 flex justify-end gap-2">
               <button
-                className="rounded-lg border border-border px-4 py-1.5 text-[13px] text-text-secondary hover:bg-surface-tertiary"
+                className="rounded-lg border border-border bg-elevated px-4 py-2 text-[13px] text-text hover:bg-hover"
                 onClick={() => {
                   window.kimiApi.cliUpdateSkip(updateInfo.latest).catch(() => {})
                   setUpdateInfo(null)
@@ -183,7 +183,7 @@ export default function App() {
                 跳过此版本
               </button>
               <button
-                className="rounded-lg border border-border px-4 py-1.5 text-[13px] text-text-secondary hover:bg-surface-tertiary"
+                className="rounded-lg border border-border bg-elevated px-4 py-2 text-[13px] text-text hover:bg-hover"
                 onClick={() => setUpdateInfo(null)}
               >
                 稍后
@@ -212,8 +212,9 @@ export default function App() {
           </div>
         </div>
       )}
+      {/* 升级结果 toast:固定深色气泡,亮暗主题下均保证与白字的对比度 */}
       {upgradeMsg && (
-        <div className="fixed left-1/2 top-16 z-[81] -translate-x-1/2 rounded-lg bg-text px-4 py-2 text-[13px] text-white shadow-lg">
+        <div className="fixed left-1/2 top-16 z-[81] -translate-x-1/2 rounded-lg bg-slate-800 px-4 py-2 text-[13px] text-white shadow-lg">
           {upgradeMsg}
         </div>
       )}
@@ -231,7 +232,7 @@ export default function App() {
             </p>
             <div className="mt-4 flex justify-end gap-2">
               <button
-                className="rounded-lg border border-border px-4 py-1.5 text-[13px] text-text-secondary hover:bg-surface-tertiary"
+                className="rounded-lg border border-border bg-elevated px-4 py-2 text-[13px] text-text hover:bg-hover"
                 onClick={() => {
                   setCloseConfirm(null)
                   window.kimiApi.hideToTray().catch(() => {})

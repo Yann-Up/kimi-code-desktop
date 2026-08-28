@@ -26,7 +26,7 @@ function ScopeBadge({ profile }: { profile: AgentProfile }) {
     )
   }
   return (
-    <span className="shrink-0 rounded-full border border-border bg-surface-tertiary px-1.5 py-px text-[11px] text-text-tertiary">
+    <span className="shrink-0 rounded-full border border-border bg-fill px-1.5 py-px text-[11px] text-text-tertiary">
       {profile.scope === 'agents' ? '~/.agents' : '数据目录'}
     </span>
   )
@@ -68,7 +68,7 @@ export function SubagentsSettings() {
               <Card className="h-full transition-colors hover:border-primary/40">
                 <div className="flex items-center gap-2">
                   <Bot size={14} className="shrink-0 text-primary" />
-                  <span className="truncate text-[13.5px] font-medium">{p.name}</span>
+                  <span className="truncate text-[13px] font-[475]">{p.name}</span>
                   <ScopeBadge profile={p} />
                 </div>
                 {p.description && (
@@ -97,7 +97,7 @@ export function SubagentsSettings() {
                 <ScopeBadge profile={detail} />
               </div>
               <button
-                className="rounded p-1 text-text-tertiary hover:bg-surface-tertiary"
+                className="rounded p-1 text-text-tertiary hover:bg-fill hover:text-text"
                 onClick={() => setDetail(null)}
               >
                 <X size={16} />

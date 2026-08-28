@@ -79,7 +79,7 @@ export function CliAdvancedSettings() {
             <Empty text={`读取失败:${error}`} />
             <div className="mt-2 flex justify-end">
               <button
-                className="rounded-lg border border-border px-3 py-1.5 text-[13px] text-text-secondary hover:bg-surface-tertiary"
+                className="rounded-lg border border-border bg-elevated px-3.5 py-2 text-[13px] text-text hover:bg-hover"
                 onClick={() => void load()}
               >
                 重试
@@ -109,7 +109,7 @@ export function CliAdvancedSettings() {
                 {editing ? (
                   <>
                     <button
-                      className="inline-flex items-center gap-1 rounded-lg border border-border px-2.5 py-1.5 text-[12.5px] text-text-secondary transition-colors hover:bg-surface-tertiary"
+                      className="inline-flex items-center gap-1 rounded-lg border border-border px-2.5 py-1.5 text-[12.5px] text-text transition-colors hover:bg-fill"
                       disabled={saving}
                       onClick={cancelEdit}
                     >
@@ -126,7 +126,7 @@ export function CliAdvancedSettings() {
                 ) : (
                   <>
                     <button
-                      className="inline-flex items-center gap-1 rounded-lg border border-border px-2.5 py-1.5 text-[12.5px] text-text-secondary transition-colors hover:bg-surface-tertiary"
+                      className="inline-flex items-center gap-1 rounded-lg border border-border px-2.5 py-1.5 text-[12.5px] text-text transition-colors hover:bg-fill"
                       onClick={() => void load()}
                     >
                       <RotateCw size={12} /> 重新载入

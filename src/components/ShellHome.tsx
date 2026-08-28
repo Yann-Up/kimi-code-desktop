@@ -6,18 +6,11 @@
  * Git 功能由官方 UI 自带(会话内"改动"面板),壳不再重复实现。
  */
 import { useEffect, useRef, useState } from 'react'
-import {
-  Eye,
-  EyeOff,
-  Gauge,
-  MessageSquare,
-  RadioTower,
-  Settings2,
-  TriangleAlert
-} from 'lucide-react'
-import { QuotaStrip } from './QuotaStrip'
+import { Eye, EyeOff, TriangleAlert } from 'lucide-react'
 import { SkinStandee } from './SkinStandee'
 import { useChatSkinBridge } from './chatSkinBridge'
+import { useChatPrefsBridge } from './chatPrefsBridge'
+import { newBridgeNonce } from './bridgeGuard'
 import { SettingsPage } from '../pages/SettingsPage'
 import { StatsPage } from '../pages/stats/StatsPage'
 import { useUi } from '../stores/ui'
@@ -41,9 +34,22 @@ function WebFrame() {
   const [installConfirm, setInstallConfirm] = useState(false)
   // 每通道 src 拉取在途标记(避免 effect 重跑时并发重复拉取)
   const fetching = useRef<Set<string>>(new Set())
+  // 每通道桥 nonce:经 iframe name 属性下发,注入脚本 window.name 回传,
+  // 上行消息由 bridgeGuard 校验来源框架与 nonce 匹配
+  const noncesRef = useRef(new Map<string, string>())
+  const nonceFor = (ch: string) => {
+    let n = noncesRef.current.get(ch)
+    if (!n) {
+      n = newBridgeNonce()
+      noncesRef.current.set(ch, n)
+    }
+    return n
+  }
   // 对话页内皮肤立绘桥接(实验性):与 iframe 注入脚本 postMessage 收发皮肤配置;
   // active 时右下角给会话级快捷显隐按钮(审阅面板被立绘遮挡时临时关闭,不落配置)
   const chatSkin = useChatSkinBridge()
+  // 主题/语言同步:官方 web UI 的明暗与中英经注入脚本上报,壳自定义页面跟随
+  useChatPrefsBridge()
 
   // 通道集合就绪后:为尚无状态的通道初始化(运行中 → on,其余 → off)
   useEffect(() => {
@@ -234,7 +240,7 @@ function WebFrame() {
           <p className="text-sm text-text-secondary">无法加载对话界面</p>
           <p className="text-[11px] text-text-tertiary">{errors[ch]}</p>
           <button
-            className="rounded-lg border border-border px-4 py-1.5 text-[13px] text-text-secondary hover:bg-surface-tertiary"
+            className="rounded-lg border border-border bg-elevated px-4 py-2 text-[13px] text-text hover:bg-hover"
             onClick={() => retryLoad(ch)}
           >
             重试
@@ -275,8 +281,9 @@ function WebFrame() {
       <iframe
         key={src}
         src={src}
+        name={nonceFor(ch)}
         title="Kimi Code"
-        className="min-h-0 w-full flex-1 border-0 bg-white"
+        className="min-h-0 w-full flex-1 border-0 bg-surface"
       />
     )
   }
@@ -329,7 +336,7 @@ function WebFrame() {
             </p>
             <div className="mt-4 flex justify-end gap-2">
               <button
-                className="rounded-lg border border-border px-4 py-1.5 text-[13px] text-text-secondary hover:bg-surface-tertiary"
+                className="rounded-lg border border-border bg-elevated px-4 py-2 text-[13px] text-text hover:bg-hover"
                 onClick={() => setInstallConfirm(false)}
               >
                 取消
@@ -353,75 +360,16 @@ function WebFrame() {
 
 export function ShellHome() {
   const view = useUi((s) => s.view)
-  const setView = useUi((s) => s.setView)
-  const channels = useUi((s) => s.channels)
-  const activeChannel = useUi((s) => s.activeChannel)
-  const setActiveChannel = useUi((s) => s.setActiveChannel)
-  // 应用自身更新:启动静默自检发现新版时在「设置」tab 上加红点角标;
+  // 应用自身更新:启动静默自检发现新版时标题栏升级图标加红点角标;
   // 结果写入全局 store,设置页任何时候打开都能直接看到
-  const appUpdateAvailable = useUi((s) => s.appUpdate !== null)
   useEffect(() => window.kimiApi.onAppUpdateAvailable((info) => useUi.getState().setAppUpdate(info)), [])
   // 下载进度监听挂在常驻的 ShellHome 上:设置页切换 tab 会卸载,挂页面上会丢进度
   useEffect(() => window.kimiApi.onAppUpdateProgress((p) => useUi.getState().setAppProgress(p)), [])
 
-  const TABS: { id: 'chat' | 'stats' | 'settings'; label: string; icon: typeof MessageSquare }[] = [
-    { id: 'chat', label: '对话', icon: MessageSquare },
-    { id: 'stats', label: '统计', icon: Gauge },
-    { id: 'settings', label: '设置', icon: Settings2 }
-  ]
-
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      {/* 顶部导航行:通道切换器(多通道时显示)+ tab(左)+ 额度条(右) */}
-      <div className="flex shrink-0 items-stretch border-b border-border-light bg-surface">
-        <div className="flex items-center gap-1 px-4">
-          {/* 通道切换器:channels.length > 1 才显示;只切全局 activeChannel,不启停服务 */}
-          {channels.length > 1 && (
-            <div className="mr-2 flex items-center gap-1.5 border-r border-border-light pr-3">
-              <RadioTower size={14} className="shrink-0 text-text-tertiary" />
-              <select
-                className="max-w-[180px] cursor-pointer bg-transparent text-[13px] text-text-secondary outline-none"
-                title="切换连接通道"
-                value={activeChannel}
-                onChange={(e) => void setActiveChannel(e.target.value)}
-              >
-                {channels.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.label}
-                    {c.running ? '' : ' (未启动)'}
-                  </option>
-                ))}
-              </select>
-            </div>
-          )}
-          {TABS.map((t) => {
-            const Icon = t.icon
-            const active = view === t.id
-            return (
-              <button
-                key={t.id}
-                className={`flex h-12 items-center gap-1.5 px-3 text-[13px] transition-colors ${
-                  active
-                    ? 'border-b-2 border-primary font-medium text-primary'
-                    : 'text-text-secondary hover:text-text'
-                }`}
-                onClick={() => setView(t.id)}
-              >
-                <Icon size={14} /> {t.label}
-                {t.id === 'settings' && appUpdateAvailable && (
-                  <span className="ml-0.5 h-1.5 w-1.5 rounded-full bg-danger" title="发现新版本,前往 设置 → 常规 更新" />
-                )}
-              </button>
-            )
-          })}
-        </div>
-        <div className="ml-auto min-w-0">
-          <QuotaStrip />
-        </div>
-      </div>
-
-      {/* tab 内容:对话区常驻挂载(切 tab 只隐藏),避免重载官方 UI 丢失会话状态;
-          SkinStandee 垫底(z-0),各 tab 内容 relative 在其上,透明处透出立绘 */}
+      {/* 导航已收进标题栏图标(TitleBar);对话区常驻挂载(切视图只隐藏),
+          避免重载官方 UI 丢失会话状态;SkinStandee 垫底(z-0),各视图内容 relative 在其上 */}
       <div className="relative flex min-h-0 flex-1 flex-col">
         <SkinStandee />
         <div className={`min-h-0 flex-1 flex-col ${view === 'chat' ? 'flex' : 'hidden'}`}>
