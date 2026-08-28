@@ -17,7 +17,7 @@ Kimi Code Desktop:基于 [Kimi Code CLI](https://github.com/moonshotai/kimi-code
 ```
 src/                    渲染进程(React)
   components/           壳组件:ShellHome(三 tab 主页)/ QuotaStrip / TitleBar / SkinStandee(实验性皮肤立绘,设置/统计/主页透出) / settings/ / pet/(桌宠窗口 PetWindow + 悬浮菜单 PetMenu)
-  pages/                Onboarding / Settings / stats
+  pages/                Onboarding / Settings(设置页「资源」组含插件分区 PluginsSettings:经 kimi web REST /api/v1/plugins* 管理插件,与 TUI /plugins 等效,安装/启停/移除均由 CLI 自身落盘;老版本 CLI 无此路由时提示升级)/ stats
   platform/kimi-api.ts  壳与渲染层的 API 契约(window.kimiApi)
   platform/tauri.ts     契约的 Tauri 实现(invoke / 事件监听)
   stores/ui.ts          界面状态(zustand)

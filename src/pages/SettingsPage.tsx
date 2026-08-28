@@ -9,6 +9,7 @@ import {
   Globe,
   Network,
   PawPrint,
+  Puzzle,
   Repeat,
   Settings2,
   SlidersHorizontal,
@@ -30,6 +31,7 @@ import { CliExperimentalSettings } from './settings/CliExperimentalSettings'
 import { SubagentsSettings } from './settings/SubagentsSettings'
 import { SkillsSettings } from './settings/SkillsSettings'
 import { McpSettings } from './settings/McpSettings'
+import { PluginsSettings } from './settings/PluginsSettings'
 import { CommandsSettings } from './settings/CommandsSettings'
 
 // 模型/供应商/OAuth/权限/主题等设置交给官方 web UI;这里只保留官方 UI 没有的壳设置页
@@ -63,6 +65,7 @@ const GROUPS: { label: string; items: SectionDef[] }[] = [
     label: '资源',
     items: [
       { id: 'mcp', label: 'MCP', icon: Database },
+      { id: 'plugins', label: '插件', icon: Puzzle },
       { id: 'skills', label: '技能', icon: Wand2 },
       { id: 'subagents', label: '子智能体', icon: Bot },
       { id: 'commands', label: '命令', icon: Command }
@@ -100,6 +103,8 @@ export function SettingsPage() {
         return <CliAdvancedSettings />
       case 'mcp':
         return <McpSettings />
+      case 'plugins':
+        return <PluginsSettings />
       case 'skills':
         return <SkillsSettings />
       case 'subagents':
