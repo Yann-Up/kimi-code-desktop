@@ -350,9 +350,15 @@ impl ServerManager {
                 // 用解析到的绝对路径启动,不依赖远端 login shell 的 PATH
                 // (bash -lc 读不到交互 shell ~/.bashrc/.zshrc 里的 PATH 条目)
                 let bin = target.kimi_bin_resolved().await?;
+                // Remote Control 启用时附加 --remote-control(同 target.rs web_command)
+                let rc = if crate::target::remote_control_enabled() {
+                    " --remote-control"
+                } else {
+                    ""
+                };
                 let mut proc = client
                     .exec_keepalive(&format!(
-                        "{}{} web --no-open --port {port}",
+                        "{}{} web --no-open --port {port}{rc}",
                         crate::target::experimental_env_prefix(),
                         crate::target::sq(&bin),
                     ))
@@ -481,7 +487,14 @@ impl ServerManager {
         // 先等启动 banner 打印 token(CLI 0.29.2+ 只打印、不写 server.token);
         // 超时回退旧 CLI 的 server.token 文件轮询(target.rs read_token,兼容旧版本)
         // 两条途径都失败时,照旧杀子进程清理,避免 kimi web 泄漏成孤儿进程
-        let token = match token_slot.await_token(BANNER_TOKEN_TIMEOUT).await {
+        // 特例:--remote-control 启动时 banner 改打印 RC 链接块、不含 token 行,
+        // 直接走 server.token 文件轮询(0.39 仍写该文件),避免白等 BANNER_TOKEN_TIMEOUT
+        let banner_token = if crate::target::remote_control_enabled() {
+            None
+        } else {
+            token_slot.await_token(BANNER_TOKEN_TIMEOUT).await
+        };
+        let token = match banner_token {
             Some(token) => token,
             None => match target.read_token().await {
                 Ok(token) => token,

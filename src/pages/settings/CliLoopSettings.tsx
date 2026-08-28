@@ -1,5 +1,5 @@
 /**
- * CLI 配置 · 循环与后台:loop_control / background / subagent / token_counting。
+ * CLI 配置 · 循环与后台:loop_control / background / subagent / swarm / token_counting。
  * 保存时提交 snake_case patch;数字留空不提交,0 表示"不限"(仅对支持 0 语义的字段)。
  */
 import { useState } from 'react'
@@ -57,6 +57,9 @@ function LoopForm({ config, saveSection, offline }: { config: CliConfig; saveSec
   const [subagentTimeoutMs, setSubagentTimeoutMs] = useState<string>(
     numStr(nested(config, 'subagent', 'timeoutMs')) || '7200000'
   )
+  const [swarmTimeoutMs, setSwarmTimeoutMs] = useState<string>(
+    numStr(nested(config, 'swarm', 'timeoutMs')) || '7200000'
+  )
   const [strategy, setStrategy] = useState<string>(
     str(nested(config, ['token_counting', 'tokenCounting'], 'strategy')) || 'measured+estimated'
   )
@@ -93,6 +96,8 @@ function LoopForm({ config, saveSection, offline }: { config: CliConfig; saveSec
       patch.background = bg
       const subagentMs = toInt(subagentTimeoutMs, '子智能体超时')
       if (subagentMs !== undefined) patch.subagent = { timeout_ms: subagentMs }
+      const swarmMs = toInt(swarmTimeoutMs, 'Swarm 子智能体超时')
+      if (swarmMs !== undefined) patch.swarm = { timeout_ms: swarmMs }
       patch.token_counting = { strategy }
       await saveSection(patch)
     })
@@ -149,13 +154,19 @@ function LoopForm({ config, saveSection, offline }: { config: CliConfig; saveSec
         />
       </Card>
 
-      <GroupLabel>子智能体(subagent)</GroupLabel>
+      <GroupLabel>子智能体(subagent / swarm)</GroupLabel>
       <Card className="space-y-4">
         <NumberField
           label="子智能体超时(timeout_ms)"
-          desc="单个子智能体的最长运行时间(毫秒,默认 7200000 即 2 小时);0 = 不限时"
+          desc="单个子智能体的最长运行时间(毫秒,默认 7200000 即 2 小时);0 = 不限时;CLI 0.39.0 起不再覆盖 AgentSwarm 派生的子代理"
           value={subagentTimeoutMs}
           onChange={setSubagentTimeoutMs}
+        />
+        <NumberField
+          label="Swarm 子智能体超时(swarm.timeout_ms)"
+          desc="AgentSwarm 派生子代理的最长运行时间(毫秒,默认 7200000 即 2 小时,需 CLI ≥ 0.39.0);0 = 不限时"
+          value={swarmTimeoutMs}
+          onChange={setSwarmTimeoutMs}
         />
       </Card>
 

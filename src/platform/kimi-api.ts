@@ -301,8 +301,8 @@ export interface KimiApi {
   /** kimi web 意外退出(非用户主动停止)时触发,前端应提示并允许重新启动 */
   onServerExited(cb: (info: ServerExitedInfo) => void): Unsubscribe
   onCliInstalling(cb: () => void): Unsubscribe
-  /** source: CLI 安装来源(home=官方脚本,其余按 npm 处理),用于区分升级通道 */
-  onCliUpdateAvailable(cb: (info: { current: string; latest: string; source: string }) => void): Unsubscribe
+  /** source: CLI 安装来源(home=官方脚本,其余按 npm 处理),用于区分升级通道;bin: 当前生效的二进制路径 */
+  onCliUpdateAvailable(cb: (info: { current: string; latest: string; source: string; bin: string }) => void): Unsubscribe
   onCliUpgraded(cb: (info: { version: string | null; restartOk: boolean }) => void): Unsubscribe
   onServerReady(cb: (info: ServerReadyInfo) => void): Unsubscribe
   onServerError(cb: (info: ServerErrorInfo) => void): Unsubscribe
@@ -346,6 +346,14 @@ export interface KimiApi {
   experimentalGet(): Promise<Record<string, boolean>>
   /** 保存实验性开关;激活通道后端运行中会自动重启使环境变量生效 */
   experimentalSet(flags: Record<string, boolean>): Promise<void>
+  /** Remote Control 访问链接(实验性):读 kimi web --remote-control 写的 rc.json;未运行返回 null */
+  remoteControlStatus(channel?: string): Promise<{
+    url?: string
+    localOrigin?: string
+    deviceId?: string
+    pid?: number
+    startedAt?: number
+  } | null>
   /** 读 kimi web 启动参数(端口 / 局域网开放 / allowed-host) */
   webServerGet(): Promise<WebServerOptions>
   /** 保存 kimi web 启动参数;激活通道后端运行中会自动重启生效 */

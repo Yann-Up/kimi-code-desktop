@@ -2,9 +2,13 @@
  * CLI 配置 · 实验性功能:官方 CLI 实验性特性的开关(默认关闭,经环境变量在启动 kimi web 时注入)。
  * 开关持久化在 desktop-config.json(experimental 字段);激活通道服务运行中切换时后端自动重启生效。
  */
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
+import { QRCodeSVG } from 'qrcode.react'
 import { Card, GroupLabel, Section } from '../../components/settings/common'
 import { ToggleField } from './cliForm'
+
+/** Remote Control 开关的 env 名(开关打开时在下方展示访问链接) */
+const RC_ENV = 'KIMI_CODE_EXPERIMENTAL_REMOTE_CONTROL'
 
 interface FeatureDef {
   /** 注入给 CLI 的环境变量名 */
@@ -13,7 +17,7 @@ interface FeatureDef {
   desc: string
 }
 
-/** 官方实验性特性清单(与 CLI 0.36.1 FlagResolver 注册表一致;新增实验特性时在此追加。
+/** 官方实验性特性清单(与 CLI 0.39.0 FlagResolver 注册表一致;新增实验特性时在此追加。
  *  开关有效值以后端 experimental_get 返回为准:用户设置 > 桌面默认 > CLI 默认) */
 const FEATURES: FeatureDef[] = [
   {
@@ -40,8 +44,111 @@ const FEATURES: FeatureDef[] = [
     env: 'KIMI_CODE_EXPERIMENTAL_SEARCH_WORKER',
     label: '搜索索引 worker 线程',
     desc: '全局搜索索引(MiniDB 打开/同步/查询)放到独立 worker 线程运行,避免阻塞主线程;CLI 默认开启,可在此关闭'
+  },
+  {
+    env: 'KIMI_CODE_EXPERIMENTAL_SUBAGENT_FORK',
+    label: '子代理上下文快照(subagent-fork)',
+    desc: 'Agent / AgentSwarm 派生子代理时携带调用方的上下文快照,而不是全新空白上下文'
+  },
+  {
+    env: 'KIMI_CODE_EXPERIMENTAL_TOWER',
+    label: 'tower 模式',
+    desc: '协调多个 agent 围绕同一目标协作(tower mode)'
+  },
+  {
+    env: 'KIMI_CODE_EXPERIMENTAL_WAIT_FOR',
+    label: 'WaitFor 工具',
+    desc: '模型可在当前轮内等待后台任务完成(WaitFor);CLI 默认开启,可在此关闭'
+  },
+  {
+    env: 'KIMI_CODE_EXPERIMENTAL_PERSISTENCE_MINIDB_READMODEL',
+    label: 'minidb 读模型',
+    desc: '会话索引与 wire 回放改用 minidb 派生的只读查询存储;CLI 默认开启,可在此关闭'
+  },
+  {
+    env: 'KIMI_CODE_EXPERIMENTAL_REMOTE_CONTROL',
+    label: '远程控制(Remote Control)',
+    desc: '把本机 Web UI 经官方中继(code-rc.kimi.com)暴露到公网链接,可从手机/其他电脑操作本机 agent;开启后启动服务自动附加 --remote-control。需 CLI ≥ 0.39.0 且已登录 Kimi 账号(未登录会启动失败);持有链接的人等同于拥有本机操作权限,请勿分享;全机同一时间只允许一个 RC 实例'
   }
 ]
+
+/** Remote Control 访问链接面板:开关打开时展示。
+ *  开启后服务自动重启、CLI 向官方中继注册需几秒:未拿到链接时每 3s 轮询,最多 10 次 */
+function RemoteControlLink() {
+  const [url, setUrl] = useState<string | null>(null)
+  const [copied, setCopied] = useState(false)
+
+  const load = useCallback(async () => {
+    try {
+      const st = await window.kimiApi.remoteControlStatus()
+      setUrl(st?.url ?? null)
+      return Boolean(st?.url)
+    } catch {
+      return false
+    }
+  }, [])
+
+  useEffect(() => {
+    let cancelled = false
+    const tick = async (n: number) => {
+      const ok = await load()
+      if (!cancelled && !ok && n < 10) setTimeout(() => void tick(n + 1), 3000)
+    }
+    void tick(0)
+    return () => {
+      cancelled = true
+    }
+  }, [load])
+
+  const copy = async () => {
+    if (!url) return
+    try {
+      await navigator.clipboard.writeText(url)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 1500)
+    } catch {
+      /* 剪贴板不可用时静默 */
+    }
+  }
+
+  if (!url) {
+    return (
+      <p className="mt-1.5 text-[11.5px] text-text-tertiary">
+        等待 Remote Control 就绪…服务重启并向中继注册后此处显示访问链接;若长时间无链接,请确认 CLI ≥ 0.39.0 且已登录 Kimi 账号
+      </p>
+    )
+  }
+  return (
+    <div className="mt-1.5">
+      <div className="flex items-start gap-3">
+        {/* 白底衬底保证扫码对比度(深色皮肤/立绘透出时仍需可读) */}
+        <div className="shrink-0 rounded-lg border border-border bg-white p-1.5">
+          <QRCodeSVG value={url} size={120} />
+        </div>
+        <div className="min-w-0">
+          <p className="break-all font-mono text-[12px] text-primary">{url}</p>
+          <div className="mt-1 flex items-center gap-2">
+            <button
+              className="rounded-md border border-border px-2 py-0.5 text-[11.5px] text-text-secondary transition-colors hover:bg-surface"
+              onClick={() => void copy()}
+            >
+              {copied ? '已复制' : '复制链接'}
+            </button>
+            <button
+              className="rounded-md border border-border px-2 py-0.5 text-[11.5px] text-text-secondary transition-colors hover:bg-surface"
+              onClick={() => void load()}
+            >
+              刷新
+            </button>
+          </div>
+        </div>
+      </div>
+      <p className="mt-1 text-[11.5px] text-text-tertiary">
+        手机扫码或在其他电脑浏览器打开链接,登录 Kimi 账号后即可远程操作本机 agent;链接含完整操作权限,请勿分享
+      </p>
+    </div>
+  )
+}
 
 export function CliExperimentalSettings() {
   const [flags, setFlags] = useState<Record<string, boolean> | null>(null)
@@ -75,7 +182,7 @@ export function CliExperimentalSettings() {
   return (
     <Section
       title="实验性功能"
-      desc="官方 CLI 的实验性特性开关(官方默认关闭);经环境变量在启动服务时注入,切换后需重启服务生效(运行中会自动重启)"
+      desc="官方 CLI 的实验性特性开关(部分特性 CLI 默认开启,可在此关闭);经环境变量在启动服务时注入,切换后需重启服务生效(运行中会自动重启)"
     >
       <GroupLabel>功能开关</GroupLabel>
       <Card>
@@ -92,6 +199,7 @@ export function CliExperimentalSettings() {
                   onChange={(v) => void toggle(f.env, v)}
                 />
                 <p className="mt-0.5 font-mono text-[11px] text-text-tertiary">{f.env}</p>
+                {f.env === RC_ENV && (flags[f.env] ?? false) && <RemoteControlLink />}
               </div>
             ))}
           </div>

@@ -139,7 +139,9 @@ pub fn invalidate_remote_caches() {
 /// 实验性开关登记表:(env, CLI 默认是否开启, 未显式设置时桌面端是否按开启处理)
 /// 注入规则:有效值 ≠ CLI 默认时才注入对应 env —— 显式关闭 CLI 默认开启的项(如 search_worker)
 /// 会注入 "0";未设置且桌面端不干预时不注入,由 CLI 自身默认生效
-/// (flag 清单与本机 CLI 0.36.1 的 FlagResolver 注册表一致;新增实验特性时在此追加)
+/// (flag 清单与本机 CLI 0.39.0 的 FlagResolver 注册表一致;新增实验特性时在此追加。
+/// remote_control 特殊:env 只解锁能力,真正生效靠启动 kimi web 时附加 --remote-control
+/// (见 web_command / server.rs SSH 启动串),且会把 Web UI 经官方中继暴露到公网,前端开关文案需明示风险)
 const EXPERIMENTAL_FLAG_TABLE: &[(&str, bool, bool)] = &[
     ("KIMI_CODE_EXPERIMENTAL_FLAG", false, false),
     // 二级模型:桌面端历来默认开启(保持既有行为)
@@ -148,7 +150,22 @@ const EXPERIMENTAL_FLAG_TABLE: &[(&str, bool, bool)] = &[
     ("KIMI_CODE_EXPERIMENTAL_AUTO_SESSION_TITLE", false, false),
     // 搜索索引 worker 线程:CLI 默认开启
     ("KIMI_CODE_EXPERIMENTAL_SEARCH_WORKER", true, false),
+    // 以下为 CLI 0.39.0 注册表新增
+    ("KIMI_CODE_EXPERIMENTAL_SUBAGENT_FORK", false, false),
+    ("KIMI_CODE_EXPERIMENTAL_TOWER", false, false),
+    ("KIMI_CODE_EXPERIMENTAL_REMOTE_CONTROL", false, false),
+    // WaitFor 工具 / minidb 读模型:CLI 默认开启
+    ("KIMI_CODE_EXPERIMENTAL_WAIT_FOR", true, false),
+    ("KIMI_CODE_EXPERIMENTAL_PERSISTENCE_MINIDB_READMODEL", true, false),
 ];
+
+/// Remote Control 是否启用(跟随实验性开关有效值);
+/// 启用时启动 kimi web 需附加 --remote-control(env 只解锁该 flag,不直接生效)
+pub fn remote_control_enabled() -> bool {
+    experimental_effective()
+        .into_iter()
+        .any(|(env, on)| env == "KIMI_CODE_EXPERIMENTAL_REMOTE_CONTROL" && on)
+}
 
 /// 各实验性开关的有效值(用户显式设置 > 桌面端默认 > CLI 默认)
 pub fn experimental_effective() -> Vec<(String, bool)> {
@@ -987,12 +1004,22 @@ impl ConnectionTarget {
     /// 构造启动 kimi web 的子进程命令;local_port 为本地端口。
     /// 仅 Local/WSL 走本地 spawn;SSH 由 server.rs 经 russh exec_keepalive + forward 启动
     pub async fn web_command(&self, local_port: u16) -> Result<Command, String> {
+        // Remote Control 启用时附加 --remote-control(0.39.0+;banner 改打印 RC 链接块,
+        // 不含 token 行,server.rs 的 token 获取随之改走 server.token 文件轮询)
+        let rc = if remote_control_enabled() {
+            " --remote-control"
+        } else {
+            ""
+        };
         match self {
             ConnectionTarget::Local => {
                 let mut cmd = hidden_command(&kimi_bin());
                 cmd.args(["web", "--no-open", "--port", &local_port.to_string()])
                     // 显式传入数据目录:保证 CLI 与桌面端读取同一份(自定义工作区/默认一致)
                     .env("KIMI_CODE_HOME", kimi_home());
+                if !rc.is_empty() {
+                    cmd.arg("--remote-control");
+                }
                 // 实验性功能开关(设置页可配;二级模型默认开)
                 for (k, v) in experimental_envs() {
                     cmd.env(k, v);
@@ -1008,7 +1035,7 @@ impl ConnectionTarget {
                 Ok(Self::wsl_shell_command(
                     distro,
                     &format!(
-                        "{}{} web --no-open --port {local_port}",
+                        "{}{} web --no-open --port {local_port}{rc}",
                         experimental_env_prefix(),
                         sq(&bin),
                     ),
@@ -1129,7 +1156,7 @@ impl ConnectionTarget {
         }
         match self {
             ConnectionTarget::Local => Err(format!(
-                "获取 kimi web token 失败:启动横幅未输出 Token 行,且未能在 {} 读取 server.token 文件(该文件仅旧版 CLI 写入)",
+                "获取 kimi web token 失败:启动横幅未输出 Token 行,且未能在 {} 读取 server.token 文件",
                 kimi_home().join("server.token").display()
             )),
             ConnectionTarget::Wsl { .. } => {

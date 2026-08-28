@@ -82,6 +82,24 @@ pub async fn read_config_toml(channel: &str) -> Option<String> {
     t.read_text(&t.join(&home, "config.toml")).await.ok()
 }
 
+/// 读 Remote Control 访问链接(kimi web --remote-control 启动后写 <kimi_home>/server/rc.json)。
+/// 返回 { url, localOrigin, deviceId, pid, startedAt };未启用/未运行/读取失败返回 Null。
+/// 设置页"实验性功能"的 RC 开关旁展示链接用(壳 stdout 被 drain 丢弃,用户看不到 CLI 打印的链接)。
+pub async fn read_remote_control_status(channel: &str) -> Value {
+    let Some((t, home)) = target_and_home(channel).await else {
+        return Value::Null;
+    };
+    let raw = safe_read_json(&t, &t.join(&home, "server/rc.json")).await;
+    let Some(v) = raw else { return Value::Null };
+    json!({
+        "url": v.get("url").and_then(|x| x.as_str()),
+        "localOrigin": v.get("localOrigin").and_then(|x| x.as_str()),
+        "deviceId": v.get("deviceId").and_then(|x| x.as_str()),
+        "pid": v.get("pid").and_then(|x| x.as_u64()),
+        "startedAt": v.get("startedAt").and_then(|x| x.as_i64()),
+    })
+}
+
 /// 读 config.toml 并解析为 JSON(键保持 snake_case 原样),供设置页结构化读写。
 /// 文件不存在返回 Ok(None);解析失败返回 Err(与原文编辑页"不校验"语义不同,这里必须可解析)。
 pub async fn read_config_toml_parsed(channel: &str) -> Result<Option<Value>, String> {

@@ -126,6 +126,11 @@ const api: KimiApi = {
     invoke<ApiCallsResult>('local_api_calls', { page, pageSize, channel }),
   experimentalGet: () => invoke<Record<string, boolean>>('experimental_get'),
   experimentalSet: (flags) => invoke('experimental_set', { flags }),
+  remoteControlStatus: (channel) =>
+    invoke<{ url?: string; localOrigin?: string; deviceId?: string; pid?: number; startedAt?: number } | null>(
+      'remote_control_status',
+      { channel }
+    ),
   webServerGet: () => invoke<WebServerOptions>('web_server_get'),
   webServerSet: (opts) => invoke<WebServerOptions>('web_server_set', { port: opts.port }),
   localDrives: () => invoke('local_drives'),

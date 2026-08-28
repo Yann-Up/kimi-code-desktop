@@ -1409,6 +1409,12 @@ async fn local_cli_config_parsed(channel: Option<String>) -> Result<Option<Value
     local_store::read_config_toml_parsed(&channel.unwrap_or_else(cli::active_channel)).await
 }
 
+/// Remote Control 访问链接(实验性):读 kimi web --remote-control 写的 rc.json;未运行返回 null
+#[tauri::command]
+async fn remote_control_status(channel: Option<String>) -> Result<Value, String> {
+    Ok(local_store::read_remote_control_status(&channel.unwrap_or_else(cli::active_channel)).await)
+}
+
 #[tauri::command]
 fn local_drives() -> Vec<String> {
     local_store::list_drives()
@@ -1691,6 +1697,7 @@ pub fn run() {
             local_cli_config_write,
             local_cli_config_merge,
             local_cli_config_parsed,
+            remote_control_status,
             local_drives,
         ])
         .setup(move |app| {
