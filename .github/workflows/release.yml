@@ -52,6 +52,19 @@ jobs:
           releaseDraft: true
           prerelease: false
 
+      # 产物校验:NSIS/MSI 安装器各一且 updater 签名齐全
+      - name: Verify Windows bundles
+        shell: pwsh
+        run: |
+          $bundleRoot = "src-tauri/target/release/bundle"
+          $nsis = @(Get-ChildItem "$bundleRoot/nsis" -File -Filter "*-setup.exe")
+          $msi = @(Get-ChildItem "$bundleRoot/msi" -File -Filter "*.msi")
+          if ($nsis.Count -ne 1) { throw "Expected exactly one NSIS installer, found $($nsis.Count)." }
+          if ($msi.Count -ne 1) { throw "Expected exactly one MSI installer, found $($msi.Count)." }
+          foreach ($f in @($nsis[0], $msi[0])) {
+            if (-not (Test-Path "$($f.FullName).sig" -PathType Leaf)) { throw "Missing updater signature for $($f.Name)." }
+          }
+
       # 绿色免安装版:tauri build 的编译产物 exe 直接打 zip(独立分发,不走安装器)
       # 注意:仍需系统装有 WebView2 运行时(Win10 1803+ 一般自带)
       - name: Package portable exe
@@ -91,8 +104,28 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          # 编译期部署目标,与 bundle.macOS.minimumSystemVersion 对齐
+          MACOSX_DEPLOYMENT_TARGET: "13.3"
         with:
           tagName: ${{ inputs.tag || github.ref_name }}
           releaseName: "Kimi Code Desktop v__VERSION__"
           releaseDraft: true
           prerelease: false
+
+      # 产物校验:arm64 架构 / adhoc 签名(无 Apple 签名链)/ dmg 与 updater 产物各一
+      - name: Verify macOS bundles
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = "arm64"
+          bundle_root="src-tauri/target/release/bundle"
+          app_path="$bundle_root/macos/Kimi Code Desktop.app"
+          test -d "$app_path"
+          plutil -lint "$app_path/Contents/Info.plist"
+          lipo "$app_path/Contents/MacOS/kimi-desktop-tauri" -verify_arch arm64
+          sig="$(codesign -dvv "$app_path" 2>&1)"
+          grep -q 'Signature=adhoc' <<<"$sig" || { echo "期望 adhoc 签名(未配置 Developer ID)"; exit 1; }
+          if grep -q '^Authority=' <<<"$sig"; then echo "不应存在 Apple 签名链"; exit 1; fi
+          test "$(find "$bundle_root/dmg" -maxdepth 1 -type f -name '*.dmg' | wc -l | tr -d ' ')" = "1"
+          test "$(find "$bundle_root/macos" -maxdepth 1 -type f -name '*.app.tar.gz' | wc -l | tr -d ' ')" = "1"
+          test "$(find "$bundle_root/macos" -maxdepth 1 -type f -name '*.app.tar.gz.sig' | wc -l | tr -d ' ')" = "1"

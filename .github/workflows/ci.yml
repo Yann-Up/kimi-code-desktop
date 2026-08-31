@@ -1,0 +1,82 @@
+name: CI
+
+# 日常 CI:push 到 main / PR 触发。
+# 没有 mac 实机,macos-15 runner 是 macOS 代码路径唯一的持续验证手段
+# (v0.5.2 发版时才暴露 transparent() 缺 macos-private-api 的教训——
+# Windows 本地 cargo check 覆盖不到 mac 专属代码路径)。
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  frontend:
+    name: typecheck
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+
+  rust:
+    name: cargo check (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-15]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      # tauri-build 只读 tauri.conf.json,不依赖前端产物,无需先构建 renderer
+      - working-directory: src-tauri
+        run: cargo check --locked
+
+  # macOS 打包冒烟:编出未签名 .app 并校验(arm64 架构 / adhoc 签名),
+  # 产物留存 artifact,无 Mac 时也可取下来发给别人测
+  macos-app:
+    name: macOS arm64 app bundle
+    runs-on: macos-15
+    env:
+      MACOSX_DEPLOYMENT_TARGET: "13.3"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Build unsigned macOS app bundle
+        run: npm run tauri build -- --bundles app
+      - name: Verify arm64 bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = "arm64"
+          app_path="src-tauri/target/release/bundle/macos/Kimi Code Desktop.app"
+          test -d "$app_path"
+          plutil -lint "$app_path/Contents/Info.plist"
+          lipo "$app_path/Contents/MacOS/kimi-desktop-tauri" -verify_arch arm64
+          sig="$(codesign -dvv "$app_path" 2>&1)"
+          grep -q 'Signature=adhoc' <<<"$sig" || { echo "期望 adhoc 签名(未配置 Developer ID)"; exit 1; }
+          if grep -q '^Authority=' <<<"$sig"; then echo "不应存在 Apple 签名链"; exit 1; fi
+      - name: Package app as zip
+        shell: bash
+        run: |
+          ditto -c -k --sequesterRsrc --keepParent \
+            "src-tauri/target/release/bundle/macos/Kimi Code Desktop.app" \
+            kimi-desktop-macos-arm64.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: kimi-desktop-macos-arm64-app
+          path: kimi-desktop-macos-arm64.zip
+          if-no-files-found: error
