@@ -342,6 +342,8 @@ pub fn hidden_command(program: &str) -> Command {
         cmd.arg(program);
         return cmd;
     }
+    // mut 仅 Windows 需要(creation_flags);非 Windows 无后续可变调用,allow 掉 unused_mut
+    #[allow(unused_mut)]
     let mut cmd = Command::new(program);
     // tokio::process::Command 自带 creation_flags(Windows)
     #[cfg(windows)]

@@ -1786,7 +1786,7 @@ pub fn run() {
 
     // 退出前优雅关停所有通道的 kimi web(对应 Electron 的 before-quit)
     app.run(|handle, event| {
-        if let tauri::RunEvent::ExitRequested { api, .. } = event {
+        if let tauri::RunEvent::ExitRequested { ref api, .. } = event {
             let state = handle.state::<Arc<AppState>>();
             if !state.exit_cleaned.swap(true, Ordering::SeqCst) {
                 api.prevent_exit();
