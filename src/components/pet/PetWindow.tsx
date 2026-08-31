@@ -1,7 +1,7 @@
 /**
  * PetWindow: 桌宠悬浮窗的渲染入口(?window=pet)。
  * canvas 逐帧绘制 spritesheet;状态行序与 petdex 约定一致(见 docs/desktop-pet-design.md)。
- * M3:动画元数据经 petActiveGet() 动态加载;内置宠物用打包 import 图,外部宠物走 http://pet.localhost/<slug>。
+ * M3:动画元数据经 petActiveGet() 动态加载;内置宠物用打包 import 图,外部宠物走 pet 自定义协议(customProtocolUrl)。
  * M4 显示优先级:dragState(拖拽方向)> oneshot(点击 waving / pet:tool 脉冲)> rustState(状态机)。
  * 前两层是本地状态,不进 Rust;气泡为纯前端文本层,与动画解耦。
  */
@@ -9,6 +9,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { Check, ChevronRight, EyeOff, MousePointerClick, PawPrint } from 'lucide-react'
 import type { PetAnim, PetConfig, PetInfo, PetMeta, PetState } from '@/platform/kimi-api'
+import { customProtocolUrl } from '../../platform/protocol'
 import { useT } from '../../i18n'
 
 type TFn = ReturnType<typeof useT>
@@ -163,7 +164,7 @@ function MinionSprite({ meta, index }: { meta: PetMeta; index: number }) {
     // 与主宠同一张图(浏览器缓存命中);crossOrigin=anonymous 与主渲染配套,
     // 否则外部宠物(pet 协议跨源)会污染画布,detectFrames 的 getImageData 抛错
     img.crossOrigin = 'anonymous'
-    img.src = meta.source === 'builtin' ? builtinSheetUrl(meta.slug) : `http://pet.localhost/${meta.slug}`
+    img.src = meta.source === 'builtin' ? builtinSheetUrl(meta.slug) : customProtocolUrl('pet', meta.slug)
     let raf = 0
     let start = 0
     // 卸载早于 img.onload 时,onload 仍会启动 rAF 且无人取消(画进已分离的 canvas)
@@ -513,7 +514,7 @@ export function PetWindow() {
     // crossOrigin=anonymous + 协议响应的 ACAO:* 配套:否则画布被跨源污染,
     // 下面 detectFrames 的 getImageData 会抛 SecurityError 导致整只宠物不显示
     img.crossOrigin = 'anonymous'
-    img.src = meta.source === 'builtin' ? builtinSheetUrl(meta.slug) : `http://pet.localhost/${meta.slug}`
+    img.src = meta.source === 'builtin' ? builtinSheetUrl(meta.slug) : customProtocolUrl('pet', meta.slug)
     let raf = 0
     let start = 0
     // 卸载早于 img.onload 时,onload 仍会启动 rAF 且无人取消(与 MinionSprite 同)

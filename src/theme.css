@@ -5,14 +5,16 @@
    其中 Noto Sans SC 全量 CJK 可变字体 7.8MB);官方 mono 为 JetBrains Mono Variable,未打包,沿用系统等宽 */
 @font-face {
   font-family: 'Schibsted Grotesk Variable';
-  src: url('./assets/fonts/SchibstedGrotesk-Variable.woff2') format('woff2-variations');
+  /* format 用现行规范的 'woff2'(可变特性由字体自身+font-weight 范围声明表达);
+     旧草稿写法 'woff2-variations' WebKit 可能不识别导致整个 src 被跳过 */
+  src: url('./assets/fonts/SchibstedGrotesk-Variable.woff2') format('woff2');
   font-weight: 400 900;
   font-style: normal;
   font-display: swap;
 }
 @font-face {
   font-family: 'Noto Sans SC Variable';
-  src: url('./assets/fonts/NotoSansSC-Variable.woff2') format('woff2-variations');
+  src: url('./assets/fonts/NotoSansSC-Variable.woff2') format('woff2');
   font-weight: 100 900;
   font-style: normal;
   font-display: swap;

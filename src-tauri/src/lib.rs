@@ -1496,7 +1496,12 @@ async fn run_bootstrap(app: AppHandle, state: Arc<AppState>, channel: String) {
             cli::install_cli().await?;
             version = cli::detect_installed().await;
             if version.is_none() {
-                return Err("CLI 安装后仍不可用,请手动执行: irm https://code.kimi.com/kimi-code/install.ps1 | iex".to_string());
+                // 手动安装指引按平台分叉(与 cli::install_cli 的两个渠道对应)
+                return Err(if cfg!(windows) {
+                    "CLI 安装后仍不可用,请手动执行: irm https://code.kimi.com/kimi-code/install.ps1 | iex".to_string()
+                } else {
+                    "CLI 安装后仍不可用,请手动执行: curl -fsSL https://code.kimi.com/kimi-code/install.sh | bash".to_string()
+                });
             }
         }
         let Some(version) = version else {
@@ -1791,6 +1796,11 @@ pub fn run() {
                     h.exit(0);
                 });
             }
+        }
+        // macOS:窗口隐藏(进托盘)后点 Dock 图标触发 Reopen,唤回主窗(与托盘左键同路径)
+        #[cfg(target_os = "macos")]
+        if let tauri::RunEvent::Reopen { .. } = event {
+            restore_main(handle);
         }
     });
 }

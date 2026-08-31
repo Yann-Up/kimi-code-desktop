@@ -45,10 +45,13 @@ jobs:
         run: |
           mkdir -p dist
           gh release download "$TAG" --dir dist --pattern "latest.json" --clobber
-          # 仅改写下载地址为 CNB 附件直链,版本号/签名等其余字段保持原样
+          # 仅把 Windows 平台的下载地址改写为 CNB 附件直链(CNB 只回传 Windows 安装器),
+          # darwin(mac)平台保持 GitHub 直链,版本号/签名等其余字段保持原样
           jq -c --arg tag "$TAG" --arg repo "$CNB_REPO" '
             .platforms |= with_entries(
-              .value.url = ("https://cnb.cool/" + $repo + "/-/releases/download/" + $tag + "/" + (.value.url | split("/") | last))
+              if (.key | startswith("windows")) then
+                .value.url = ("https://cnb.cool/" + $repo + "/-/releases/download/" + $tag + "/" + (.value.url | split("/") | last))
+              else . end
             )' dist/latest.json | tee dist/cnb-latest.json
 
       # 推送 tag 到 CNB → 触发 .cnb.yml tag_push 流水线(建 Release + 上传附件)

@@ -7,6 +7,8 @@
  * 未知 slug 一律回退列表第一个(与 pet_active_get 的回退策略一致)。
  */
 
+import { customProtocolUrl } from '../platform/protocol'
+
 /** 单个皮肤:slug 来自文件名;url 内置为打包资源地址,自选为 skin:// 协议地址 */
 export interface SkinInfo {
   slug: string
@@ -23,8 +25,7 @@ const modules = import.meta.glob<string>('../assets/skins/*.{png,webp,jpg,jpeg}'
   import: 'default'
 })
 
-export const BUILTIN_SKINS: SkinInfo[] = Object.entries(modules)
-  .map(([path, url]) => {
+export const BUILTIN_SKINS: SkinInfo[] = Object.entries(modules)  .map(([path, url]) => {
     const slug = path.replace(/^.*\//, '').replace(/\.[^.]+$/, '')
     return { slug, name: slug, url, source: 'builtin' as const }
   })
@@ -32,7 +33,7 @@ export const BUILTIN_SKINS: SkinInfo[] = Object.entries(modules)
 
 /** 用户自选皮肤的供图 URL(skin:// 协议,Rust 侧按 slug 读 <config_dir>/skins/) */
 function customSkinUrl(slug: string): string {
-  return `http://skin.localhost/${slug}`
+  return customProtocolUrl('skin', slug)
 }
 
 /** 合并皮肤列表:内置在前,其后为用户自选(与内置 slug 冲突的自选跳过,内置优先) */

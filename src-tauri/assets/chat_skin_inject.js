@@ -17,8 +17,9 @@
   var NONCE = window.name || '';
   var CONTAINER_ID = 'kimi-chat-skin';
   var STYLE_ID = 'kimi-chat-skin-style';
-  // 壳侧 origin 白名单:prod 为 tauri 自定义协议域,dev 为 vite dev server
-  var PARENT_ORIGINS = ['https://tauri.localhost', 'http://tauri.localhost', 'http://localhost:5188'];
+  // 壳侧 origin 白名单:prod 为 tauri 自定义协议域(macOS WKWebView 为 tauri://localhost),
+  // dev 为 vite dev server
+  var PARENT_ORIGINS = ['tauri://localhost', 'https://tauri.localhost', 'http://tauri.localhost', 'http://localhost:5188'];
 
   function removeSkin() {
     var el = document.getElementById(CONTAINER_ID);
@@ -112,8 +113,8 @@
 
   var TAG = '__kimiChatPrefs';
   var NONCE = window.name || '';
-  // 壳侧 origin 白名单:与皮肤模块一致(prod tauri 自定义协议域,dev vite 5188)
-  var PARENT_ORIGINS = ['https://tauri.localhost', 'http://tauri.localhost', 'http://localhost:5188'];
+  // 壳侧 origin 白名单:与皮肤模块一致(prod tauri 自定义协议域,macOS 为 tauri://localhost,dev vite 5188)
+  var PARENT_ORIGINS = ['tauri://localhost', 'https://tauri.localhost', 'http://tauri.localhost', 'http://localhost:5188'];
   var lastTheme = null;
   var lastThemePref = null;
   var lastLocale = null;

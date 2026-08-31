@@ -1,9 +1,10 @@
 name: Release
 
 # 发版流程:改版本号(tauri.conf.json / Cargo.toml / package.json 三处保持一致)
-# → commit → git tag vX.Y.Z → git push --tags → 本 workflow 自动构建 NSIS 安装包、
-# → 用 TAURI_SIGNING_PRIVATE_KEY 签名、生成 latest.json、打包绿色免安装 exe zip,
-# 并创建草稿 Release 并上传全部产物;
+# → commit → git tag vX.Y.Z → git push --tags → 本 workflow 自动构建 Windows NSIS 安装包
+# 与 macOS dmg(仅 Apple Silicon/aarch64,未签名,首次打开需右键→打开绕过 Gatekeeper)、
+# → 用 TAURI_SIGNING_PRIVATE_KEY 签名、生成 latest.json(含 windows/macos 双平台)、
+# 打包绿色免安装 exe zip,并创建草稿 Release 并上传全部产物;
 # 在 Releases 页面确认后手动发布为正式版,旧版客户端即可自动检测到更新。
 #
 # 需要的一次性仓库 Secrets(Settings → Secrets and variables → Actions):
@@ -24,7 +25,7 @@ permissions:
   contents: write # 创建 Release / 上传产物
 
 jobs:
-  release:
+  release-windows:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -64,3 +65,34 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: gh release upload "${{ inputs.tag || github.ref_name }}" "Kimi-Code-Desktop_*_x64-portable.zip" --clobber
+
+  # macOS 构建:仅 Apple Silicon(macos-latest 即 aarch64 runner,默认目标 aarch64-apple-darwin)。
+  # 未做 Developer ID 签名/公证,产物为未签名 dmg;若后续要签名,加 APPLE_CERTIFICATE /
+  # APPLE_SIGNING_IDENTITY / APPLE_ID / APPLE_PASSWORD / APPLE_TEAM_ID 等 secrets 即可。
+  # 串行跟在 Windows job 之后:tauri-action 会把 Release 上已有的 Windows 签名产物
+  # 合并进 latest.json,并行跑两个 job 会互相覆盖丢平台。
+  release-macos:
+    needs: release-windows
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        with:
+          tagName: ${{ inputs.tag || github.ref_name }}
+          releaseName: "Kimi Code Desktop v__VERSION__"
+          releaseDraft: true
+          prerelease: false

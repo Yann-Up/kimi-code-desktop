@@ -438,22 +438,33 @@ pub fn is_newer(latest: &str, current: &str) -> bool {
     false
 }
 
-/// 官方安装脚本(Windows:irm install.ps1 | iex)
+/// 官方安装脚本(Windows:irm install.ps1 | iex;macOS/Linux:curl install.sh | bash)
 pub async fn install_cli() -> Result<(), String> {
-    let mut cmd = hidden_command("powershell");
-    cmd.args([
-        "-NoProfile",
-        "-ExecutionPolicy",
-        "Bypass",
-        "-Command",
-        "irm https://code.kimi.com/kimi-code/install.ps1 | iex",
-    ]);
+    let mut cmd = if cfg!(windows) {
+        let mut c = hidden_command("powershell");
+        c.args([
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            "irm https://code.kimi.com/kimi-code/install.ps1 | iex",
+        ]);
+        c
+    } else {
+        // bash -lc:mac GUI 应用默认 PATH 不含 /opt/homebrew/bin 等,登录 shell 兜底
+        let mut c = hidden_command("bash");
+        c.args([
+            "-lc",
+            "curl -fsSL https://code.kimi.com/kimi-code/install.sh | bash",
+        ]);
+        c
+    };
     // kill_on_drop:超时(timeout 返回)后子进程随之被杀,不留后台残留
     cmd.kill_on_drop(true);
     let status = tokio::time::timeout(Duration::from_secs(600), cmd.status())
         .await
         .map_err(|_| "CLI 安装超时(600s)".to_string())?
-        .map_err(|e| format!("启动 powershell 失败: {e}"))?;
+        .map_err(|e| format!("启动安装脚本失败: {e}"))?;
     if status.success() {
         Ok(())
     } else {
@@ -484,10 +495,17 @@ pub async fn upgrade_cli() -> Result<String, String> {
 }
 
 /// npm 全局安装的快捷升级:npm update -g @moonshot-ai/kimi-code
-/// (Windows 下 npm 是 npm.cmd,经 cmd.exe 执行)
+/// (Windows 下 npm 是 npm.cmd,经 cmd.exe 执行;macOS/Linux 经 bash -lc 拿登录 PATH)
 pub async fn npm_upgrade() -> Result<String, String> {
-    let mut cmd = hidden_command("cmd.exe");
-    cmd.args(["/c", "npm", "update", "-g", "@moonshot-ai/kimi-code"]);
+    let mut cmd = if cfg!(windows) {
+        let mut c = hidden_command("cmd.exe");
+        c.args(["/c", "npm", "update", "-g", "@moonshot-ai/kimi-code"]);
+        c
+    } else {
+        let mut c = hidden_command("bash");
+        c.args(["-lc", "npm update -g @moonshot-ai/kimi-code"]);
+        c
+    };
     // kill_on_drop:超时(timeout 返回)后子进程随之被杀,不留后台残留
     cmd.kill_on_drop(true);
     let out = tokio::time::timeout(Duration::from_secs(600), cmd.output())

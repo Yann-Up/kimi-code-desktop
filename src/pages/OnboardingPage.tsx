@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { ArrowLeft, Loader2, Monitor, Server, Terminal, X } from 'lucide-react'
 import type { ConnectionTargetConfig } from '../platform/kimi-api'
 import { inputCls as uiInputCls } from '../components/ui/Input'
+import { IS_WINDOWS } from '../platform/os'
 import { useUi } from '../stores/ui'
 import { useT } from '../i18n'
 
@@ -129,11 +130,13 @@ export function OnboardingPage({
     }
   }
 
-  const targets: { id: Target; icon: typeof Monitor; title: string; desc: string }[] = [
+  const allTargets: { id: Target; icon: typeof Monitor; title: string; desc: string }[] = [
     { id: 'local', icon: Monitor, title: t('onboarding.targetLocalTitle'), desc: t('onboarding.targetLocalDesc') },
     { id: 'wsl', icon: Terminal, title: 'WSL', desc: t('onboarding.targetWslDesc') },
     { id: 'ssh', icon: Server, title: 'SSH', desc: t('onboarding.targetSshDesc') }
   ]
+  // WSL 仅 Windows 提供(mac/Linux 无 wsl.exe,选了必败)
+  const targets = allTargets.filter((tg) => tg.id !== 'wsl' || IS_WINDOWS)
 
   return (
     <div className="flex min-h-0 flex-1 items-center justify-center overflow-y-auto bg-surface-secondary p-6">

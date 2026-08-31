@@ -14,6 +14,7 @@ import { newBridgeNonce } from './bridgeGuard'
 import { SettingsPage } from '../pages/SettingsPage'
 import { StatsPage } from '../pages/stats/StatsPage'
 import { useUi } from '../stores/ui'
+import { IS_WINDOWS } from '../platform/os'
 import { useT, t as tStatic } from '../i18n'
 import logoUrl from '../assets/logo.png'
 
@@ -328,7 +329,9 @@ function WebFrame() {
               {t('shell.installCli.desc')}
             </p>
             <p className="mt-2 rounded-lg bg-surface-tertiary px-3 py-2 font-mono text-[11.5px] text-text-secondary">
-              irm https://code.kimi.com/kimi-code/install.ps1 | iex
+              {IS_WINDOWS
+                ? 'irm https://code.kimi.com/kimi-code/install.ps1 | iex'
+                : 'curl -fsSL https://code.kimi.com/kimi-code/install.sh | bash'}
             </p>
             <p className="mt-2 text-[12px] text-text-tertiary">
               {t('shell.installCli.hint')}
