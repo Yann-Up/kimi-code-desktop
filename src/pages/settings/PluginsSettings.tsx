@@ -2,6 +2,9 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { Download, Loader2, Puzzle, RefreshCw, Trash2 } from 'lucide-react'
 import { rest } from '../../api'
 import { Section, Card, Empty } from '../../components/settings/common'
+import { Segmented } from '../../components/ui/Segmented'
+import { Switch } from '../../components/ui/Switch'
+import { inputCls } from '../../components/ui/Input'
 import { useT } from '../../i18n'
 
 /** kimi web REST /api/v1/plugins 返回的已安装插件摘要 */
@@ -223,27 +226,18 @@ export function PluginsSettings() {
     <Section title={t('settings.plugins.title')} desc={t('settings.plugins.desc')}>
       {/* 子 tab + 刷新 */}
       <div className="flex items-center gap-2">
-        <div className="flex rounded-lg bg-surface-tertiary p-0.5">
-          {(
-            [
-              [
-                'installed',
-                t('settings.plugins.tabInstalled') + (installed.length ? ` (${installed.length})` : '')
-              ],
-              ['market', t('settings.plugins.tabMarket')]
-            ] as const
-          ).map(([id, label]) => (
-            <button
-              key={id}
-              className={`rounded-md px-3 py-1 text-[12.5px] transition-colors ${
-                tab === id ? 'bg-surface font-medium text-text shadow-sm' : 'text-text-secondary hover:text-text'
-              }`}
-              onClick={() => setTab(id)}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
+        <Segmented
+          className="bg-surface-tertiary"
+          value={tab}
+          options={[
+            {
+              value: 'installed',
+              label: t('settings.plugins.tabInstalled') + (installed.length ? ` (${installed.length})` : '')
+            },
+            { value: 'market', label: t('settings.plugins.tabMarket') }
+          ]}
+          onChange={(v) => setTab(v as 'installed' | 'market')}
+        />
         <button
           className="ml-auto inline-flex items-center gap-1 rounded-lg border border-border px-2.5 py-1.5 text-[12.5px] text-text-secondary transition-colors hover:bg-surface-tertiary hover:text-text disabled:opacity-50"
           disabled={loading}
@@ -315,19 +309,11 @@ export function PluginsSettings() {
                     </p>
                   )}
                 </div>
-                <button
-                  className={`relative h-5 w-9 shrink-0 rounded-full transition-colors ${
-                    p.enabled ? 'bg-success' : 'bg-border'
-                  }`}
+                <Switch
+                  checked={p.enabled}
                   title={p.enabled ? t('settings.plugins.clickDisable') : t('settings.plugins.clickEnable')}
-                  onClick={() => void toggleEnabled(p)}
-                >
-                  <span
-                    className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition-all ${
-                      p.enabled ? 'left-[18px]' : 'left-0.5'
-                    }`}
-                  />
-                </button>
+                  onChange={() => void toggleEnabled(p)}
+                />
                 {confirmDel === p.id ? (
                   <button
                     className="shrink-0 rounded-lg bg-danger px-2.5 py-1 text-[12px] font-medium text-white transition-colors hover:opacity-90 disabled:opacity-50"
@@ -401,7 +387,7 @@ export function PluginsSettings() {
           <p className="mt-0.5 text-[12px] text-text-tertiary">{t('settings.plugins.fromUrlDesc')}</p>
           <div className="mt-2.5 flex items-center gap-2">
             <input
-              className="min-w-0 flex-1 rounded-lg border border-border bg-surface-secondary px-3 py-1.5 font-mono text-[12.5px] outline-none transition-colors focus:border-primary"
+              className={inputCls('sm', 'min-w-0 flex-1 font-mono')}
               placeholder={t('settings.plugins.fromUrlPlaceholder')}
               spellCheck={false}
               value={customSource}
