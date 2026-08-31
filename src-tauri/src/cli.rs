@@ -299,10 +299,13 @@ fn probe_login_shell(name: &str) -> Option<String> {
         let _ = tx.send(buf);
     });
     let deadline = std::time::Instant::now() + Duration::from_secs(3);
-    let output = loop {
+    // 不用 break 带出 match 值(break 是发散表达式,会误报 unreachable_code)
+    let mut output = None;
+    loop {
         match child.try_wait() {
             Ok(Some(status)) if status.success() => {
-                break rx.recv_timeout(deadline.saturating_duration_since(std::time::Instant::now())).ok()
+                output = rx.recv_timeout(deadline.saturating_duration_since(std::time::Instant::now())).ok();
+                break;
             }
             Ok(_) => {
                 let _ = child.kill();
@@ -317,7 +320,8 @@ fn probe_login_shell(name: &str) -> Option<String> {
             return None;
         }
         std::thread::sleep(Duration::from_millis(50));
-    }?;
+    }
+    let output = output?;
     // 取最后一个绝对路径行(忽略 rc 噪音/相对路径)
     String::from_utf8_lossy(&output)
         .lines()

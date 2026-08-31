@@ -56,6 +56,9 @@ jobs:
           cache: npm
       - run: npm ci
       - name: Build unsigned macOS app bundle
+        env:
+          # 与 release 一致:createUpdaterArtifacts 产出 .app.tar.gz 需 updater 私钥签名
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
         run: npm run tauri build -- --bundles app
       - name: Verify arm64 bundle
         shell: bash
