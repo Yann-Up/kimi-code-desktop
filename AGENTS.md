@@ -79,4 +79,5 @@ cd src-tauri && cargo check   # Rust 侧检查(提交前必过)
 - 许可证 MIT,引入运行时依赖时注意许可证兼容(勿引入 copyleft 组件)。
 - `token 时序竞争`、`崩溃自愈(server:exited)` 等时序逻辑见 README「关键实现细节」,改动前先读。
 - **运行期建窗/关窗的命令必须是 async**:同步命令占住主线程,`WebviewWindowBuilder::build()` 等事件循环初始化 WebView2 会死锁(桌宠 M1 实测踩过,见 docs/desktop-pet-design.md)。
-- **关窗语义**:点 X 一律 `prevent_close` + emit `app:close-requested`(payload=是否有后端在跑),前端弹"是否关闭进程"确认框——"退出程序"走 `confirm_close`(app.exit),"进入托盘"走 `hide_main_to_tray`(必须是 async 命令);最小化按钮 − 只是普通任务栏最小化,不进托盘。托盘图标 `include_bytes!` 内嵌(不依赖 resource_dir/cwd);托盘唤回统一走 `restore_main`(unminimize+show+focus,托盘左键/菜单/单实例复用)。
+- **关窗语义**:点 X 一律 `prevent_close` + emit `app:close-requested`(payload=是否有后端在跑),前端弹"是否关闭进程"确认框——"退出程序"走 `confirm_close`(app.exit),"进入托盘"走 `hide_main_to_tray`(必须是 async 命令);最小化按钮 − 只是普通任务栏最小化,不进托盘。托盘图标 `include_bytes!` 内嵌(不依赖 resource_dir/cwd);托盘唤回统一走 `restore_main`(unminimize+show+focus,托盘左键/菜单/单实例复用;macOS 另有 Dock 点图标的 `RunEvent::Reopen` 同路唤回)。
+- **主窗装饰按平台分叉**(lib.rs 建窗处):Windows `decorations(false)` 全自绘标题栏(自绘最小化/最大化/关闭在 TitleBar 右侧);macOS 用 `title_bar_style(Overlay)` + `hidden_title`——原生红黄绿交通灯悬浮左上(红灯同样触发上述关窗语义,绿灯=原生全屏/缩放),TitleBar 在 mac 上左侧留白 80px 避让交通灯并隐藏自绘窗口按钮(经 `platform/os.ts` 的 IS_MAC 判定)。

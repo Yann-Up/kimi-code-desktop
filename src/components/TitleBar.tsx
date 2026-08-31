@@ -2,6 +2,7 @@ import { ArrowDownToLine, BarChart3, Loader2, MessageSquare, Minus, Moon, RadioT
 import { useEffect, useState } from 'react'
 import logoUrl from '../assets/logo.png'
 import { useUi, resolveTheme, type ShellView } from '../stores/ui'
+import { IS_MAC } from '../platform/os'
 import { QuotaStrip } from './QuotaStrip'
 import { UpdateDialog } from './UpdateDialog'
 import { pushThemeToFrames } from './chatPrefsBridge'
@@ -109,7 +110,10 @@ export function TitleBar() {
   return (
     <div
       data-tauri-drag-region
-      className="drag-region flex h-12 shrink-0 items-center justify-between border-b border-border-light bg-surface pl-4"
+      className={`drag-region flex h-12 shrink-0 items-center justify-between border-b border-border-light bg-surface ${
+        // macOS 用 Overlay 标题栏(lib.rs):左上悬浮原生红黄绿交通灯,左侧留出 ~80px 避让
+        IS_MAC ? 'pl-[80px]' : 'pl-4'
+      }`}
     >
       <div className="flex min-w-0 items-center gap-2">
         <img src={logoUrl} alt="" className="h-5 w-5 rounded" draggable={false} />
@@ -183,30 +187,33 @@ export function TitleBar() {
           <Tip text={effective === 'dark' ? t('titlebar.themeToLight') : t('titlebar.themeToDark')} />
         </button>
 
-        <span className="mx-2 h-4 w-px shrink-0 bg-border" />
-
-        {/* 窗口控制 */}
-        <button
-          className="no-drag group relative flex h-full w-11 items-center justify-center text-text-secondary hover:bg-surface-tertiary hover:text-text"
-          onClick={() => window.kimiApi.windowControl('minimize')}
-        >
-          <Minus size={15} />
-          <Tip text={t('titlebar.minimize')} align="right" />
-        </button>
-        <button
-          className="no-drag group relative flex h-full w-11 items-center justify-center text-text-secondary hover:bg-surface-tertiary hover:text-text"
-          onClick={() => window.kimiApi.windowControl('maximize')}
-        >
-          <Square size={13} />
-          <Tip text={t('titlebar.maximizeRestore')} align="right" />
-        </button>
-        <button
-          className="no-drag group relative flex h-full w-11 items-center justify-center text-text-secondary hover:bg-danger hover:text-white"
-          onClick={() => window.kimiApi.windowControl('close')}
-        >
-          <X size={16} />
-          <Tip text={t('titlebar.close')} align="right" />
-        </button>
+        {/* 窗口控制:仅 Windows 自绘;macOS 用原生交通灯(Overlay 样式),隐藏自绘按钮 */}
+        {!IS_MAC && (
+          <>
+            <span className="mx-2 h-4 w-px shrink-0 bg-border" />
+            <button
+              className="no-drag group relative flex h-full w-11 items-center justify-center text-text-secondary hover:bg-surface-tertiary hover:text-text"
+              onClick={() => window.kimiApi.windowControl('minimize')}
+            >
+              <Minus size={15} />
+              <Tip text={t('titlebar.minimize')} align="right" />
+            </button>
+            <button
+              className="no-drag group relative flex h-full w-11 items-center justify-center text-text-secondary hover:bg-surface-tertiary hover:text-text"
+              onClick={() => window.kimiApi.windowControl('maximize')}
+            >
+              <Square size={13} />
+              <Tip text={t('titlebar.maximizeRestore')} align="right" />
+            </button>
+            <button
+              className="no-drag group relative flex h-full w-11 items-center justify-center text-text-secondary hover:bg-danger hover:text-white"
+              onClick={() => window.kimiApi.windowControl('close')}
+            >
+              <X size={16} />
+              <Tip text={t('titlebar.close')} align="right" />
+            </button>
+          </>
+        )}
       </div>
       {updateOpen && appUpdate && (
         <UpdateDialog info={appUpdate} onClose={() => setUpdateOpen(false)} />

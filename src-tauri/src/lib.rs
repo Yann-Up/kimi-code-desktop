@@ -1731,11 +1731,25 @@ pub fn run() {
             // 程序化建窗(参数与原 config app.windows 一致):config 声明的窗口挂不上
             // on_new_window(builder 级钩子),iframe 内 window.open/target=_blank 必须接管
             // 转系统浏览器,否则官方 UI 外链会被 WebView2 静默吞掉
-            tauri::WebviewWindowBuilder::new(app.handle(), "main", tauri::WebviewUrl::default())
-                .title(APP_DISPLAY_NAME)
-                .inner_size(1440.0, 900.0)
-                .min_inner_size(1024.0, 640.0)
-                .decorations(false)
+            let mut main_builder =
+                tauri::WebviewWindowBuilder::new(app.handle(), "main", tauri::WebviewUrl::default())
+                    .title(APP_DISPLAY_NAME)
+                    .inner_size(1440.0, 900.0)
+                    .min_inner_size(1024.0, 640.0);
+            // 窗口装饰按平台分叉:Windows 全自绘标题栏(decorations=false);
+            // macOS 用 Overlay 标题栏样式——保留原生红黄绿交通灯悬浮于左上,
+            // 其余区域仍由前端 TitleBar 自绘(绿灯顺带补上进原生全屏的入口)
+            #[cfg(not(target_os = "macos"))]
+            {
+                main_builder = main_builder.decorations(false);
+            }
+            #[cfg(target_os = "macos")]
+            {
+                main_builder = main_builder
+                    .title_bar_style(tauri::TitleBarStyle::Overlay)
+                    .hidden_title(true);
+            }
+            main_builder
                 // config 的 dragDropEnabled:false 对应此方法(默认开启拖拽处理)
                 .disable_drag_drop_handler()
                 .background_color(tauri::window::Color(255, 255, 255, 255))
