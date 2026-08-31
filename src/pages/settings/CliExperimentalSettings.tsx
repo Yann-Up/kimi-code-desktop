@@ -164,19 +164,41 @@ export function CliExperimentalSettings() {
 
   const toggle = async (env: string, v: boolean) => {
     if (!flags || saving) return
+    const prev = flags
     const next = { ...flags, [env]: v }
     setFlags(next)
     setSaving(true)
     setMsg(null)
+    // 兜底超时:服务重启最坏约 60s(stop 5s + token 12s + 健康检查 45s),再留余量。
+    // 无此兜底时 invoke 一旦异常挂起,saving 永远卡住、整页开关"点不动",
+    // 只能切分区强制重挂载恢复(实测复现)
+    let timedOut = false
     try {
-      await window.kimiApi.experimentalSet(next)
+      await Promise.race([
+        window.kimiApi.experimentalSet(next),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => {
+            timedOut = true
+            reject(new Error('experimentalSet timeout'))
+          }, 75_000)
+        )
+      ])
       setMsg({ ok: true, text: t('settings.cliExp.savedOk') })
     } catch (e) {
-      setFlags(flags) // 失败回滚
-      setMsg({
-        ok: false,
-        text: t('settings.cliExp.saveFailed', { error: e instanceof Error ? e.message : String(e) })
-      })
+      if (timedOut) {
+        // 超时:后端可能已落盘并仍在重启,以服务端有效值为准重新同步,不回滚
+        window.kimiApi
+          .experimentalGet()
+          .then(setFlags)
+          .catch(() => setFlags(prev))
+        setMsg({ ok: false, text: t('settings.cliExp.saveTimeout') })
+      } else {
+        setFlags(prev) // 失败回滚
+        setMsg({
+          ok: false,
+          text: t('settings.cliExp.saveFailed', { error: e instanceof Error ? e.message : String(e) })
+        })
+      }
     } finally {
       setSaving(false)
     }
@@ -196,6 +218,7 @@ export function CliExperimentalSettings() {
                   label={t(f.labelKey)}
                   desc={t(f.descKey)}
                   checked={flags[f.env] ?? false}
+                  disabled={saving}
                   onChange={(v) => void toggle(f.env, v)}
                 />
                 <p className="mt-0.5 font-mono text-[11px] text-text-tertiary">{f.env}</p>
@@ -203,6 +226,12 @@ export function CliExperimentalSettings() {
               </div>
             ))}
           </div>
+        )}
+        {saving && (
+          <p className="mt-2 flex items-center gap-1.5 text-[12px] text-text-tertiary">
+            <span className="h-3 w-3 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+            {t('settings.cliExp.saving')}
+          </p>
         )}
         {msg && (
           <p className={`mt-2 text-[12px] ${msg.ok ? 'text-success' : 'text-danger'}`}>{msg.text}</p>
