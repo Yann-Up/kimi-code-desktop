@@ -60,7 +60,7 @@ cd src-tauri && cargo check   # Rust 侧检查(提交前必过)
 - **主题双态**:组件一律用 `bg-surface`/`text-text` 等令牌类(theme.css `@theme`),禁止硬编码色值;暗色经 `[data-theme='dark']` 覆盖同名变量生效,新增颜色要亮暗各给一值;确需主题无关的固定色(如 QR 白底、深色 toast)须注释说明。
 - **i18n 已全量落地**(语言跟随官方 UI,经 chatPrefsBridge 写入 store):`src/i18n/index.ts` 导出 `useT()`(组件内,响应式)/`t()`(非组件上下文,常别名 tStatic 用于持久事件回调防闭包钉住旧 locale);词条按模块放 `src/i18n/messages/<area>.ts`(zh/en 必须成对,点分键,{name} 插值,zh 为源)。新增用户可见文案一律进字典,禁止在组件里写死中文;代码注释保持中文不进字典。
 - **config.toml 合并写用 `toml_edit`** 以保留注释/格式;只读解析用 `toml`。
-- **本机 CLI 双候选选新**(`cli::ensure_local_bin_pick`):数据目录/bin 与 PATH 同时存在 kimi 且非同一文件时,启动后首次检测按 `--version` 选较新的生效(平局/探测失败维持 home 优先;custom/KIMI_CODE_BIN 覆盖绝对优先),避免数据目录残留旧版静默遮蔽 npm 全局新版;每次运行只比较一次,set_cli_bin/set_kimi_home 后失效重估。升级通道按生效来源分叉:home=`kimi upgrade`,其余=`npm update -g`。
+- **本机 CLI 双候选选新**(`cli::ensure_local_bin_pick`):数据目录/bin 与 PATH 同时存在 kimi 且非同一文件时,启动后首次检测按 `--version` 选较新的生效(平局/探测失败维持 home 优先;custom/KIMI_CODE_BIN 覆盖绝对优先),避免数据目录残留旧版静默遮蔽 npm 全局新版;每次运行只比较一次,set_cli_bin/set_kimi_home 后失效重估。升级通道按生效来源分叉:home=`kimi upgrade`,其余=`npm update -g`。PATH 解析(`resolve_on_path`):Windows 走 where.exe;非 Windows 在 which 失败后还有兜底(`resolve_unix_fallback`,参考 kickside)——常见安装位置(/opt/homebrew/bin、/usr/local/bin、~/.local/bin)+ 登录 shell `$SHELL -lc 'command -v'`(3s 超时,按 name 缓存),兜住 mac GUI 应用窄 PATH 找不到 homebrew/npm 全局 kimi 的场景。
 - 注释和文档用中文(README 中英双语),代码标识符用英文。
 - 日期/统计口径依赖**本地时区日历日**(chrono,不用 UTC)。
 

@@ -217,7 +217,8 @@ pub fn kimi_bin() -> String {
 }
 
 /// 在 PATH 上解析可执行文件的实际路径:Windows 用 where.exe(按 PATHEXT 命中多行,
-/// 优先 .exe,其次 .cmd/.bat shim),Unix 用 which;找不到返回 None。
+/// 优先 .exe,其次 .cmd/.bat shim),Unix 用 which;找不到返回 None(非 Windows 还会
+/// 再经 resolve_unix_fallback 补常见位置与登录 shell,见下)。
 /// 同步短探测(毫秒级),用 std::process 以便 kimi_bin 保持同步签名
 fn resolve_on_path(name: &str) -> Option<String> {
     let probe = if cfg!(windows) { "where.exe" } else { "which" };
@@ -228,18 +229,102 @@ fn resolve_on_path(name: &str) -> Option<String> {
         use std::os::windows::process::CommandExt;
         cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
     }
-    let out = cmd.output().ok()?;
-    if !out.status.success() {
-        return None;
+    let resolved = cmd.output().ok().and_then(|out| {
+        if !out.status.success() {
+            return None;
+        }
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let lines: Vec<&str> = stdout.lines().map(str::trim).filter(|l| !l.is_empty()).collect();
+        let pick = |pred: fn(&str) -> bool| {
+            lines.iter().find(|l| pred(l)).map(|s| (*s).to_string())
+        };
+        pick(|l| l.to_lowercase().ends_with(".exe"))
+            .or_else(|| pick(|l| l.to_lowercase().ends_with(".cmd") || l.to_lowercase().ends_with(".bat")))
+            .or_else(|| lines.first().map(|s| (*s).to_string()))
+    });
+    #[cfg(not(windows))]
+    let resolved = resolved.or_else(|| resolve_unix_fallback(name));
+    resolved
+}
+
+/// 非 Windows 的 PATH 兜底(参考 kickside 的 kimi_locator 思路,精简版):
+/// mac GUI 应用(Dock/Finder 启动)进程 PATH 很窄(无 /opt/homebrew/bin),which 找不到
+/// homebrew/npm 全局的 kimi。依次补:常见安装位置(纯文件探测)→ 登录 shell
+/// ($SHELL -lc 'command -v',拿用户完整 PATH)。登录 shell 起子进程较慢(3s 超时),
+/// 结果按 name 进程内缓存,每次运行至多探测一次
+#[cfg(not(windows))]
+fn resolve_unix_fallback(name: &str) -> Option<String> {
+    // 1. 常见安装位置:homebrew(Apple Silicon)/ 手动安装 / npm 全局前缀
+    let dirs = [
+        PathBuf::from("/opt/homebrew/bin"),
+        PathBuf::from("/usr/local/bin"),
+        home_dir().join(".local").join("bin"),
+    ];
+    for dir in dirs {
+        let p = dir.join(name);
+        if p.is_file() {
+            return Some(p.to_string_lossy().into_owned());
+        }
     }
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    let lines: Vec<&str> = stdout.lines().map(str::trim).filter(|l| !l.is_empty()).collect();
-    let pick = |pred: fn(&str) -> bool| {
-        lines.iter().find(|l| pred(l)).map(|s| (*s).to_string())
-    };
-    pick(|l| l.to_lowercase().ends_with(".exe"))
-        .or_else(|| pick(|l| l.to_lowercase().ends_with(".cmd") || l.to_lowercase().ends_with(".bat")))
-        .or_else(|| lines.first().map(|s| (*s).to_string()))
+    // 2. 登录 shell 探测(缓存命中直接返回)
+    static CACHE: std::sync::OnceLock<std::sync::Mutex<HashMap<String, Option<String>>>> =
+        std::sync::OnceLock::new();
+    let cache = CACHE.get_or_init(|| std::sync::Mutex::new(HashMap::new()));
+    if let Some(hit) = cache.lock().unwrap().get(name) {
+        return hit.clone();
+    }
+    let found = probe_login_shell(name);
+    cache.lock().unwrap().insert(name.to_string(), found.clone());
+    found
+}
+
+/// 登录 shell 里跑 command -v:解析 shell rc 后的完整 PATH;输出取最后一个绝对路径行
+/// (容忍 rc 文件的欢迎语等噪音);3s 超时,超时杀子进程
+#[cfg(not(windows))]
+fn probe_login_shell(name: &str) -> Option<String> {
+    use std::io::Read;
+    let shell = std::env::var_os("SHELL").unwrap_or_else(|| "/bin/zsh".into());
+    let mut child = std::process::Command::new(shell)
+        .args(["-l", "-c", &format!("command -v {name}")])
+        .stdin(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .ok()?;
+    let mut stdout = child.stdout.take()?;
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let mut buf = Vec::new();
+        let _ = stdout.read_to_end(&mut buf);
+        let _ = tx.send(buf);
+    });
+    let deadline = std::time::Instant::now() + Duration::from_secs(3);
+    let output = loop {
+        match child.try_wait() {
+            Ok(Some(status)) if status.success() => {
+                break rx.recv_timeout(deadline.saturating_duration_since(std::time::Instant::now())).ok()
+            }
+            Ok(_) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return None;
+            }
+            Err(_) => return None,
+        }
+        if std::time::Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            return None;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }?;
+    // 取最后一个绝对路径行(忽略 rc 噪音/相对路径)
+    String::from_utf8_lossy(&output)
+        .lines()
+        .map(str::trim)
+        .filter(|l| l.starts_with('/'))
+        .last()
+        .map(|s| s.to_string())
 }
 
 /// 当前 CLI 二进制来源(设置页展示/升级守卫用):
