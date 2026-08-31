@@ -92,9 +92,9 @@
 })();
 
 // 主题/语言上报(与 src/components/chatPrefsBridge.ts 对应,消息带 __kimiChatPrefs 标识):
-//   iframe → 壳:{__kimiChatPrefs:'state', theme:'light'|'dark', locale:'zh'|'en', nonce}
+//   iframe → 壳:{__kimiChatPrefs:'state', theme:'light'|'dark'(解析后), themePref:'light'|'dark'|'system'(原始偏好), locale:'zh'|'en', nonce}
 //   iframe → 壳:{__kimiChatPrefs:'health', ok, reason?, detail?, nonce}  每次页面加载自检一次
-//   壳 → iframe:{__kimiChatPrefs:'set', theme:'light'|'dark'}  标题栏主题切换反推(见文件尾部)
+//   壳 → iframe:{__kimiChatPrefs:'set', theme?:'light'|'dark'|'system', locale?:'zh'|'en'}  壳侧主题/语言切换反推(见文件尾部)
 // 读取官方 web UI 内部存储:localStorage kimi-web.color-scheme(light|dark|system,
 // system 经 matchMedia 解析成实际明暗再上报)与 kimi-locale(en|zh,缺省按
 // navigator.language 是否 zh 开头回退,与官方逻辑对齐)。变更感知:hook localStorage
@@ -115,7 +115,15 @@
   // 壳侧 origin 白名单:与皮肤模块一致(prod tauri 自定义协议域,dev vite 5188)
   var PARENT_ORIGINS = ['https://tauri.localhost', 'http://tauri.localhost', 'http://localhost:5188'];
   var lastTheme = null;
+  var lastThemePref = null;
   var lastLocale = null;
+
+  // 原始偏好(三态):读 kimi-web.color-scheme,缺失/非法按官方默认 'system'(_Ae 同款逻辑)
+  function themePref() {
+    var raw = null;
+    try { raw = localStorage.getItem('kimi-web.color-scheme'); } catch (err) { /* 静默 */ }
+    return raw === 'light' || raw === 'dark' || raw === 'system' ? raw : 'system';
+  }
 
   function resolveTheme() {
     var raw = null;
@@ -140,11 +148,13 @@
   function report() {
     try {
       var theme = resolveTheme();
+      var pref = themePref();
       var locale = resolveLocale();
-      if (theme === lastTheme && locale === lastLocale) return; // 无变化不发
+      if (theme === lastTheme && pref === lastThemePref && locale === lastLocale) return; // 无变化不发
       lastTheme = theme;
+      lastThemePref = pref;
       lastLocale = locale;
-      window.parent.postMessage({ __kimiChatPrefs: 'state', theme: theme, locale: locale, nonce: NONCE }, '*');
+      window.parent.postMessage({ __kimiChatPrefs: 'state', theme: theme, themePref: pref, locale: locale, nonce: NONCE }, '*');
     } catch (err) { /* 静默:绝不影响官方页面 */ }
   }
 
@@ -220,21 +230,31 @@
   // 加载 3s 后自检一次(等官方 React 完成首轮主题应用再判定)
   setTimeout(healthCheck, 3000);
 
-  // 壳 → iframe:{__kimiChatPrefs:'set', theme:'light'|'dark'}(标题栏主题切换反推)
-  // 写 localStorage + data-color-scheme + style.colorScheme:官方 bundle 自带
-  // MutationObserver 监听 data-color-scheme,CSS 又完全属性驱动,无刷新即可跟随。
-  // 已知行为:会把官方的 system 态写成显式 light/dark。只收父窗口(壳)且校验 origin。
+  // 壳 → iframe:{__kimiChatPrefs:'set', theme?, locale?}(标题栏主题切换/设置页语言切换反推)
+  // theme:写 localStorage + data-color-scheme + style.colorScheme,官方 bundle 自带
+  // MutationObserver 监听 data-color-scheme,CSS 又完全属性驱动,无刷新即可跟随;
+  // 已知行为:会把官方的 system 态写成显式 light/dark。
+  // locale:只写 kimi-locale 存储(官方语言切换无 DOM 信号,是否无刷新跟随取决于官方实现,
+  // 不保证即时生效,下次加载必然生效;壳自定义页面由壳侧 store 即时切换)。
+  // 只收父窗口(壳)且校验 origin。
   window.addEventListener('message', function (e) {
     try {
       var d = e.data;
       if (!d || d[TAG] !== 'set') return;
       if (e.source !== window.parent) return;
       if (PARENT_ORIGINS.indexOf(e.origin) < 0) return;
-      if (d.theme !== 'light' && d.theme !== 'dark') return;
-      lastTheme = d.theme; // 防回声:hook setItem 触发的 report 值相同,不会回发
-      try { localStorage.setItem('kimi-web.color-scheme', d.theme); } catch (err) { /* 静默 */ }
-      document.documentElement.dataset.colorScheme = d.theme;
-      document.documentElement.style.colorScheme = d.theme;
+      if (d.theme === 'light' || d.theme === 'dark' || d.theme === 'system') {
+        lastThemePref = d.theme; // 防回声:hook setItem 触发的 report 值相同,不会回发
+        try { localStorage.setItem('kimi-web.color-scheme', d.theme); } catch (err) { /* 静默 */ }
+        var applied = d.theme === 'system' ? resolveTheme() : d.theme;
+        lastTheme = applied;
+        document.documentElement.dataset.colorScheme = applied;
+        document.documentElement.style.colorScheme = applied;
+      }
+      if (d.locale === 'zh' || d.locale === 'en') {
+        lastLocale = d.locale; // 同上防回声
+        try { localStorage.setItem('kimi-locale', d.locale); } catch (err) { /* 静默 */ }
+      }
     } catch (err) { /* 静默:绝不影响官方页面 */ }
   });
 })();

@@ -9,6 +9,9 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { Check, ChevronRight, EyeOff, MousePointerClick, PawPrint } from 'lucide-react'
 import type { PetAnim, PetConfig, PetInfo, PetMeta, PetState } from '@/platform/kimi-api'
+import { useT } from '../../i18n'
+
+type TFn = ReturnType<typeof useT>
 
 /** 内置宠物精灵图注册表:slug → 打包资源 URL(src/assets/pets/<slug>/spritesheet.{png,webp}) */
 const BUILTIN_SHEETS: Record<string, string> = Object.fromEntries(
@@ -28,26 +31,31 @@ function builtinSheetUrl(slug: string): string {
   return BUILTIN_SHEETS[slug] ?? BUILTIN_SHEETS['kimi'] ?? ''
 }
 
-/** 工具脉冲气泡文案(display.kind → 候选短句,随机取一;服务端 schema 已核实取值集合) */
-const TOOL_BUBBLE: Record<string, string[]> = {
-  command: ['让子弹飞一会儿…', '这串命令我熟', '终端,启动!'],
-  file_io: ['翻翻看…', '这页我帮你读了', '文件山我来了'],
-  diff: ['动两笔…', '代码美容中', '就改亿点点'],
-  search: ['搜搜看…', '蛛丝马迹别跑', '让我翻翻故纸堆'],
-  url_fetch: ['去网上冲浪一下', '让我康康这个链接'],
-  agent_call: ['摇人了摇人了', '叫个外援来帮忙'],
-  skill_call: ['掏出我的绝活', '这招我练过'],
-  other: ['干活中,勿扰', '埋头苦干ing']
+/** 工具脉冲气泡文案(display.kind → 候选短句,随机取一;服务端 schema 已核实取值集合)。
+ * 文案走 i18n,故为接收 t 的函数(挂在持久事件监听里,经 tRef 读最新语言) */
+function toolBubbles(t: TFn): Record<string, string[]> {
+  return {
+    command: [t('pet.tool.command.1'), t('pet.tool.command.2'), t('pet.tool.command.3')],
+    file_io: [t('pet.tool.fileIo.1'), t('pet.tool.fileIo.2'), t('pet.tool.fileIo.3')],
+    diff: [t('pet.tool.diff.1'), t('pet.tool.diff.2'), t('pet.tool.diff.3')],
+    search: [t('pet.tool.search.1'), t('pet.tool.search.2'), t('pet.tool.search.3')],
+    url_fetch: [t('pet.tool.urlFetch.1'), t('pet.tool.urlFetch.2')],
+    agent_call: [t('pet.tool.agentCall.1'), t('pet.tool.agentCall.2')],
+    skill_call: [t('pet.tool.skillCall.1'), t('pet.tool.skillCall.2')],
+    other: [t('pet.tool.other.1'), t('pet.tool.other.2')]
+  }
 }
 /** 状态跃迁气泡(rustState 变化时;idle/running/review 不打岔)。
  * jumping 无条目(M5 P2):turn.ended 成功的庆祝气泡改由 Rust 侧 pet:bubble
  * 概要气泡(耗时+工具数)承载,避免两个文案在单槽气泡里互相覆盖 */
-const STATE_BUBBLE: Partial<Record<PetState, string[]>> = {
-  failed: ['啊这…翻车了', '出错了,快看看我', '尴尬了…'],
-  waiting: ['等你拍板呢', '审批一下嘛', '戳我没用,去点确认呀'],
-  // M5 P5 时长显示态提示(各只有一句,随机取一即固定)
-  tired: ['跑了好久了,喝口水吧'],
-  sleep: ['zzz…']
+function stateBubbles(t: TFn): Partial<Record<PetState, string[]>> {
+  return {
+    failed: [t('pet.state.failed.1'), t('pet.state.failed.2'), t('pet.state.failed.3')],
+    waiting: [t('pet.state.waiting.1'), t('pet.state.waiting.2'), t('pet.state.waiting.3')],
+    // M5 P5 时长显示态提示(各只有一句,随机取一即固定)
+    tired: [t('pet.state.tired')],
+    sleep: [t('pet.state.sleep')]
+  }
 }
 /** 拖拽方向判定的最小位移(px);停手多久算拖拽结束(ms) */
 const DRAG_DELTA = 4
@@ -67,14 +75,14 @@ const WANDER_MIN_PX = 100
 const WANDER_MAX_PX = 300
 const WANDER_ANIM_MS = 600
 
-/** M5 P5 时段彩蛋:按本地小时取一句问候语 */
-function greetingByHour(h: number): string {
-  if (h >= 23 || h < 5) return '还不睡啊…'
-  if (h < 9) return '早啊'
-  if (h < 12) return '上午好,开工?'
-  if (h < 14) return '午饭时间'
-  if (h < 18) return '下午好'
-  return '晚上好'
+/** M5 P5 时段彩蛋:按本地小时取一句问候语(i18n,故接收 t) */
+function greetingByHour(t: TFn, h: number): string {
+  if (h >= 23 || h < 5) return t('pet.greet.lateNight')
+  if (h < 9) return t('pet.greet.morning')
+  if (h < 12) return t('pet.greet.forenoon')
+  if (h < 14) return t('pet.greet.noon')
+  if (h < 18) return t('pet.greet.afternoon')
+  return t('pet.greet.evening')
 }
 
 /** 状态行解析:精确匹配 → running(方向/工具/tired 扩展行的兜底)→ idle(sleep 走这里) */
@@ -191,6 +199,10 @@ function MinionSprite({ meta, index }: { meta: PetMeta; index: number }) {
 }
 
 export function PetWindow() {
+  const t = useT()
+  // 气泡文案挂在持久事件监听/延时回调里:用 ref 读最新语言,不重建监听
+  const tRef = useRef(t)
+  tRef.current = t
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const [rustState, setRustState] = useState<PetState>('idle')
   // 拖拽方向(M4):onMoved 期间按 dx 符号给出,停手 DRAG_END_MS 后清除
@@ -269,11 +281,11 @@ export function PetWindow() {
   }, [])
 
   // Rust 状态机 emit pet:state;跃迁到 failed/waiting 时带一句气泡
-  // (jumping 的庆祝气泡由 pet:bubble 概要气泡承载,见 STATE_BUBBLE 注释)
+  // (jumping 的庆祝气泡由 pet:bubble 概要气泡承载,见 stateBubbles 注释)
   useEffect(() => {
     return window.kimiApi.onPetState((s) => {
       setRustState(s)
-      const text = STATE_BUBBLE[s]
+      const text = stateBubbles(tRef.current)[s]
       if (text) showBubble(pick(text))
     })
   }, [showBubble])
@@ -281,7 +293,8 @@ export function PetWindow() {
   // M4 工具脉冲:差异化动作(无扩展行则回退 running)+ 气泡文案;Rust 侧已按 kind 1s 节流
   useEffect(() => {
     return window.kimiApi.onPetTool((kind) => {
-      triggerOneshot(`tool:${kind}`, pick(TOOL_BUBBLE[kind] ?? TOOL_BUBBLE.other))
+      const all = toolBubbles(tRef.current)
+      triggerOneshot(`tool:${kind}`, pick(all[kind] ?? all.other))
     })
   }, [triggerOneshot])
 
@@ -395,8 +408,11 @@ export function PetWindow() {
     if (localStorage.getItem(key) === today) return
     localStorage.setItem(key, today)
     // 稍作延迟:避开窗口刚出现与其他开局气泡抢单槽
-    const t = window.setTimeout(() => showBubble(greetingByHour(new Date().getHours())), 1500)
-    return () => window.clearTimeout(t)
+    const timer = window.setTimeout(
+      () => showBubble(greetingByHour(tRef.current, new Date().getHours())),
+      1500
+    )
+    return () => window.clearTimeout(timer)
   }, [showBubble])
 
   // M4 拖拽方向:onMoved 在 OS 拖拽期间持续触发,比较相邻 dx;
@@ -615,7 +631,7 @@ export function PetWindow() {
             onClick={openSub}
           >
             <PawPrint size={13} className="shrink-0 text-text-tertiary" />
-            <span className="flex-1">换宠物</span>
+            <span className="flex-1">{t('pet.ctx.switchPet')}</span>
             <ChevronRight size={13} className="shrink-0 text-text-tertiary" />
           </button>
           <div className="mx-1 my-1 h-px bg-border-light" />
@@ -628,9 +644,11 @@ export function PetWindow() {
             }}
           >
             <MousePointerClick size={13} className="shrink-0 text-text-tertiary" />
-            <span className="flex-1">点击穿透</span>
+            <span className="flex-1">{t('pet.ctx.clickThrough')}</span>
             {petCfg?.clickThrough && (
-              <span className="rounded bg-primary/10 px-1 py-px text-[10.5px] text-primary">已开启</span>
+              <span className="rounded bg-primary/10 px-1 py-px text-[10.5px] text-primary">
+                {t('pet.ctx.clickThroughOn')}
+              </span>
             )}
           </button>
           <button
@@ -642,7 +660,7 @@ export function PetWindow() {
             }}
           >
             <EyeOff size={13} className="shrink-0 text-text-tertiary" />
-            <span>隐藏桌宠</span>
+            <span>{t('pet.ctx.hidePet')}</span>
           </button>
         </div>
       )}

@@ -9,6 +9,7 @@ import { useEffect, useState } from 'react'
 import { OctagonX, Zap } from 'lucide-react'
 import { rest } from '../api'
 import { useUi } from '../stores/ui'
+import { useT } from '../i18n'
 
 interface QuotaWindow {
   window?: { duration?: number; unit?: string }
@@ -40,19 +41,22 @@ function fmtMoney(cents: number | undefined, currency: string): string {
   return `${(cents / 100).toFixed(2)} ${currency}`
 }
 
-const UNIT_ZH: Record<string, string> = {
-  hour: '小时',
-  day: '天',
-  week: '周',
-  month: '月'
+type TFn = ReturnType<typeof useT>
+
+/** 单位 → 字典键(未知单位原样展示服务端返回串) */
+const UNIT_KEYS: Record<string, string> = {
+  hour: 'quota.unitHour',
+  day: 'quota.unitDay',
+  week: 'quota.unitWeek',
+  month: 'quota.unitMonth'
 }
 
 /** {duration:5,unit:"hour"} → "5 小时";{duration:1,unit:"week"} → "1 周" */
-function windowLabel(w: QuotaWindow): string {
+function windowLabel(w: QuotaWindow, t: TFn): string {
   const d = w.window?.duration ?? 0
   const u = w.window?.unit ?? ''
-  const unit = UNIT_ZH[u] ?? u
-  return d > 0 ? `${d} ${unit}` : '额度'
+  const unit = UNIT_KEYS[u] ? t(UNIT_KEYS[u]) : u
+  return d > 0 ? `${d} ${unit}` : t('quota.quotaFallback')
 }
 
 /** 窗口排序:小时 < 天 < 周 < 月 < 其它 */
@@ -62,15 +66,15 @@ function windowRank(w: QuotaWindow): number {
 }
 
 /** reset_at → "3 小时后重置" / "2 天后重置" */
-function resetHint(resetAt: string | undefined): string {
+function resetHint(resetAt: string | undefined, t: TFn): string {
   if (!resetAt) return ''
   const ms = new Date(resetAt).getTime() - Date.now()
-  if (!Number.isFinite(ms) || ms <= 0) return '即将重置'
+  if (!Number.isFinite(ms) || ms <= 0) return t('quota.resetSoon')
   const m = Math.floor(ms / 60000)
-  if (m < 60) return `${Math.max(1, m)} 分钟后重置`
+  if (m < 60) return t('quota.resetMinutes', { n: Math.max(1, m) })
   const h = Math.floor(m / 60)
-  if (h < 24) return `${h} 小时后重置`
-  return `${Math.floor(h / 24)} 天后重置`
+  if (h < 24) return t('quota.resetHours', { n: h })
+  return t('quota.resetDays', { n: Math.floor(h / 24) })
 }
 
 /** 用量占比 → 颜色档位 */
@@ -80,24 +84,31 @@ function meterColor(pct: number): string {
   return 'var(--color-primary)'
 }
 
-/** 铺平式迷你额度计:一行「标签 + 占比(彩色) + 重置倒计时」+ 底部 3px 进度条 */
+/** 铺平式迷你额度计:一行「标签 + 占比(彩色) + 重置倒计时」+ 底部 3px 进度条;
+ *  宽度随内容(不定宽,避免倒计时被省略;标题栏空间足够,窗口个数由服务端返回) */
 function QuotaMeter({ w }: { w: QuotaWindow }) {
+  const t = useT()
   const used = typeof w.used === 'number' ? w.used : 0
   const limit = typeof w.limit === 'number' && w.limit > 0 ? w.limit : 0
   const pct = limit > 0 ? Math.min(100, (used / limit) * 100) : 0
-  const hint = resetHint(w.reset_at)
+  const hint = resetHint(w.reset_at, t)
   const color = limit > 0 ? meterColor(pct) : 'var(--color-text)'
   return (
     <div
-      className="flex w-[104px] shrink-0 flex-col justify-center gap-1"
-      title={`${windowLabel(w)}额度:已用 ${used}${limit ? ` / ${limit}` : ''}${hint ? `,${hint}` : ''}`}
+      className="flex shrink-0 flex-col justify-center gap-1"
+      title={t('quota.meterTitle', {
+        label: windowLabel(w, t),
+        used,
+        limitPart: limit ? ` / ${limit}` : '',
+        hintPart: hint ? t('quota.meterHintSep') + hint : ''
+      })}
     >
       <div className="flex items-baseline gap-1 whitespace-nowrap text-[11px]">
-        <span className="shrink-0 text-text-tertiary">{windowLabel(w)}</span>
+        <span className="shrink-0 text-text-tertiary">{windowLabel(w, t)}</span>
         <span className="shrink-0 text-[12.5px] font-semibold tabular-nums" style={{ color }}>
           {limit === 100 ? `${used}%` : limit > 0 ? `${used}/${limit}` : `${used}`}
         </span>
-        {hint && <span className="truncate text-text-tertiary">{hint}</span>}
+        {hint && <span className="shrink-0 text-text-tertiary">{hint}</span>}
       </div>
       {limit > 0 && (
         <span className="h-[3px] w-full overflow-hidden rounded-full bg-surface-tertiary">
@@ -123,11 +134,15 @@ interface LiveMetrics {
 /** 实时指标块:单行胶囊,TTFT + 输出速度;悬浮显示模型与两种 TPS 口径。
  *  active=false(服务在跑但无活跃会话)时降透明度、输出速率归零 */
 function LiveMetricsBlock({ m, active }: { m: LiveMetrics; active: boolean }) {
+  const t = useT()
   const tip = active
-    ? `${m.model} · ${new Date(m.time).toLocaleTimeString()}\n输出 TPS(不含首 token):${
-        m.tpsExcl !== undefined ? m.tpsExcl.toFixed(1) : '—'
-      } tok/s\n输出 TPS(含首 token):${m.tpsIncl !== undefined ? m.tpsIncl.toFixed(1) : '—'} tok/s`
-    : `${m.model} · 当前无进行中会话`
+    ? t('quota.liveTipActive', {
+        model: m.model,
+        time: new Date(m.time).toLocaleTimeString(),
+        tpsExcl: m.tpsExcl !== undefined ? m.tpsExcl.toFixed(1) : '—',
+        tpsIncl: m.tpsIncl !== undefined ? m.tpsIncl.toFixed(1) : '—'
+      })
+    : t('quota.liveTipIdle', { model: m.model })
   return (
     <div
       className={`flex shrink-0 items-center gap-2.5 rounded-lg bg-surface-secondary px-3 py-1.5 transition-opacity ${
@@ -144,7 +159,7 @@ function LiveMetricsBlock({ m, active }: { m: LiveMetrics; active: boolean }) {
       </span>
       <span className="h-3.5 w-px shrink-0 bg-border" />
       <span className="flex items-baseline gap-1.5">
-        <span className="text-[11px] text-text-tertiary">输出</span>
+        <span className="text-[11px] text-text-tertiary">{t('quota.liveOutput')}</span>
         <span className="text-[13px] font-semibold tabular-nums text-text">
           {active ? (m.tpsExcl !== undefined ? `${m.tpsExcl.toFixed(1)} tok/s` : '—') : '0.0 tok/s'}
         </span>
@@ -154,6 +169,7 @@ function LiveMetricsBlock({ m, active }: { m: LiveMetrics; active: boolean }) {
 }
 
 export function QuotaStrip() {
+  const t = useT()
   const [windows, setWindows] = useState<QuotaWindow[]>([])
   const [wallet, setWallet] = useState<BoosterWallet | null>(null)
   // 停止服务确认:停止会杀掉 iframe 内官方 UI 的所有进行中会话,统一弹确认
@@ -207,6 +223,16 @@ export function QuotaStrip() {
   // 指标胶囊:服务运行期间常驻;最近一次调用距今 ≤ 5 分钟视为有活跃会话(全亮),
   // 超过则降透明度、输出速率归零;服务未运行/从未有过调用时隐藏
   const liveActive = live !== null && Date.now() - live.time < 5 * 60_000
+
+  // 停止服务确认框打开期间:Esc 取消(停止进行中除外,与按钮禁用一致)
+  useEffect(() => {
+    if (!confirming || stopping) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setConfirming(false)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [confirming, stopping])
 
   useEffect(() => {
     window.kimiApi
@@ -269,7 +295,7 @@ export function QuotaStrip() {
       : null
 
   return (
-    <div className="relative flex h-full items-center gap-3">
+    <div className="relative flex h-full items-center gap-4">
       {/* 铺平直显:实时指标胶囊 + 各窗口迷你额度计 + 钱包 + 停止服务 */}
       {svcRunning && (
         <>
@@ -281,9 +307,9 @@ export function QuotaStrip() {
           {wallet && typeof wallet.balance_cents === 'number' && (
             <span
               className="flex shrink-0 items-baseline gap-1 whitespace-nowrap text-[11px] text-text-tertiary"
-              title={`booster 钱包余额(总额 ${fmtMoney(wallet.total_cents, currency)})`}
+              title={t('quota.walletTip', { total: fmtMoney(wallet.total_cents, currency) })}
             >
-              钱包
+              {t('quota.wallet')}
               <span className="text-[12.5px] font-semibold tabular-nums text-text">
                 {fmtMoney(wallet.balance_cents, currency)}
               </span>
@@ -292,10 +318,13 @@ export function QuotaStrip() {
           {monthlyPct !== null && wallet && (
             <div
               className="flex w-[72px] shrink-0 flex-col justify-center gap-1"
-              title={`月度消费上限:已用 ${fmtMoney(wallet.monthly_used_cents, currency)} / ${fmtMoney(wallet.monthly_charge_limit_cents, currency)}`}
+              title={t('quota.monthlyTip', {
+                used: fmtMoney(wallet.monthly_used_cents, currency),
+                limit: fmtMoney(wallet.monthly_charge_limit_cents, currency)
+              })}
             >
               <div className="flex items-baseline gap-1 whitespace-nowrap text-[11px]">
-                <span className="text-text-tertiary">月度</span>
+                <span className="text-text-tertiary">{t('quota.monthly')}</span>
                 <span
                   className="text-[12.5px] font-semibold tabular-nums"
                   style={{ color: meterColor(monthlyPct) }}
@@ -313,7 +342,7 @@ export function QuotaStrip() {
           )}
           <button
             className="no-drag flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-text-tertiary transition-colors hover:bg-danger-soft hover:text-danger"
-            title="停止 Kimi Code 服务"
+            title={t('quota.stopService')}
             onClick={() => setConfirming(true)}
           >
             <OctagonX size={15} />
@@ -321,13 +350,20 @@ export function QuotaStrip() {
         </>
       )}
 
-      {/* 停止服务确认:停服务会杀掉所有进行中的会话,统一弹确认 */}
+      {/* 停止服务确认:停服务会杀掉所有进行中的会话,统一弹确认;
+          取消:点遮罩 / Esc / 取消按钮(停止进行中除外) */}
       {confirming && (
-        <div className="fixed inset-0 z-[85] flex items-center justify-center bg-black/30">
-          <div className="w-[380px] rounded-xl bg-surface p-5 shadow-2xl">
-            <p className="text-[15px] font-semibold">停止 Kimi Code 服务?</p>
+        <div
+          className="fixed inset-0 z-[85] flex items-center justify-center bg-black/30"
+          onClick={() => !stopping && setConfirming(false)}
+        >
+          <div
+            className="w-[380px] rounded-xl bg-surface p-5 shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <p className="text-[15px] font-semibold">{t('quota.stopConfirmTitle')}</p>
             <p className="mt-2 text-[13px] text-text-secondary">
-              停止服务将中断所有进行中的会话,对话页不可用;之后可随时在设置 → 常规重新启动。
+              {t('quota.stopConfirmBody')}
             </p>
             <div className="mt-4 flex justify-end gap-2">
               <button
@@ -335,7 +371,7 @@ export function QuotaStrip() {
                 disabled={stopping}
                 onClick={() => setConfirming(false)}
               >
-                取消
+                {t('quota.cancel')}
               </button>
               <button
                 className="flex items-center gap-2 rounded-lg bg-danger px-4 py-1.5 text-[13px] font-medium text-white hover:opacity-90 disabled:opacity-70"
@@ -355,7 +391,7 @@ export function QuotaStrip() {
                 {stopping && (
                   <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/60 border-t-white" />
                 )}
-                {stopping ? '正在停止…' : '停止服务'}
+                {stopping ? t('quota.stopping') : t('quota.stop')}
               </button>
             </div>
           </div>

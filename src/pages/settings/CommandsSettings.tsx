@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Terminal, Wand2 } from 'lucide-react'
 import { Section, Card, GroupLabel, Empty } from '../../components/settings/common'
+import { useT } from '../../i18n'
 
 interface SkillEntry {
   name: string
@@ -9,20 +10,21 @@ interface SkillEntry {
   scope: 'user' | 'project'
 }
 
-const BUILTIN_COMMANDS: { cmd: string; desc: string }[] = [
-  { cmd: '/login', desc: '登录 Kimi 账户' },
-  { cmd: '/logout', desc: '退出当前账户' },
-  { cmd: '/model', desc: '查看或切换当前使用的模型' },
-  { cmd: '/compact', desc: '压缩会话上下文,释放 Token 预算' },
-  { cmd: '/undo', desc: '撤销上一次的代码修改' },
-  { cmd: '/export', desc: '导出当前会话记录' },
-  { cmd: '/mcp-config', desc: '查看或编辑 MCP 服务器配置' },
-  { cmd: '/usage', desc: '查看 Token 用量与额度' },
-  { cmd: '/status', desc: '查看会话与服务运行状态' },
-  { cmd: '/help', desc: '查看帮助与全部可用命令' }
-]
-
 export function CommandsSettings() {
+  const t = useT()
+  // 内置命令描述需随语言切换,由模块级常量移入组件内
+  const BUILTIN_COMMANDS: { cmd: string; desc: string }[] = [
+    { cmd: '/login', desc: t('settings.commands.cmdLogin') },
+    { cmd: '/logout', desc: t('settings.commands.cmdLogout') },
+    { cmd: '/model', desc: t('settings.commands.cmdModel') },
+    { cmd: '/compact', desc: t('settings.commands.cmdCompact') },
+    { cmd: '/undo', desc: t('settings.commands.cmdUndo') },
+    { cmd: '/export', desc: t('settings.commands.cmdExport') },
+    { cmd: '/mcp-config', desc: t('settings.commands.cmdMcpConfig') },
+    { cmd: '/usage', desc: t('settings.commands.cmdUsage') },
+    { cmd: '/status', desc: t('settings.commands.cmdStatus') },
+    { cmd: '/help', desc: t('settings.commands.cmdHelp') }
+  ]
   const [skills, setSkills] = useState<SkillEntry[] | null>(null)
   const [err, setErr] = useState('')
 
@@ -33,12 +35,14 @@ export function CommandsSettings() {
         setSkills(Array.isArray(s) ? (s as SkillEntry[]) : [])
         setErr('')
       })
-      .catch((e: unknown) => setErr(e instanceof Error ? e.message : '读取技能列表失败'))
+      .catch((e: unknown) =>
+        setErr(e instanceof Error ? e.message : t('settings.commands.loadFailed'))
+      )
   }, [])
 
   return (
-    <Section title="命令" desc="在聊天输入框中以 / 开头的斜杠命令">
-      <GroupLabel>内置命令</GroupLabel>
+    <Section title={t('settings.commands')} desc={t('settings.commands.desc')}>
+      <GroupLabel>{t('settings.commands.builtinGroup')}</GroupLabel>
       <Card>
         <div className="divide-y divide-border-light">
           {BUILTIN_COMMANDS.map((c) => (
@@ -53,10 +57,10 @@ export function CommandsSettings() {
         </div>
       </Card>
 
-      <GroupLabel>技能命令</GroupLabel>
+      <GroupLabel>{t('settings.commands.skillGroup')}</GroupLabel>
       {err && <p className="text-[12px] text-danger">{err}</p>}
       {skills && skills.length === 0 && !err && (
-        <Empty text="暂无自定义技能,安装技能后可通过 /skill:<名称> 调用" />
+        <Empty text={t('settings.commands.emptySkills')} />
       )}
       {skills && skills.length > 0 && (
         <Card>

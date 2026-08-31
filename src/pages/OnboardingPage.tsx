@@ -3,6 +3,7 @@ import { ArrowLeft, Loader2, Monitor, Server, Terminal, X } from 'lucide-react'
 import type { ConnectionTargetConfig } from '../platform/kimi-api'
 import { inputCls as uiInputCls } from '../components/ui/Input'
 import { useUi } from '../stores/ui'
+import { useT } from '../i18n'
 
 type Target = ConnectionTargetConfig['target']
 
@@ -30,6 +31,7 @@ export function OnboardingPage({
   initialTarget?: Target | null
   mode?: 'switch' | 'add'
 }) {
+  const t = useT()
   // 步骤:目标选择 → 配置(wsl/ssh);local 在选择页直接完成
   const [target, setTarget] = useState<Target | null>(initialTarget ?? null)
   const [wslDistro, setWslDistro] = useState('')
@@ -92,30 +94,30 @@ export function OnboardingPage({
   }
 
   /** 完成:switch 模式调 connectionTargetSet(持久化 + 重启,由调用方启动);add 模式调 addChannel(只追加) */
-  const finish = async (t: Target) => {
+  const finish = async (tgt: Target) => {
     // 双击/连点守卫:本机卡片的"完成并启动"是 span 无 disabled,重复触发会连续重启后端
     if (finishing) return
     setFinishing(true)
     setFinishError('')
     try {
-      const cfg = buildConfig(t)
+      const cfg = buildConfig(tgt)
       if (mode === 'add') {
         // 添加通道:只追加不切换激活;label 省略由后端按目标展示名生成
         await window.kimiApi.addChannel(
           cfg,
           undefined,
-          t === 'ssh' && sshAuth === 'password' ? sshPassword : undefined
+          tgt === 'ssh' && sshAuth === 'password' ? sshPassword : undefined
         )
         onDone()
         return
       }
       const r = await window.kimiApi.connectionTargetSet(
         cfg,
-        t === 'ssh' && sshAuth === 'password' ? sshPassword : undefined
+        tgt === 'ssh' && sshAuth === 'password' ? sshPassword : undefined
       )
       // 密码落 keyring 失败时提示,但不阻塞启动(本次内存生效)
-      if (t === 'ssh' && sshAuth === 'password' && sshPassword && !r.passwordSaved) {
-        setFinishError('密码保存失败,本次仅保存在内存;下次启动需重新输入')
+      if (tgt === 'ssh' && sshAuth === 'password' && sshPassword && !r.passwordSaved) {
+        setFinishError(t('onboarding.passwordSaveFailed'))
         // 给用户看到提示的时间,再继续启动
         await new Promise((resolve) => setTimeout(resolve, 1800))
       }
@@ -128,9 +130,9 @@ export function OnboardingPage({
   }
 
   const targets: { id: Target; icon: typeof Monitor; title: string; desc: string }[] = [
-    { id: 'local', icon: Monitor, title: '本机', desc: '在这台电脑上直接运行 Kimi Code CLI' },
-    { id: 'wsl', icon: Terminal, title: 'WSL', desc: '在 Windows 的 WSL 发行版中运行 CLI' },
-    { id: 'ssh', icon: Server, title: 'SSH', desc: '连接远程机器,在远端运行 CLI' }
+    { id: 'local', icon: Monitor, title: t('onboarding.targetLocalTitle'), desc: t('onboarding.targetLocalDesc') },
+    { id: 'wsl', icon: Terminal, title: 'WSL', desc: t('onboarding.targetWslDesc') },
+    { id: 'ssh', icon: Server, title: 'SSH', desc: t('onboarding.targetSshDesc') }
   ]
 
   return (
@@ -140,32 +142,30 @@ export function OnboardingPage({
         {onCancel && (
           <button
             className="absolute -top-2 right-0 rounded-lg p-1.5 text-text-tertiary hover:bg-surface-tertiary hover:text-text"
-            title="取消"
+            title={t('onboarding.cancel')}
             onClick={onCancel}
           >
             <X size={16} />
           </button>
         )}
         <div className="mb-6 text-center">
-          <p className="text-xl font-semibold">欢迎使用 Kimi Code Desktop</p>
+          <p className="text-xl font-semibold">{t('onboarding.welcome')}</p>
           <p className="mt-1 text-[13px] text-text-tertiary">
-            {mode === 'add'
-              ? '添加连接通道:选择运行位置并测试连接,完成后将追加到通道列表'
-              : '首次启动,请选择 Kimi Code 服务的运行位置'}
+            {mode === 'add' ? t('onboarding.subtitleAdd') : t('onboarding.subtitleFirst')}
           </p>
         </div>
 
         {/* 步骤 1:目标选择(本机可直接完成;add 模式下本机已存在,置灰不可选) */}
         <div className="grid grid-cols-3 gap-3">
-          {targets.map((t) => {
-            const Icon = t.icon
-            const active = target === t.id
-            const isLocal = t.id === 'local'
+          {targets.map((tg) => {
+            const Icon = tg.icon
+            const active = target === tg.id
+            const isLocal = tg.id === 'local'
             // add 模式:本机通道恒在,无需添加
             const disabledCard = mode === 'add' && isLocal
             return (
               <button
-                key={t.id}
+                key={tg.id}
                 disabled={disabledCard}
                 className={`rounded-xl border bg-surface p-4 text-left transition-colors ${
                   disabledCard
@@ -175,15 +175,15 @@ export function OnboardingPage({
                       : 'border-border hover:border-primary/50 hover:bg-surface-tertiary'
                 }`}
                 onClick={() => {
-                  if (t.id === 'local') return // 本机走卡片下方按钮直接完成
-                  setTarget(t.id)
+                  if (tg.id === 'local') return // 本机走卡片下方按钮直接完成
+                  setTarget(tg.id)
                   setTestResult(null)
                   setFinishError('')
                 }}
               >
                 <Icon size={20} className={active ? 'text-primary' : 'text-text-secondary'} />
-                <p className="mt-2 text-[14px] font-medium">{t.title}</p>
-                <p className="mt-1 text-[12px] leading-snug text-text-tertiary">{t.desc}</p>
+                <p className="mt-2 text-[14px] font-medium">{tg.title}</p>
+                <p className="mt-1 text-[12px] leading-snug text-text-tertiary">{tg.desc}</p>
                 {isLocal && (
                   <span
                     className={`mt-3 inline-block rounded-lg px-3 py-1.5 text-[12.5px] font-medium ${
@@ -197,10 +197,10 @@ export function OnboardingPage({
                     }}
                   >
                     {disabledCard
-                      ? '本机已存在'
+                      ? t('onboarding.localExists')
                       : finishing && target !== 'wsl' && target !== 'ssh'
-                        ? '启动中…'
-                        : '完成并启动'}
+                        ? t('onboarding.starting')
+                        : t('onboarding.finishStart')}
                   </span>
                 )}
               </button>
@@ -213,10 +213,10 @@ export function OnboardingPage({
           <div className="mt-4 rounded-xl border border-border bg-surface p-4">
             {target === 'wsl' ? (
               <div className="space-y-2">
-                <p className="text-[13px] font-[475]">WSL 发行版</p>
+                <p className="text-[13px] font-[475]">{t('onboarding.wslDistro')}</p>
                 <input
                   className={inputCls}
-                  placeholder="发行版名称(留空 = 默认发行版,如 Ubuntu)"
+                  placeholder={t('onboarding.wslDistroPlaceholder')}
                   value={wslDistro}
                   onChange={(e) => {
                     setWslDistro(e.target.value)
@@ -226,13 +226,13 @@ export function OnboardingPage({
               </div>
             ) : (
               <div className="space-y-2">
-                <p className="text-[13px] font-[475]">SSH 连接</p>
+                <p className="text-[13px] font-[475]">{t('onboarding.sshConnection')}</p>
                 <div className="flex gap-2">
                   {/* 主机框 flex-1 占据剩余宽度;端口用固定宽度的包裹 div,
                       避免 inputCls 的 w-full 与 w-24 宽度类冲突把主机框挤没 */}
                   <input
                     className={`${inputCls} flex-1`}
-                    placeholder="主机,可 user@host(必填)"
+                    placeholder={t('onboarding.sshHostPlaceholder')}
                     value={sshHost}
                     onChange={(e) => {
                       setSshHost(e.target.value)
@@ -242,7 +242,7 @@ export function OnboardingPage({
                   <div className="w-24 shrink-0">
                     <input
                       className={inputCls}
-                      placeholder="端口 22"
+                      placeholder={t('onboarding.sshPortPlaceholder')}
                       value={sshPort}
                       onChange={(e) => {
                         setSshPort(e.target.value)
@@ -253,7 +253,7 @@ export function OnboardingPage({
                 </div>
                 <input
                   className={inputCls}
-                  placeholder="用户名(可选,优先于主机中的 user@)"
+                  placeholder={t('onboarding.sshUserPlaceholder')}
                   value={sshUser}
                   onChange={(e) => {
                     setSshUser(e.target.value)
@@ -261,7 +261,7 @@ export function OnboardingPage({
                   }}
                 />
                 <div className="flex items-center gap-4 pt-1 text-[13px]">
-                  <span className="text-text-secondary">认证方式</span>
+                  <span className="text-text-secondary">{t('onboarding.authMethod')}</span>
                   <label className="flex cursor-pointer items-center gap-1.5">
                     <input
                       type="radio"
@@ -273,7 +273,7 @@ export function OnboardingPage({
                         invalidateTest()
                       }}
                     />
-                    私钥
+                    {t('onboarding.authKey')}
                   </label>
                   <label className="flex cursor-pointer items-center gap-1.5">
                     <input
@@ -286,14 +286,14 @@ export function OnboardingPage({
                         invalidateTest()
                       }}
                     />
-                    密码
+                    {t('onboarding.authPassword')}
                   </label>
                 </div>
                 {sshAuth === 'password' ? (
                   <input
                     type="password"
                     className={inputCls}
-                    placeholder="SSH 密码(保存在系统凭据管理器,不落地明文)"
+                    placeholder={t('onboarding.sshPasswordPlaceholder')}
                     value={sshPassword}
                     onChange={(e) => {
                       setSshPassword(e.target.value)
@@ -303,7 +303,7 @@ export function OnboardingPage({
                 ) : (
                   <input
                     className={inputCls}
-                    placeholder="私钥路径(可选,如 C:\Users\you\.ssh\id_ed25519)"
+                    placeholder={t('onboarding.sshIdentityPlaceholder')}
                     value={sshIdentity}
                     onChange={(e) => {
                       setSshIdentity(e.target.value)
@@ -316,7 +316,7 @@ export function OnboardingPage({
 
             {/* 测试结果反馈 */}
             {testResult?.ok && (
-              <p className="mt-2 text-[12px] text-success">连接成功:kimi {testResult.version}</p>
+              <p className="mt-2 text-[12px] text-success">{t('onboarding.connected', { version: testResult.version })}</p>
             )}
             {testResult && !testResult.ok && (
               <p className="mt-2 text-[12px] text-danger">{testResult.error}</p>
@@ -332,7 +332,7 @@ export function OnboardingPage({
                   setFinishError('')
                 }}
               >
-                <ArrowLeft size={13} /> 返回
+                <ArrowLeft size={13} /> {t('onboarding.back')}
               </button>
               <div className="flex gap-2">
                 <button
@@ -341,7 +341,7 @@ export function OnboardingPage({
                   onClick={() => void testConnection()}
                 >
                   {testing && <Loader2 size={13} className="animate-spin" />}
-                  {testing ? '测试中…' : '测试连接'}
+                  {testing ? t('onboarding.testing') : t('onboarding.testConnection')}
                 </button>
                 {/* 必须先测试通过才允许完成,降低首启失败率 */}
                 <button
@@ -351,11 +351,11 @@ export function OnboardingPage({
                 >
                   {finishing
                     ? mode === 'add'
-                      ? '添加中…'
-                      : '启动中…'
+                      ? t('onboarding.adding')
+                      : t('onboarding.starting')
                     : mode === 'add'
-                      ? '添加通道'
-                      : '完成并启动'}
+                      ? t('onboarding.addChannel')
+                      : t('onboarding.finishStart')}
                 </button>
               </div>
             </div>

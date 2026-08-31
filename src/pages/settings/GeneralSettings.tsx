@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { Moon, Sun } from 'lucide-react'
 import { Section, Card, GroupLabel } from '../../components/settings/common'
 import { FolderPickerDialog } from '../../components/FolderPickerDialog'
 import type {
@@ -6,6 +7,8 @@ import type {
   WebServerOptions
 } from '../../platform/kimi-api'
 import { useUi } from '../../stores/ui'
+import { useT } from '../../i18n'
+import { pushLocaleToFrames, pushThemeToFrames } from '../../components/chatPrefsBridge'
 import { Select } from '../../components/ui/Select'
 import { Segmented } from '../../components/ui/Segmented'
 import { inputCls as uiInputCls } from '../../components/ui/Input'
@@ -28,21 +31,6 @@ interface KimiCliInfo {
   /** custom|env|home|path 为本机来源;auto 为远端自动探测(WSL/SSH) */
   source: 'custom' | 'env' | 'home' | 'path' | 'auto'
   version: string | null
-}
-
-const SOURCE_LABEL: Record<KimiHomeInfo['source'], string> = {
-  custom: '自定义',
-  env: '环境变量',
-  default: '默认',
-  remote: '远端'
-}
-
-const CLI_SOURCE_LABEL: Record<KimiCliInfo['source'], string> = {
-  custom: '自定义',
-  env: '环境变量',
-  home: '官方脚本安装',
-  path: 'PATH(npm 等)',
-  auto: '自动探测'
 }
 
 /* ---------------- CLI 来源卡片(本机 / 远端 WSL/SSH) ---------------- */
@@ -93,11 +81,19 @@ function CliSourceCard(props: {
     error,
     checkMsg
   } = props
+  const t = useT()
+  const CLI_SOURCE_LABEL: Record<KimiCliInfo['source'], string> = {
+    custom: t('settings.general.srcCustom'),
+    env: t('settings.general.srcEnv'),
+    home: t('settings.general.cliSrcHome'),
+    path: t('settings.general.cliSrcPath'),
+    auto: t('settings.general.cliSrcAuto')
+  }
   return (
     <>
       <div className="flex items-center justify-between gap-3">
         <div className="min-w-0">
-          <p className="text-[13px] font-[475]">Kimi Code CLI 可执行文件</p>
+          <p className="text-[13px] font-[475]">{t('settings.general.cliExecutable')}</p>
           <p className="mt-0.5 truncate font-mono text-[12px] text-text-secondary">
             {cliInfo?.bin ?? '—'}
             {cliInfo && (
@@ -119,7 +115,7 @@ function CliSourceCard(props: {
             disabled={checking || upgrade.busy || switching}
             onClick={onCheck}
           >
-            {checking ? '检查中…' : '检查更新'}
+            {checking ? t('settings.general.checking') : t('settings.general.checkUpdate')}
           </button>
           {upgrade.visible && (
             <button
@@ -136,7 +132,7 @@ function CliSourceCard(props: {
               disabled={switching}
               onClick={onReset}
             >
-              恢复默认
+              {t('settings.general.resetDefault')}
             </button>
           )}
           <button
@@ -144,7 +140,11 @@ function CliSourceCard(props: {
             disabled={switching}
             onClick={onToggleEditing}
           >
-            {switching ? '切换中…' : editing ? '取消' : '修改'}
+            {switching
+              ? t('settings.general.switching')
+              : editing
+                ? t('settings.general.cancel')
+                : t('settings.general.edit')}
           </button>
         </div>
       </div>
@@ -164,7 +164,7 @@ function CliSourceCard(props: {
             disabled={switching || !pathText.trim()}
             onClick={() => void onSavePath(pathText.trim())}
           >
-            保存
+            {t('settings.general.save')}
           </button>
         </div>
       )}
@@ -179,6 +179,13 @@ function CliSourceCard(props: {
 }
 
 export function GeneralSettings() {
+  const t = useT()
+  const SOURCE_LABEL: Record<KimiHomeInfo['source'], string> = {
+    custom: t('settings.general.srcCustom'),
+    env: t('settings.general.srcEnv'),
+    default: t('settings.general.srcDefault'),
+    remote: t('settings.general.srcRemote')
+  }
   const [info, setInfo] = useState<AppInfo | null>(null)
   const [homeInfo, setHomeInfo] = useState<KimiHomeInfo | null>(null)
   const [pickingHome, setPickingHome] = useState(false)
@@ -193,6 +200,8 @@ export function GeneralSettings() {
   const [svcBusy, setSvcBusy] = useState(false)
   const quotaRefreshSecs = useUi((s) => s.quotaRefreshSecs)
   const settingsZoom = useUi((s) => s.settingsZoom)
+  const theme = useUi((s) => s.theme)
+  const locale = useUi((s) => s.locale)
   const [npmUpgrading, setNpmUpgrading] = useState(false)
   // 手动检查更新状态与结果
   const [cliChecking, setCliChecking] = useState(false)
@@ -224,7 +233,7 @@ export function GeneralSettings() {
       .appUpdateCheck()
       .then((r) => {
         useUi.getState().setAppUpdate(r)
-        if (!r) setAppMsg({ ok: true, text: '已是最新版本' })
+        if (!r) setAppMsg({ ok: true, text: t('settings.general.appLatest') })
       })
       .catch((e) => setAppMsg({ ok: false, text: e instanceof Error ? e.message : String(e) }))
       .finally(() => setAppChecking(false))
@@ -241,7 +250,7 @@ export function GeneralSettings() {
       .appUpdateInstall()
       .then(() => {
         setAppInstalling(false)
-        setAppMsg({ ok: false, text: '更新已不可用,请重新检查' })
+        setAppMsg({ ok: false, text: t('settings.general.appUpdateGone') })
       })
       .catch((e) => {
         setAppMsg({ ok: false, text: e instanceof Error ? e.message : String(e) })
@@ -360,8 +369,14 @@ export function GeneralSettings() {
       .then((r) => {
         setCliCheckMsg(
           r.hasUpdate
-            ? { ok: false, text: `发现新版本 v${r.latest}(当前 v${r.current ?? '未知'}),可点击右侧升级` }
-            : { ok: true, text: `已是最新版本(v${r.latest})` }
+            ? {
+                ok: false,
+                text: t('settings.general.cliNewVersion', {
+                  latest: r.latest,
+                  current: r.current ?? t('settings.general.cliUnknown')
+                })
+              }
+            : { ok: true, text: t('settings.general.cliLatest', { latest: r.latest }) }
         )
       })
       .catch((e) => setCliError(e instanceof Error ? e.message : String(e)))
@@ -385,7 +400,7 @@ export function GeneralSettings() {
   const saveWebOpts = async () => {
     const port = parseInt(webPortText, 10)
     if (!Number.isFinite(port) || port <= 0 || port > 65535) {
-      setWebMsg({ ok: false, text: '端口需为 1-65535 的数字' })
+      setWebMsg({ ok: false, text: t('settings.general.portInvalid') })
       return
     }
     setWebSaving(true)
@@ -396,7 +411,9 @@ export function GeneralSettings() {
       setWebPortText(String(saved.port))
       setWebMsg({
         ok: true,
-        text: svcRunning ? '已保存,运行中的服务已自动重启生效' : '已保存,下次启动服务时生效'
+        text: svcRunning
+          ? t('settings.general.portSavedRestart')
+          : t('settings.general.portSavedNext')
       })
     } catch (e) {
       setWebMsg({ ok: false, text: e instanceof Error ? e.message : String(e) })
@@ -406,12 +423,12 @@ export function GeneralSettings() {
   }
 
   return (
-    <Section title="常规" desc="应用与 Kimi Code CLI 的基本信息">
-      <GroupLabel>版本</GroupLabel>
+    <Section title={t('settings.general')} desc={t('settings.general.pageDesc')}>
+      <GroupLabel>{t('settings.general.groupVersion')}</GroupLabel>
       <Card>
         <div className="space-y-2 text-[13px]">
           <div className="flex justify-between">
-            <span className="text-text-secondary">桌面应用版本</span>
+            <span className="text-text-secondary">{t('settings.general.appVersionLabel')}</span>
             <span className="font-mono">{info?.appVersion ?? '—'}</span>
           </div>
           <div className="flex justify-between">
@@ -423,21 +440,22 @@ export function GeneralSettings() {
       </Card>
 
       {/* 应用自身更新:GitHub Releases 通道;启动时静默自检,此处手动检查与执行更新 */}
-      <GroupLabel>应用更新</GroupLabel>
+      <GroupLabel>{t('settings.general.groupAppUpdate')}</GroupLabel>
       <Card>
         <div className="flex items-center justify-between gap-3">
           <div className="min-w-0">
             <p className="text-[13px] font-[475]">
-              桌面应用更新
+              {t('settings.general.appUpdateTitle')}
               {appUpdate && (
                 <span className="ml-2 rounded bg-success-soft px-1.5 py-0.5 text-[11px] text-success">
-                  新版本 v{appUpdate.version}
+                  {t('settings.general.appNewVersion', { version: appUpdate.version })}
                 </span>
               )}
             </p>
             <p className="mt-0.5 text-[12px] text-text-tertiary">
-              当前版本 <span className="font-mono">{info?.appVersion ?? '—'}</span>
-              ;检查 GitHub Releases 上的新版本,更新包经签名校验,下载完成后自动安装并重启
+              {t('settings.general.appUpdateDescPre')}{' '}
+              <span className="font-mono">{info?.appVersion ?? '—'}</span>
+              {t('settings.general.appUpdateDescPost')}
             </p>
           </div>
           <div className="flex shrink-0 gap-2">
@@ -446,7 +464,7 @@ export function GeneralSettings() {
               disabled={appChecking || appInstalling}
               onClick={checkAppUpdate}
             >
-              {appChecking ? '检查中…' : '检查更新'}
+              {appChecking ? t('settings.general.checking') : t('settings.general.checkUpdate')}
             </button>
             {appUpdate && (
               <button
@@ -454,7 +472,9 @@ export function GeneralSettings() {
                 disabled={appInstalling}
                 onClick={installAppUpdate}
               >
-                {appInstalling ? '下载中…' : '下载并重启更新'}
+                {appInstalling
+                  ? t('settings.general.downloading')
+                  : t('settings.general.downloadAndRestart')}
               </button>
             )}
           </div>
@@ -476,9 +496,13 @@ export function GeneralSettings() {
             </div>
             <p className="mt-1 text-[12px] text-text-tertiary">
               {appProgress.total
-                ? `已下载 ${(appProgress.downloaded / 1024 / 1024).toFixed(1)} / ${(appProgress.total / 1024 / 1024).toFixed(1)} MB`
-                : `已下载 ${(appProgress.downloaded / 1024 / 1024).toFixed(1)} MB`}
-              ,完成后将自动安装并重启
+                ? t('settings.general.appProgressTotal', {
+                    downloaded: (appProgress.downloaded / 1024 / 1024).toFixed(1),
+                    total: (appProgress.total / 1024 / 1024).toFixed(1)
+                  })
+                : t('settings.general.appProgressNoTotal', {
+                    downloaded: (appProgress.downloaded / 1024 / 1024).toFixed(1)
+                  })}
             </p>
           </div>
         )}
@@ -494,11 +518,11 @@ export function GeneralSettings() {
       {/* 非本机目标使用远端自己的 ~/.kimi-code,数据目录设置不适用 */}
       {(!connInfo || connInfo.config.target === 'local') && (
         <>
-          <GroupLabel>存储位置</GroupLabel>
+          <GroupLabel>{t('settings.general.groupStorage')}</GroupLabel>
       <Card>
         <div className="flex items-center justify-between gap-3">
           <div className="min-w-0">
-            <p className="text-[13px] font-[475]">Kimi Code 数据目录</p>
+            <p className="text-[13px] font-[475]">{t('settings.general.dataDirTitle')}</p>
             <p className="mt-0.5 truncate font-mono text-[12px] text-text-secondary">
               {homeInfo?.home ?? '—'}
               {homeInfo && (
@@ -508,7 +532,7 @@ export function GeneralSettings() {
               )}
             </p>
             <p className="mt-1 text-[12px] text-text-tertiary">
-              会话、配置、插件等数据的存放位置(默认在 C 盘用户目录);切换将重启本地服务并重新加载
+              {t('settings.general.dataDirDesc')}
             </p>
           </div>
           <div className="flex shrink-0 gap-2">
@@ -518,7 +542,7 @@ export function GeneralSettings() {
                 disabled={switching}
                 onClick={() => void switchHome(null)}
               >
-                恢复默认
+                {t('settings.general.resetDefault')}
               </button>
             )}
             <button
@@ -526,7 +550,7 @@ export function GeneralSettings() {
               disabled={switching}
               onClick={() => setPickingHome(true)}
             >
-              {switching ? '切换中…' : '修改'}
+              {switching ? t('settings.general.switching') : t('settings.general.edit')}
             </button>
           </div>
         </div>
@@ -536,18 +560,18 @@ export function GeneralSettings() {
       )}
 
       {/* CLI 程序:本机管理 Windows 上的 CLI;WSL/SSH 显示远端实际使用的 CLI 路径/版本,支持自定义远端路径与远端升级 */}
-      <GroupLabel>CLI 程序</GroupLabel>
+      <GroupLabel>{t('settings.general.groupCli')}</GroupLabel>
       <Card>
         {(!connInfo || connInfo.config.target === 'local') ? (
           <CliSourceCard
             cliInfo={cliInfo}
-            description={'应用内一键升级仅适用于官方脚本安装;npm/自定义安装可直接点右侧"npm 升级"(等价 npm update -g)。切换将重启本地服务'}
+            description={t('settings.general.cliDescLocal')}
             checking={cliChecking}
             onCheck={checkCliUpdate}
             upgrade={{
               visible: !!cliInfo && cliInfo.source !== 'home',
-              label: 'npm 升级',
-              busyLabel: '升级中…',
+              label: t('settings.general.npmUpgrade'),
+              busyLabel: t('settings.general.upgrading'),
               busy: npmUpgrading,
               onUpgrade: () => {
                 setNpmUpgrading(true)
@@ -570,7 +594,7 @@ export function GeneralSettings() {
             }}
             pathText={cliPathText}
             onPathTextChange={setCliPathText}
-            placeholder="CLI 路径,如 D:\Env\nodejs\kimi.cmd(npm 全局)或 C:\...\kimi.exe"
+            placeholder={t('settings.general.cliPlaceholderLocal')}
             onSavePath={(p) => void switchCli(p)}
             error={cliError}
             checkMsg={cliCheckMsg}
@@ -578,13 +602,15 @@ export function GeneralSettings() {
         ) : (
           <CliSourceCard
             cliInfo={cliInfo}
-            description={`CLI 在远端环境(${connInfo?.describe ?? 'WSL/SSH'})运行;升级按安装方式自动选择官方安装脚本或 npm update -g,完成后重启服务`}
+            description={t('settings.general.cliDescRemote', {
+              target: connInfo?.describe ?? 'WSL/SSH'
+            })}
             checking={cliChecking}
             onCheck={checkCliUpdate}
             upgrade={{
               visible: true,
-              label: '升级 CLI',
-              busyLabel: '升级中…',
+              label: t('settings.general.upgradeCli'),
+              busyLabel: t('settings.general.upgrading'),
               busy: cliUpgrading,
               onUpgrade: upgradeRemoteCli
             }}
@@ -597,7 +623,7 @@ export function GeneralSettings() {
             }}
             pathText={cliPathText}
             onPathTextChange={setCliPathText}
-            placeholder="远端绝对路径,如 /home/user/.kimi-code/bin/kimi"
+            placeholder={t('settings.general.cliPlaceholderRemote')}
             onSavePath={(p) => void switchRemoteCli(p)}
             error={cliError}
             checkMsg={cliCheckMsg}
@@ -605,12 +631,12 @@ export function GeneralSettings() {
         )}
       </Card>
 
-      <GroupLabel>本地服务</GroupLabel>
+      <GroupLabel>{t('settings.general.groupLocalService')}</GroupLabel>
       <Card>
         <div className="flex items-center justify-between">
           <div>
             <p className="text-[13px] font-[475]">
-              kimi web 服务
+              {t('settings.general.svcTitle')}
               {svcRunning !== null && (
                 <span
                   className={`ml-2 rounded px-1.5 py-0.5 text-[11px] ${
@@ -619,17 +645,18 @@ export function GeneralSettings() {
                       : 'bg-fill text-text-tertiary'
                   }`}
                 >
-                  {svcRunning ? '运行中' : '未启动'}
+                  {svcRunning ? t('settings.general.svcRunning') : t('settings.general.svcStopped')}
                 </span>
               )}
             </p>
             <p className="text-[12px] text-text-tertiary">
-              停止后对话页不可用;会话状态由 CLI 持久化,重连后恢复
+              {t('settings.general.svcDesc')}
             </p>
             {/* 端口只有服务运行时才存在(server_info),故放在本卡片而不是版本卡片 */}
             {svcRunning && info?.port && (
               <p className="mt-1 text-[12px] text-text-tertiary">
-                本地服务端口 <span className="font-mono text-text-secondary">{info.port}</span>
+                {t('settings.general.svcPort')}{' '}
+                <span className="font-mono text-text-secondary">{info.port}</span>
               </p>
             )}
           </div>
@@ -638,19 +665,23 @@ export function GeneralSettings() {
             disabled={svcBusy || svcRunning === null}
             onClick={() => void toggleService()}
           >
-            {svcBusy ? '处理中…' : svcRunning ? '停止服务' : '启动服务'}
+            {svcBusy
+              ? t('settings.general.svcBusy')
+              : svcRunning
+                ? t('settings.general.svcStop')
+                : t('settings.general.svcStart')}
           </button>
         </div>
       </Card>
 
-      <GroupLabel>服务启动参数</GroupLabel>
+      <GroupLabel>{t('settings.general.groupServiceArgs')}</GroupLabel>
       <Card>
         <div className="space-y-4">
           <div className="flex items-center justify-between gap-3">
             <div className="min-w-0">
-              <p className="text-[13px] font-[475]">服务端口</p>
+              <p className="text-[13px] font-[475]">{t('settings.general.portTitle')}</p>
               <p className="mt-0.5 text-[12px] text-text-tertiary">
-                kimi web 绑定的首选端口(默认 58666);被占用时自动顺延,保存后运行中的服务会自动重启
+                {t('settings.general.portDesc')}
               </p>
             </div>
             <input
@@ -674,79 +705,132 @@ export function GeneralSettings() {
               disabled={!webOpts || webSaving}
               onClick={() => void saveWebOpts()}
             >
-              {webSaving ? '保存中…' : '保存'}
+              {webSaving ? t('settings.general.saving') : t('settings.general.save')}
             </button>
           </div>
         </div>
       </Card>
 
-      <GroupLabel>界面</GroupLabel>
+      <GroupLabel>{t('settings.general.groupUi')}</GroupLabel>
       <Card>
-        {/* 设置页字体大小:存 localStorage,SettingsPage 根节点经 CSS zoom 响应式生效 */}
+        {/* 主题:壳 store + 反推对话 iframe(官方无刷新跟随);语言:壳页面即时生效,
+            对话页经注入脚本写 kimi-locale,下次加载必然生效(官方是否无刷新跟随取决于其自身) */}
         <div className="flex items-center justify-between">
           <div>
-            <p className="text-[13px] font-[475]">设置页字体大小</p>
-            <p className="text-[12px] text-text-tertiary">整体缩放设置页的字体与控件(立即生效,仅影响设置页)</p>
+            <p className="text-[13px] font-[475]">{t('settings.general.themeTitle')}</p>
+            <p className="text-[12px] text-text-tertiary">{t('settings.general.themeDesc')}</p>
+          </div>
+          <Segmented
+            value={theme}
+            options={[
+              {
+                value: 'light',
+                label: (
+                  <>
+                    <Sun size={13} /> {t('settings.general.themeLight')}
+                  </>
+                )
+              },
+              {
+                value: 'dark',
+                label: (
+                  <>
+                    <Moon size={13} /> {t('settings.general.themeDark')}
+                  </>
+                )
+              },
+              { value: 'system', label: t('settings.general.themeSystem') }
+            ]}
+            onChange={(v) => {
+              const next = v as 'light' | 'dark' | 'system'
+              useUi.getState().setTheme(next)
+              pushThemeToFrames(next)
+            }}
+          />
+        </div>
+        <div className="mt-3 flex items-center justify-between border-t border-border-light pt-3">
+          <div>
+            <p className="text-[13px] font-[475]">{t('settings.general.langTitle')}</p>
+            <p className="text-[12px] text-text-tertiary">{t('settings.general.langDesc')}</p>
+          </div>
+          <Segmented
+            value={locale}
+            options={[
+              { value: 'zh', label: '中文' },
+              { value: 'en', label: 'English' }
+            ]}
+            onChange={(v) => {
+              const next = v as 'zh' | 'en'
+              useUi.getState().setLocale(next)
+              pushLocaleToFrames(next)
+            }}
+          />
+        </div>
+        {/* 设置页字体大小:存 localStorage,SettingsPage 根节点经 CSS zoom 响应式生效 */}
+        <div className="mt-3 flex items-center justify-between border-t border-border-light pt-3">
+          <div>
+            <p className="text-[13px] font-[475]">{t('settings.general.zoomTitle')}</p>
+            <p className="text-[12px] text-text-tertiary">{t('settings.general.zoomDesc')}</p>
           </div>
           <Segmented
             value={String(settingsZoom)}
             options={[
-              { value: '90', label: '较小' },
-              { value: '100', label: '标准' },
-              { value: '110', label: '较大' },
-              { value: '125', label: '特大' }
+              { value: '90', label: t('settings.general.zoomSmaller') },
+              { value: '100', label: t('settings.general.zoomStandard') },
+              { value: '110', label: t('settings.general.zoomLarger') },
+              { value: '125', label: t('settings.general.zoomLargest') }
             ]}
             onChange={(v) => useUi.getState().setSettingsZoom(Number(v))}
           />
         </div>
       </Card>
 
-      <GroupLabel>其他</GroupLabel>
+      <GroupLabel>{t('settings.general.groupMisc')}</GroupLabel>
       <Card>
         {/* 额度条刷新间隔:存 localStorage,QuotaStrip 响应式生效 */}
         <div className="flex items-center justify-between">
           <div>
-            <p className="text-[13px] font-[475]">额度条刷新间隔</p>
-            <p className="text-[12px] text-text-tertiary">顶部额度/余额的自动刷新频率(每轮对话结束也会立即刷新)</p>
+            <p className="text-[13px] font-[475]">{t('settings.general.refreshTitle')}</p>
+            <p className="text-[12px] text-text-tertiary">{t('settings.general.refreshDesc')}</p>
           </div>
           <Select
             className="w-[170px]"
             value={String(quotaRefreshSecs)}
             options={[
-              { value: '30', label: '30 秒' },
-              { value: '60', label: '1 分钟(默认)' },
-              { value: '120', label: '2 分钟' },
-              { value: '300', label: '5 分钟' },
-              { value: '0', label: '关闭自动刷新' }
+              { value: '30', label: t('settings.general.refreshOpt30s') },
+              { value: '60', label: t('settings.general.refreshOpt1m') },
+              { value: '120', label: t('settings.general.refreshOpt2m') },
+              { value: '300', label: t('settings.general.refreshOpt5m') },
+              { value: '0', label: t('settings.general.refreshOff') }
             ]}
             onChange={(v) => useUi.getState().setQuotaRefreshSecs(Number(v))}
           />
         </div>
       </Card>
 
-      <GroupLabel>诊断</GroupLabel>
+      <GroupLabel>{t('settings.general.groupDiagnostics')}</GroupLabel>
       <Card>
         <div className="flex items-center justify-between">
           <div>
-            <p className="text-[13px] font-[475]">运行日志</p>
+            <p className="text-[13px] font-[475]">{t('settings.general.logsTitle')}</p>
             <p className="text-[12px] text-text-tertiary">
-              WS 事件流日志默认开启(ws.log),遇到渲染/连接问题请把日志发给开发者
+              {t('settings.general.logsDesc')}
             </p>
           </div>
           <button
             className="rounded-lg border border-border bg-elevated px-3.5 py-2 text-[13px] text-text hover:bg-hover"
             onClick={() => window.kimiApi.openLogs()}
           >
-            打开日志目录
+            {t('settings.general.logsOpen')}
           </button>
         </div>
       </Card>
 
       {pickingHome && (
         <FolderPickerDialog
-          title="选择数据目录"
-          subtitle="Kimi Code 的会话与配置数据将存放在此"
-          confirmLabel="设为数据目录"
+          title={t('settings.general.pickHomeTitle')}
+          subtitle={t('settings.general.pickHomeSubtitle')}
+          confirmLabel={t('settings.general.pickHomeConfirm')}
           onSelect={(p) => {
             setPickingHome(false)
             void switchHome(p)

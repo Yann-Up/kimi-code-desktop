@@ -14,6 +14,7 @@ import { newBridgeNonce } from './bridgeGuard'
 import { SettingsPage } from '../pages/SettingsPage'
 import { StatsPage } from '../pages/stats/StatsPage'
 import { useUi } from '../stores/ui'
+import { useT, t as tStatic } from '../i18n'
 import logoUrl from '../assets/logo.png'
 
 /** 对话区状态:checking=探测服务中 off=未启动(占位页) starting=启动中 on=已加载 iframe error=加载失败 */
@@ -21,6 +22,7 @@ type FrameState = 'checking' | 'off' | 'starting' | 'on' | 'error'
 
 /** 对话 tab:官方 web UI iframe / 未启动占位页(每通道一份,切通道只 hidden 切换) */
 function WebFrame() {
+  const t = useT()
   const channels = useUi((s) => s.channels)
   const activeChannel = useUi((s) => s.activeChannel)
   // 按通道维护:状态 / iframe src / 错误文案;所有已启动通道的 iframe 常驻挂载
@@ -88,7 +90,7 @@ function WebFrame() {
         setSrcs((s) => ({ ...s, [info.channel]: undefined }))
         setInstalling(false)
         setStates((s) => ({ ...s, [info.channel]: 'off' }))
-        setErrors((e) => ({ ...e, [info.channel]: `后端服务意外退出:${info.detail}` }))
+        setErrors((e) => ({ ...e, [info.channel]: tStatic('shell.serverExited', { detail: info.detail }) }))
         setFrameBlocked((m) => ({ ...m, [info.channel]: false }))
       }),
       window.kimiApi.onCliInstalling(() => setInstalling(true))
@@ -192,9 +194,9 @@ function WebFrame() {
       <div className="flex flex-1 items-center justify-center">
         <div className="flex flex-col items-center">
           <img src={logoUrl} alt="Kimi Code" className="h-14 w-14 rounded-2xl shadow-sm" />
-          <p className="mt-5 text-[15px] font-semibold">Kimi Code 服务未启动</p>
+          <p className="mt-5 text-[15px] font-semibold">{t('shell.offline.title')}</p>
           <p className="mt-1.5 max-w-[320px] text-center text-[12.5px] leading-relaxed text-text-tertiary">
-            启动后此处将加载官方 Web UI 对话界面;统计、设置等本地页面现在即可使用
+            {t('shell.offline.desc')}
           </p>
 
           {error && (
@@ -206,7 +208,7 @@ function WebFrame() {
             className="mt-5 rounded-lg bg-primary px-6 py-2 text-[14px] font-medium text-white hover:bg-primary-hover"
             onClick={() => startChannel(ch)}
           >
-            启动 Kimi Code 服务
+            {t('shell.offline.start')}
           </button>
         </div>
       </div>
@@ -219,12 +221,10 @@ function WebFrame() {
       <div className="flex flex-col items-center">
         <div className="h-8 w-8 animate-spin rounded-full border-2 border-primary border-t-transparent" />
         <p className="mt-4 text-sm text-text-secondary">
-          {installing
-            ? '未检测到 Kimi Code CLI,正在自动下载安装最新版…'
-            : '正在启动 Kimi Code 服务…'}
+          {installing ? t('shell.starting.installingCli') : t('shell.starting.starting')}
         </p>
         {installing && (
-          <p className="mt-2 text-xs text-text-tertiary">首次安装需要几分钟,请保持网络畅通</p>
+          <p className="mt-2 text-xs text-text-tertiary">{t('shell.starting.installHint')}</p>
         )}
       </div>
     </div>
@@ -237,13 +237,13 @@ function WebFrame() {
     if (st === 'error') {
       return (
         <div className="flex flex-1 flex-col items-center justify-center gap-3">
-          <p className="text-sm text-text-secondary">无法加载对话界面</p>
+          <p className="text-sm text-text-secondary">{t('shell.frameError.title')}</p>
           <p className="text-[11px] text-text-tertiary">{errors[ch]}</p>
           <button
             className="rounded-lg border border-border bg-elevated px-4 py-2 text-[13px] text-text hover:bg-hover"
             onClick={() => retryLoad(ch)}
           >
-            重试
+            {t('shell.frameError.retry')}
           </button>
         </div>
       )
@@ -262,16 +262,15 @@ function WebFrame() {
         <div className="flex flex-1 items-center justify-center">
           <div className="flex max-w-[420px] flex-col items-center px-6">
             <TriangleAlert size={32} className="text-warning" />
-            <p className="mt-4 text-[15px] font-semibold">官方服务端禁止了 iframe 嵌入</p>
+            <p className="mt-4 text-[15px] font-semibold">{t('shell.frameBlocked.title')}</p>
             <p className="mt-2 text-center text-[12.5px] leading-relaxed text-text-tertiary">
-              检测到响应头 CSP frame-ancestors,当前版本的官方服务端不允许被嵌入,
-              对话界面无法在壳内显示。可改用系统浏览器访问,或留意官方更新说明。
+              {t('shell.frameBlocked.desc')}
             </p>
             <button
               className="mt-5 rounded-lg bg-primary px-4 py-1.5 text-[13px] font-medium text-white hover:bg-primary-hover"
               onClick={() => void window.kimiApi.openExternal(src)}
             >
-              在系统浏览器打开
+              {t('shell.frameBlocked.openExternal')}
             </button>
           </div>
         </div>
@@ -291,7 +290,7 @@ function WebFrame() {
   // 通道列表尚未就绪(get_channels 在途/失败):按本机兜底渲染,不阻塞启动
   const effectiveChannels = channels.length
     ? channels
-    : [{ id: 'local', label: '本机', target: 'local' as const, running: false }]
+    : [{ id: 'local', label: t('shell.channelLocal'), target: 'local' as const, running: false }]
 
   return (
     <div className="relative min-h-0 flex-1">
@@ -313,7 +312,7 @@ function WebFrame() {
       {chatSkin.active && (
         <button
           className="absolute bottom-3 right-3 z-10 flex h-7 w-7 items-center justify-center rounded-full border border-border bg-surface/90 text-text-tertiary shadow-sm backdrop-blur transition-colors hover:text-text"
-          title={chatSkin.hidden ? '显示立绘' : '暂时隐藏立绘(本次会话有效)'}
+          title={chatSkin.hidden ? t('shell.skin.show') : t('shell.skin.hideSession')}
           onClick={chatSkin.toggleHidden}
         >
           {chatSkin.hidden ? <EyeOff size={14} /> : <Eye size={14} />}
@@ -324,22 +323,22 @@ function WebFrame() {
       {installConfirm && (
         <div className="fixed inset-0 z-[85] flex items-center justify-center bg-black/30">
           <div className="w-[400px] rounded-xl bg-surface p-5 shadow-2xl">
-            <p className="text-[15px] font-semibold">安装 Kimi Code CLI</p>
+            <p className="text-[15px] font-semibold">{t('shell.installCli.title')}</p>
             <p className="mt-2 text-[13px] leading-relaxed text-text-secondary">
-              本机未检测到 Kimi Code CLI。将使用官方安装脚本下载并安装最新版:
+              {t('shell.installCli.desc')}
             </p>
             <p className="mt-2 rounded-lg bg-surface-tertiary px-3 py-2 font-mono text-[11.5px] text-text-secondary">
               irm https://code.kimi.com/kimi-code/install.ps1 | iex
             </p>
             <p className="mt-2 text-[12px] text-text-tertiary">
-              首次安装需要几分钟,请保持网络畅通;安装完成后服务会自动启动
+              {t('shell.installCli.hint')}
             </p>
             <div className="mt-4 flex justify-end gap-2">
               <button
                 className="rounded-lg border border-border bg-elevated px-4 py-2 text-[13px] text-text hover:bg-hover"
                 onClick={() => setInstallConfirm(false)}
               >
-                取消
+                {t('shell.installCli.cancel')}
               </button>
               <button
                 className="rounded-lg bg-primary px-4 py-1.5 text-[13px] font-medium text-white hover:bg-primary-hover"
@@ -348,7 +347,7 @@ function WebFrame() {
                   doStart('local')
                 }}
               >
-                安装并启动
+                {t('shell.installCli.confirm')}
               </button>
             </div>
           </div>

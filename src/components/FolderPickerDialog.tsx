@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { ArrowUp, Folder, HardDrive, X } from 'lucide-react'
 import { rest } from '../api'
 import { useUi } from '../stores/ui'
+import { useT } from '../i18n'
 
 interface BrowseResult {
   path: string
@@ -18,6 +19,7 @@ export function FolderPickerDialog(props: {
   subtitle?: string
   confirmLabel?: string
 }) {
+  const t = useT()
   const [current, setCurrent] = useState<BrowseResult | null>(null)
   const [drives, setDrives] = useState<string[] | null>(null)
   // 平台是否有盘符概念:Windows 有;Linux/macOS(含 WSL 本机)没有,退化为普通目录浏览
@@ -90,9 +92,9 @@ export function FolderPickerDialog(props: {
       >
         <div className="flex items-center justify-between border-b border-border-light px-5 py-4">
           <div>
-            <span className="text-[15px] font-semibold">{props.title ?? '选择工作文件夹'}</span>
+            <span className="text-[15px] font-semibold">{props.title ?? t('folderPicker.defaultTitle')}</span>
             <span className="ml-2 text-xs text-text-tertiary">
-              {props.subtitle ?? '新任务将在此文件夹中进行'}
+              {props.subtitle ?? t('folderPicker.defaultSubtitle')}
             </span>
           </div>
           <button
@@ -107,7 +109,7 @@ export function FolderPickerDialog(props: {
           <input
             ref={inputRef}
             className="w-full bg-transparent text-[13px] text-text-secondary outline-none placeholder:text-text-tertiary"
-            placeholder={drives ? '此电脑(选择盘符,或输入路径回车)' : '输入路径回车'}
+            placeholder={drives ? t('folderPicker.placeholderDrives') : t('folderPicker.placeholderPath')}
             value={pathText}
             onChange={(e) => setPathText(e.target.value)}
             onKeyDown={(e) => {
@@ -122,7 +124,7 @@ export function FolderPickerDialog(props: {
               className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-[13px] text-text-secondary hover:bg-surface-secondary"
               onClick={() => void browse(current.parent!)}
             >
-              <ArrowUp size={14} /> 上一级
+              <ArrowUp size={14} /> {t('folderPicker.parentDir')}
             </button>
           )}
           {!drives && isLocal && atDriveRoot && drivesAvailable && (
@@ -130,10 +132,10 @@ export function FolderPickerDialog(props: {
               className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-[13px] text-text-secondary hover:bg-surface-secondary"
               onClick={() => void showDrives()}
             >
-              <ArrowUp size={14} /> 此电脑(选择盘符)
+              <ArrowUp size={14} /> {t('folderPicker.thisPC')}
             </button>
           )}
-          {loading && <p className="px-3 py-2 text-xs text-text-tertiary">加载中…</p>}
+          {loading && <p className="px-3 py-2 text-xs text-text-tertiary">{t('folderPicker.loading')}</p>}
           {error && <p className="px-3 py-2 text-xs text-danger">{error}</p>}
           {!loading &&
             !drives &&
@@ -159,20 +161,20 @@ export function FolderPickerDialog(props: {
               </button>
             ))}
           {!loading && !drives && !dirs.length && !error && (
-            <p className="px-3 py-6 text-center text-xs text-text-tertiary">此文件夹没有子文件夹</p>
+            <p className="px-3 py-6 text-center text-xs text-text-tertiary">{t('folderPicker.empty')}</p>
           )}
         </div>
 
         <div className="flex items-center justify-between border-t border-border-light px-5 py-3">
           <span className="max-w-[360px] truncate text-xs text-text-tertiary">
-            {drives ? '此电脑' : current?.path}
+            {drives ? t('folderPicker.thisPCShort') : current?.path}
           </span>
           <button
             className="rounded-lg bg-primary px-4 py-2 text-[13px] font-medium text-white hover:bg-primary-hover disabled:opacity-50"
             disabled={!current}
             onClick={() => current && props.onSelect(current.path)}
           >
-            {props.confirmLabel ?? '在此文件夹开始'}
+            {props.confirmLabel ?? t('folderPicker.defaultConfirm')}
           </button>
         </div>
       </div>

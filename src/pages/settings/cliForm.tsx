@@ -12,6 +12,7 @@ import { Select } from '../../components/ui/Select'
 import { Switch } from '../../components/ui/Switch'
 import { inputCls as uiInputCls } from '../../components/ui/Input'
 import type { CliConfig } from '../../hooks/useCliConfig'
+import { useT } from '../../i18n'
 
 /**
  * 单键的 snake_case ↔ camelCase 变体候选(原键优先)。
@@ -169,6 +170,7 @@ export function PathListField(props: {
 }) {
   // 「浏览选择」弹层:经 FolderPickerDialog(REST fs:browse)选目录后追加为一行;手动输入仍可用
   const [picking, setPicking] = useState(false)
+  const t = useT()
   return (
     <div>
       <p className="text-[13px] font-[475]">{props.label}</p>
@@ -184,7 +186,7 @@ export function PathListField(props: {
             />
             <button
               className="shrink-0 rounded-lg border border-border p-1.5 text-text-tertiary transition-colors hover:bg-danger-soft hover:text-danger"
-              title="删除该行"
+              title={t('cliGeneral.form.deleteRow')}
               onClick={() => props.onChange(props.values.filter((_, j) => j !== i))}
             >
               <Trash2 size={13} />
@@ -197,20 +199,20 @@ export function PathListField(props: {
           className="inline-flex items-center gap-1 rounded-lg border border-dashed border-border px-2.5 py-1 text-[12.5px] text-text-secondary transition-colors hover:border-primary hover:bg-primary-soft hover:text-primary"
           onClick={() => props.onChange([...props.values, ''])}
         >
-          <Plus size={12} /> 添加路径
+          <Plus size={12} /> {t('cliGeneral.form.addPath')}
         </button>
         <button
           className="inline-flex items-center gap-1 rounded-lg border border-dashed border-border px-2.5 py-1 text-[12.5px] text-text-secondary transition-colors hover:border-primary hover:bg-primary-soft hover:text-primary"
           onClick={() => setPicking(true)}
         >
-          <FolderOpen size={12} /> 浏览选择
+          <FolderOpen size={12} /> {t('cliGeneral.form.browse')}
         </button>
       </div>
       {picking && (
         <FolderPickerDialog
-          title="选择目录"
+          title={t('cliGeneral.form.pickDirTitle')}
           subtitle={props.label}
-          confirmLabel="添加此目录"
+          confirmLabel={t('cliGeneral.form.pickDirConfirm')}
           onSelect={(p) => {
             setPicking(false)
             // 已存在则不再重复添加
@@ -225,9 +227,10 @@ export function PathListField(props: {
 
 /** 保存栏:保存按钮 + 短暂"已保存"反馈 / 错误文案;savedText 可定制成功文案(如离线直写时提示重启生效) */
 export function SaveBar(props: { saving: boolean; saved: boolean; error: string; onSave: () => void; savedText?: string }) {
+  const t = useT()
   return (
     <div className="flex items-center justify-end gap-3 border-t border-border-light pt-3">
-      {props.saved && <span className="text-[12px] text-success">{props.savedText ?? '已保存'}</span>}
+      {props.saved && <span className="text-[12px] text-success">{props.savedText ?? t('cliGeneral.form.saved')}</span>}
       {props.error && (
         <span className="min-w-0 flex-1 truncate text-right text-[12px] text-danger">{props.error}</span>
       )}
@@ -236,7 +239,7 @@ export function SaveBar(props: { saving: boolean; saved: boolean; error: string;
         disabled={props.saving}
         onClick={props.onSave}
       >
-        {props.saving ? '保存中…' : '保存'}
+        {props.saving ? t('cliGeneral.form.saving') : t('cliGeneral.form.save')}
       </button>
     </div>
   )
@@ -244,9 +247,10 @@ export function SaveBar(props: { saving: boolean; saved: boolean; error: string;
 
 /** 合并语义提示(空输入不提交,已设置的键无法删除) */
 export function MergeNote() {
+  const t = useT()
   return (
     <p className="text-[11.5px] text-text-tertiary">
-      写回为合并语义:仅提交本页涉及且已填写的键;留空项不会改动,已设置的键无法通过表单删除
+      {t('cliGeneral.form.mergeNote')}
     </p>
   )
 }
@@ -282,9 +286,10 @@ export function isServerOffline(error: string): boolean {
 
 /** 离线直写提醒:服务未启动时 useCliConfig 降级为直读直写 config.toml,保存需重启服务生效 */
 export function OfflineNotice() {
+  const t = useT()
   return (
     <p className="rounded-lg border border-warning/20 bg-warning-soft px-3 py-2 text-[12px] text-warning">
-      服务未启动,当前直接读写 config.toml 配置文件;保存的内容将在重启服务后对新会话生效
+      {t('cliGeneral.form.offlineNotice')}
     </p>
   )
 }
@@ -299,10 +304,11 @@ export function CliConfigGate(props: {
   offline?: boolean
   children: ReactNode
 }) {
+  const t = useT()
   if (props.loading) {
     return (
       <Section title={props.title} desc={props.desc}>
-        <Empty text="加载中…" />
+        <Empty text={t('cliGeneral.form.loading')} />
       </Section>
     )
   }
@@ -313,8 +319,8 @@ export function CliConfigGate(props: {
         <Empty
           text={
             offline
-              ? '服务未启动且 config.toml 直读失败,请先在对话页启动服务后重试'
-              : `配置加载失败:${props.error}`
+              ? t('cliGeneral.form.offlineReadFailed')
+              : t('cliGeneral.form.loadFailed', { error: props.error })
           }
         />
         <div className="flex justify-end">
@@ -322,7 +328,7 @@ export function CliConfigGate(props: {
             className="rounded-lg border border-border bg-elevated px-3.5 py-2 text-[13px] text-text hover:bg-hover"
             onClick={props.onRetry}
           >
-            重试
+            {t('cliGeneral.form.retry')}
           </button>
         </div>
       </Section>

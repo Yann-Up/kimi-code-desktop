@@ -9,19 +9,33 @@ import type {
 /** 壳内视图:顶部导航的三个 tab(对话 / 统计 / 设置) */
 export type ShellView = 'chat' | 'stats' | 'settings'
 
-/** 壳主题:跟随官方 web UI(chatPrefsBridge 上报);持久化 localStorage kimi.theme */
-export type ShellTheme = 'light' | 'dark'
+/** 壳主题:跟随官方 web UI(chatPrefsBridge 上报);持久化 localStorage kimi.theme。
+ *  system=跟随系统(与官方三态对齐;经 matchMedia 解析成实际明暗落地 data-theme) */
+export type ShellTheme = 'light' | 'dark' | 'system'
 /** 壳语言:跟随官方 web UI(kimi-locale);持久化 localStorage kimi.locale */
 export type ShellLocale = 'zh' | 'en'
 
+/** 解析实际明暗:system 经 matchMedia;解析失败回退 light */
+export function resolveTheme(theme: ShellTheme): 'light' | 'dark' {
+  if (theme === 'system') {
+    try {
+      return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+    } catch {
+      return 'light'
+    }
+  }
+  return theme
+}
+
 /** data-theme 应用:亮态不设属性(默认令牌),暗态置 dark(theme.css 按属性覆盖) */
 function applyThemeAttr(theme: ShellTheme) {
-  if (theme === 'dark') document.documentElement.dataset.theme = 'dark'
+  if (resolveTheme(theme) === 'dark') document.documentElement.dataset.theme = 'dark'
   else delete document.documentElement.dataset.theme
 }
 
 function loadTheme(): ShellTheme {
-  return localStorage.getItem('kimi.theme') === 'dark' ? 'dark' : 'light'
+  const raw = localStorage.getItem('kimi.theme')
+  return raw === 'dark' || raw === 'system' ? raw : 'light'
 }
 
 function loadLocale(): ShellLocale {
@@ -64,6 +78,8 @@ interface UiState {
   appInstalling: boolean
   /** 应用更新下载进度(app:update-progress 事件写入,ShellHome 常驻监听) */
   appProgress: AppUpdateProgress | null
+  /** 「忽略此版本」的应用版本号(持久化 kimi.appUpdateIgnored;该版本不再在标题栏出红点) */
+  appUpdateIgnored: string | null
   /** 切换顶部导航 tab */
   setView: (v: ShellView) => void
   openSettings: (section?: string) => void
@@ -77,6 +93,7 @@ interface UiState {
   setAppUpdate: (info: AppUpdateInfo | null) => void
   setAppInstalling: (v: boolean) => void
   setAppProgress: (p: AppUpdateProgress | null) => void
+  ignoreAppUpdate: (version: string) => void
   setConnectionTarget: (t: ConnectionTargetConfig['target']) => void
   /** 填充通道列表与激活通道;connectionTarget 随之派生 */
   setChannels: (channels: ChannelInfo[], active: string) => void
@@ -102,6 +119,7 @@ export const useUi = create<UiState>((set) => ({
   appUpdate: null,
   appInstalling: false,
   appProgress: null,
+  appUpdateIgnored: localStorage.getItem('kimi.appUpdateIgnored'),
   quotaRefreshSecs: (() => {
     const raw = localStorage.getItem('kimi.quotaRefreshSecs')
     if (raw === null) return 60 // 未设置过:默认 60s
@@ -143,6 +161,10 @@ export const useUi = create<UiState>((set) => ({
   setAppUpdate: (info) => set({ appUpdate: info }),
   setAppInstalling: (v) => set({ appInstalling: v }),
   setAppProgress: (p) => set({ appProgress: p }),
+  ignoreAppUpdate: (version) => {
+    localStorage.setItem('kimi.appUpdateIgnored', version)
+    set({ appUpdateIgnored: version })
+  },
   setConnectionTarget: (t) => set({ connectionTarget: t }),
   setChannels: (channels, active) =>
     set((s) => ({
@@ -174,6 +196,17 @@ export const useUi = create<UiState>((set) => ({
 
 // 启动即按持久化值落地 data-theme(三种窗口共用本 store,同源共享 localStorage)
 applyThemeAttr(useUi.getState().theme)
+
+// system 态下跟随系统明暗切换(监听一次,仅当当前偏好为 system 时重落地)
+try {
+  const mq = window.matchMedia('(prefers-color-scheme: dark)')
+  const onSysChange = () => {
+    if (useUi.getState().theme === 'system') applyThemeAttr('system')
+  }
+  if (mq.addEventListener) mq.addEventListener('change', onSysChange)
+} catch {
+  /* 静默 */
+}
 
 // 跨窗同步:桌宠/菜单窗与主窗同源,storage 事件只在「其他窗口」触发——
 // 主窗 chatPrefsBridge 写入后,桌宠窗经这里跟随主题/语言

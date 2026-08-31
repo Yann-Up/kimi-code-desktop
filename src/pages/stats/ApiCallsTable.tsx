@@ -1,12 +1,19 @@
 import { useCallback, useEffect, useState } from 'react'
 import { ChevronLeft, ChevronRight, Coins, Cpu, Gauge, RefreshCw, Timer, Zap } from 'lucide-react'
-import { Section, Card, Empty } from '../../components/settings/common'
+import { Section, SurfaceCard, Empty } from '../../components/settings/common'
 import { Select } from '../../components/ui/Select'
 import type { ApiCallItem, ApiCallsResult } from '../../platform/kimi-api'
+import { useT, t as tStatic } from '../../i18n'
+import { useUi } from '../../stores/ui'
 
-/** tokens 人性化:亿 / 万 / 原值(与 UsageSettings 口径一致) */
+/** tokens 人性化:zh=亿/万/原值,en=M/k/原值(与 UsageSettings 口径一致) */
 function fmtTokens(n: number): string {
   if (!Number.isFinite(n) || n <= 0) return '0'
+  if (useUi.getState().locale === 'en') {
+    if (n >= 1e6) return `${(n / 1e6).toFixed(2).replace(/\.?0+$/, '')}M`
+    if (n >= 1e3) return `${(n / 1e3).toFixed(1).replace(/\.0$/, '')}k`
+    return `${Math.round(n)}`
+  }
   if (n >= 1e8) return `${(n / 1e8).toFixed(2).replace(/\.?0+$/, '')}亿`
   if (n >= 1e4) return `${(n / 1e4).toFixed(1).replace(/\.0$/, '')}万`
   return Math.round(n).toLocaleString('zh-CN')
@@ -83,6 +90,7 @@ const PAGE_SIZES = [20, 50, 100] as const
 
 /** API 调用明细:逐次 LLM 调用(step.end 口径)的 tokens / TTFT / TPS,按时间倒序分页 */
 export function ApiCallsTable() {
+  const t = useT()
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState<number>(20)
   const [data, setData] = useState<ApiCallsResult | null>(null)
@@ -97,7 +105,7 @@ export function ApiCallsTable() {
         setData(r)
         setErr('')
       })
-      .catch((e: unknown) => setErr(e instanceof Error ? e.message : '读取 API 调用数据失败'))
+      .catch((e: unknown) => setErr(e instanceof Error ? e.message : tStatic('stats.calls.loadFailed')))
       .finally(() => setLoading(false))
   }, [])
 
@@ -116,43 +124,43 @@ export function ApiCallsTable() {
   const cards: { icon: typeof Coins; label: string; value: string; sub?: string; color?: string }[] = [
     {
       icon: Zap,
-      label: 'API 调用次数',
+      label: t('stats.calls.cardCalls'),
       value: summary ? fmtCount(summary.totalCalls) : '—',
-      sub: '全部会话合计',
+      sub: t('stats.calls.subAllSessions'),
       color: '#2563eb'
     },
     {
       icon: Coins,
-      label: '输出 Tokens',
+      label: t('stats.calls.cardOutputTokens'),
       value: summary ? fmtTokens(summary.totalOutput) : '—',
-      sub: '全部会话合计',
+      sub: t('stats.calls.subAllSessions'),
       color: '#16a34a'
     },
     {
       icon: Timer,
-      label: '平均 TTFT',
+      label: t('stats.calls.cardAvgTtft'),
       value: summary ? fmtMs(summary.avgTtftMs) : '—',
-      sub: '首 token 延迟',
+      sub: t('stats.calls.subTtft'),
       color: '#ea580c'
     },
     {
       icon: Gauge,
-      label: '平均输出 TPS',
+      label: t('stats.calls.cardAvgTps'),
       value: summary ? fmtTps(summary.avgTpsExclFirst) : '—',
-      sub: '不含首 token 时间',
+      sub: t('stats.calls.subTpsExcl'),
       color: '#7c3aed'
     },
     {
       icon: Cpu,
-      label: '平均输出 TPS',
+      label: t('stats.calls.cardAvgTps'),
       value: summary ? fmtTps(summary.avgTpsInclFirst) : '—',
-      sub: '含首 token 时间',
+      sub: t('stats.calls.subTpsIncl'),
       color: '#0891b2'
     }
   ]
 
   return (
-    <Section title="API 调用" desc="逐次 LLM 调用的 tokens、TTFT 与输出速度(step.end 口径,含主代理与子代理)">
+    <Section title={t('stats.calls.title')} desc={t('stats.calls.desc')}>
       <div className="flex items-center justify-between gap-3">
         {err ? <p className="text-[12px] text-danger">{err}</p> : <span />}
         <button
@@ -161,7 +169,7 @@ export function ApiCallsTable() {
           onClick={() => load(page, pageSize)}
         >
           <RefreshCw size={13} className={loading ? 'animate-spin' : ''} />
-          刷新
+          {t('stats.calls.refresh')}
         </button>
       </div>
 
@@ -175,25 +183,26 @@ export function ApiCallsTable() {
         <div className="mt-3" />
 
         {data && data.items.length === 0 && !err ? (
-          <Empty text="暂无 API 调用记录" />
+          <Empty text={t('stats.calls.empty')} />
         ) : (
-          <Card className="overflow-x-auto p-0">
+          /* p-0! 覆盖 SurfaceCard 默认 p-4:Tailwind 同优先级按样式表顺序,p-4 排在 p-0 后,不加 ! 不生效 */
+          <SurfaceCard className="overflow-x-auto p-0!">
             <table className="w-full min-w-[900px] border-collapse text-[12.5px]">
               <thead>
                 <tr className="border-b border-border bg-surface-secondary text-left text-text-tertiary">
-                  <th className="whitespace-nowrap px-3 py-2.5 font-medium">时间</th>
-                  <th className="whitespace-nowrap px-3 py-2.5 font-medium">模型</th>
-                  <th className="whitespace-nowrap px-3 py-2.5 font-medium">会话</th>
-                  <th className="whitespace-nowrap px-3 py-2.5 text-right font-medium">输入</th>
-                  <th className="whitespace-nowrap px-3 py-2.5 text-right font-medium">缓存命中</th>
-                  <th className="whitespace-nowrap px-3 py-2.5 text-right font-medium">缓存创建</th>
-                  <th className="whitespace-nowrap px-3 py-2.5 text-right font-medium">输出</th>
-                  <th className="whitespace-nowrap px-3 py-2.5 text-right font-medium">TTFT</th>
+                  <th className="whitespace-nowrap px-3 py-2.5 font-medium">{t('stats.calls.colTime')}</th>
+                  <th className="whitespace-nowrap px-3 py-2.5 font-medium">{t('stats.calls.colModel')}</th>
+                  <th className="whitespace-nowrap px-3 py-2.5 font-medium">{t('stats.calls.colSession')}</th>
+                  <th className="whitespace-nowrap px-3 py-2.5 text-right font-medium">{t('stats.calls.colInput')}</th>
+                  <th className="whitespace-nowrap px-3 py-2.5 text-right font-medium">{t('stats.calls.colCacheRead')}</th>
+                  <th className="whitespace-nowrap px-3 py-2.5 text-right font-medium">{t('stats.calls.colCacheCreate')}</th>
+                  <th className="whitespace-nowrap px-3 py-2.5 text-right font-medium">{t('stats.calls.colOutput')}</th>
+                  <th className="whitespace-nowrap px-3 py-2.5 text-right font-medium">{t('stats.calls.colTtft')}</th>
                   <th className="whitespace-nowrap px-3 py-2.5 text-right font-medium">
-                    TPS(不含首token)
+                    {t('stats.calls.colTpsExcl')}
                   </th>
                   <th className="whitespace-nowrap px-3 py-2.5 text-right font-medium">
-                    TPS(含首token)
+                    {t('stats.calls.colTpsIncl')}
                   </th>
                 </tr>
               </thead>
@@ -217,7 +226,7 @@ export function ApiCallsTable() {
                       >
                         {shortWorkspace(r.workspace)}
                         {r.agentId !== 'main' && (
-                          <span className="ml-1 rounded bg-surface-tertiary px-1 text-[10.5px] text-text-tertiary">
+                          <span className="ml-1 rounded bg-fill px-1 text-[10.5px] text-text-tertiary">
                             {r.agentId}
                           </span>
                         )}
@@ -252,14 +261,18 @@ export function ApiCallsTable() {
             {/* 分页栏 */}
             <div className="flex items-center justify-between gap-3 border-t border-border px-3 py-2.5">
               <p className="text-[12px] tabular-nums text-text-tertiary">
-                共 {fmtCount(data?.total ?? 0)} 条 · 第 {data?.page ?? page} / {totalPages} 页
+                {t('stats.calls.pageInfo', {
+                  total: fmtCount(data?.total ?? 0),
+                  page: data?.page ?? page,
+                  totalPages
+                })}
               </p>
               <div className="flex items-center gap-2">
                 <Select
                   size="sm"
                   className="px-2 text-[12px]"
                   value={String(pageSize)}
-                  options={PAGE_SIZES.map((s) => ({ value: String(s), label: `${s} 条/页` }))}
+                  options={PAGE_SIZES.map((s) => ({ value: String(s), label: t('stats.calls.perPage', { n: s }) }))}
                   onChange={(v) => {
                     setPageSize(Number(v))
                     setPage(1)
@@ -269,7 +282,7 @@ export function ApiCallsTable() {
                   className="flex h-7 w-7 items-center justify-center rounded-md border border-border text-text-secondary transition-colors hover:border-primary-border hover:text-primary disabled:opacity-40"
                   disabled={loading || page <= 1}
                   onClick={() => setPage((p) => Math.max(1, p - 1))}
-                  title="上一页"
+                  title={t('stats.calls.prevPage')}
                 >
                   <ChevronLeft size={14} />
                 </button>
@@ -277,13 +290,13 @@ export function ApiCallsTable() {
                   className="flex h-7 w-7 items-center justify-center rounded-md border border-border text-text-secondary transition-colors hover:border-primary-border hover:text-primary disabled:opacity-40"
                   disabled={loading || page >= totalPages}
                   onClick={() => setPage((p) => p + 1)}
-                  title="下一页"
+                  title={t('stats.calls.nextPage')}
                 >
                   <ChevronRight size={14} />
                 </button>
               </div>
             </div>
-          </Card>
+          </SurfaceCard>
         )}
       </div>
     </Section>

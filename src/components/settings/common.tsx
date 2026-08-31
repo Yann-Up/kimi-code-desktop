@@ -26,6 +26,18 @@ export function Card(props: { children: ReactNode; className?: string }) {
   )
 }
 
+/** 数据展示容器(图表/明细表):白底细边卡片(bg-surface + border-light),不用灰面板——
+ *  灰底会让折线/热力图/环图发闷,且热力图无色档会融进面板 */
+export function SurfaceCard(props: { children: ReactNode; className?: string }) {
+  return (
+    <div
+      className={`rounded-2xl border border-border-light bg-surface p-4 ${props.className ?? ''}`}
+    >
+      {props.children}
+    </div>
+  )
+}
+
 /** 分组小标题(官方风格:15px 半粗正文色,与卡片间距拉开;不用强调色) */
 export function GroupLabel({ children }: { children: ReactNode }) {
   return <h3 className="mb-1 mt-6 text-[15px] font-semibold text-text">{children}</h3>

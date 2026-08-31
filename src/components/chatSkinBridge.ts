@@ -44,6 +44,10 @@ export function useChatSkinBridge(): ChatSkinBridge {
   const dataUrlCache = useRef(new Map<string, string>())
   const hiddenRef = useRef(false)
   const disposedRef = useRef(false)
+  // 已完成 ready 握手的 iframe:只向它们投递。新建 iframe 在导航完成前 contentWindow 还是
+  // 壳源的 about:blank,此时 postMessage(目标 origin=web UI 源)会被 WebView2 记一条
+  // cross-origin 控制台错误(try/catch 拦不住),且反正也送达不到——等 ready 应答即可
+  const readyFrames = useRef(new WeakSet<HTMLIFrameElement>())
   const [active, setActive] = useState(false)
   const [hidden, setHidden] = useState(false)
 
@@ -60,9 +64,10 @@ export function useChatSkinBridge(): ChatSkinBridge {
     return { [TAG]: 'cfg', enabled: true, dataUrl }
   }
 
-  /** 向单个 iframe 投递(targetOrigin 锁定其 src 的回环 origin,不用 *) */
+  /** 向单个 iframe 投递(targetOrigin 锁定其 src 的回环 origin,不用 *;仅 ready 握手后的 frame) */
   const deliver = async (frame: HTMLIFrameElement) => {
     try {
+      if (!readyFrames.current.has(frame)) return
       const origin = new URL(frame.src).origin
       if (!LOOPBACK_ORIGIN.test(origin) || !frame.contentWindow) return
       const payload = await buildPayload()
@@ -86,10 +91,14 @@ export function useChatSkinBridge(): ChatSkinBridge {
   useEffect(() => {
     disposedRef.current = false
 
-    /** ready 应答:bridgeGuard 三重校验(origin + 来源框架 + nonce)后回复发起方 */
+    /** ready 应答:bridgeGuard 三重校验(origin + 来源框架 + nonce)后回复发起方;
+     *  同时把该 frame 记入 readyFrames,后续 broadcast 只投给它 */
     const onMessage = (e: MessageEvent) => {
       if (!e.data || e.data[TAG] !== 'ready') return
       if (!verifyBridgeMessage(e)) return
+      for (const frame of document.querySelectorAll('iframe')) {
+        if (frame.contentWindow === e.source) readyFrames.current.add(frame)
+      }
       void buildPayload()
         .then((payload) => {
           if (!disposedRef.current) (e.source as WindowProxy | null)?.postMessage(payload, e.origin)

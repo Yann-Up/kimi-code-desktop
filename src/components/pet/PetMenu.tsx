@@ -10,6 +10,9 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Gauge, MessageSquare, Pin, PinOff, Search, Settings2 } from 'lucide-react'
 import { rest, type SessionItem } from '../../api'
+import { useT } from '../../i18n'
+
+type TFn = ReturnType<typeof useT>
 
 /** 轮询间隔(窗口 hide 期间 document.hidden 为 true,跳过请求) */
 const POLL_MS = 10_000
@@ -21,22 +24,23 @@ function cwdBasename(cwd?: string): string {
   return parts[parts.length - 1] ?? ''
 }
 
-/** 相对时间(本地时区日历;updated_at 为 ISO 字符串) */
-function relativeTime(iso: string): string {
-  const t = Date.parse(iso)
-  if (!Number.isFinite(t)) return ''
-  const diff = Math.max(0, Date.now() - t)
+/** 相对时间(本地时区日历;updated_at 为 ISO 字符串;文案 i18n,故接收 t) */
+function relativeTime(t: TFn, iso: string): string {
+  const ts = Date.parse(iso)
+  if (!Number.isFinite(ts)) return ''
+  const diff = Math.max(0, Date.now() - ts)
   const min = Math.floor(diff / 60_000)
-  if (min < 1) return '刚刚'
-  if (min < 60) return `${min} 分钟前`
+  if (min < 1) return t('pet.time.justNow')
+  if (min < 60) return t('pet.time.minutesAgo', { n: min })
   const hours = Math.floor(min / 60)
-  if (hours < 24) return `${hours} 小时前`
+  if (hours < 24) return t('pet.time.hoursAgo', { n: hours })
   const days = Math.floor(hours / 24)
-  if (days < 30) return `${days} 天前`
-  return new Date(t).toLocaleDateString()
+  if (days < 30) return t('pet.time.daysAgo', { n: days })
+  return new Date(ts).toLocaleDateString()
 }
 
 export function PetMenu() {
+  const t = useT()
   // null=尚未拉取过(加载中);拉取失败(后端未运行)时 backendDown=true
   const [sessions, setSessions] = useState<SessionItem[] | null>(null)
   const [backendDown, setBackendDown] = useState(false)
@@ -189,11 +193,11 @@ export function PetMenu() {
         <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${dot}`} />
         <span className="min-w-0 flex-1">
           <span className="block truncate text-[13px] text-text">
-            {s.title || cwd || '(未命名会话)'}
+            {s.title || cwd || t('pet.menu.unnamed')}
           </span>
           <span className="block truncate text-[11px] text-text-tertiary">
             {cwd ? `${cwd} · ` : ''}
-            {relativeTime(s.updated_at)}
+            {relativeTime(t, s.updated_at)}
           </span>
         </span>
         <button
@@ -202,7 +206,7 @@ export function PetMenu() {
               ? 'text-primary'
               : 'text-text-tertiary opacity-0 group-hover:opacity-100 hover:text-primary'
           }`}
-          title={pinned ? '取消钉选' : '钉选'}
+          title={pinned ? t('pet.menu.unpin') : t('pet.menu.pin')}
           onClick={(e) => {
             e.stopPropagation()
             togglePin(s.id)
@@ -240,7 +244,7 @@ export function PetMenu() {
             autoFocus
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="搜索会话(标题 / 目录)"
+            placeholder={t('pet.menu.searchPlaceholder')}
             className="min-w-0 flex-1 bg-transparent text-[13px] text-text outline-none placeholder:text-text-tertiary"
           />
         </div>
@@ -249,9 +253,9 @@ export function PetMenu() {
         <div className="min-h-0 flex-1 overflow-y-auto px-1.5 py-1.5">
           {backendDown ? (
             <div className="flex h-full flex-col items-center justify-center px-4 text-center">
-              <p className="text-[13px] font-medium text-text-secondary">后端未在运行</p>
+              <p className="text-[13px] font-medium text-text-secondary">{t('pet.menu.backendDown')}</p>
               <p className="mt-1 text-[11.5px] leading-relaxed text-text-tertiary">
-                启动 Kimi Code 服务后此处显示会话列表;下方快捷入口仍可使用
+                {t('pet.menu.backendDownHint')}
               </p>
             </div>
           ) : sessions === null ? (
@@ -260,19 +264,19 @@ export function PetMenu() {
             </div>
           ) : pinnedList.length + recentList.length === 0 ? (
             <div className="flex h-full items-center justify-center text-[12.5px] text-text-tertiary">
-              {query ? '没有匹配的会话' : '暂无会话'}
+              {query ? t('pet.menu.noMatch') : t('pet.menu.empty')}
             </div>
           ) : (
             <>
               {pinnedList.length > 0 && (
                 <>
                   <p className="px-2 pb-0.5 pt-1 text-[11px] font-medium text-text-tertiary">
-                    已钉选
+                    {t('pet.menu.pinned')}
                   </p>
                   {pinnedList.map((s) => renderRow(s, true))}
                   {recentList.length > 0 && (
                     <p className="px-2 pb-0.5 pt-2 text-[11px] font-medium text-text-tertiary">
-                      最近会话
+                      {t('pet.menu.recent')}
                     </p>
                   )}
                 </>
@@ -288,19 +292,19 @@ export function PetMenu() {
             className="flex flex-1 items-center justify-center gap-1.5 py-2 text-[12.5px] text-text-secondary hover:bg-surface-tertiary hover:text-text"
             onClick={openMain}
           >
-            <MessageSquare size={13} /> 主窗口
+            <MessageSquare size={13} /> {t('pet.menu.mainWindow')}
           </button>
           <button
             className="flex flex-1 items-center justify-center gap-1.5 border-l border-border-light py-2 text-[12.5px] text-text-secondary hover:bg-surface-tertiary hover:text-text"
             onClick={() => openView('stats')}
           >
-            <Gauge size={13} /> 统计
+            <Gauge size={13} /> {t('pet.menu.stats')}
           </button>
           <button
             className="flex flex-1 items-center justify-center gap-1.5 border-l border-border-light py-2 text-[12.5px] text-text-secondary hover:bg-surface-tertiary hover:text-text"
             onClick={() => openView('settings')}
           >
-            <Settings2 size={13} /> 设置
+            <Settings2 size={13} /> {t('pet.menu.settings')}
           </button>
         </div>
       </div>

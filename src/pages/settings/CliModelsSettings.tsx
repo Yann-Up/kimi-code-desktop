@@ -10,6 +10,7 @@ import { Card, Empty, GroupLabel, Section } from '../../components/settings/comm
 import { Select as UiSelect } from '../../components/ui/Select'
 import { inputCls as uiInputCls } from '../../components/ui/Input'
 import { ToggleField } from './cliForm'
+import { useT } from '../../i18n'
 
 /* ---------------- 数据提取小工具(config.toml 解析结果为 snake_case) ---------------- */
 
@@ -26,22 +27,8 @@ const PROVIDER_TYPES = ['kimi', 'anthropic', 'openai', 'openai_responses', 'goog
 const CAPABILITIES = ['thinking', 'always_thinking', 'image_in', 'video_in', 'audio_in', 'tool_use']
 const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max']
 
-/** 标签的中文悬浮提示 */
-const CAPABILITY_HINTS: Record<string, string> = {
-  thinking: '思考:支持推理过程(可按档位调节)',
-  always_thinking: '始终思考:强制开启推理,不可关闭',
-  image_in: '图像输入:可接收图片',
-  video_in: '视频输入:可接收视频',
-  audio_in: '音频输入:可接收音频',
-  tool_use: '工具调用:支持 function calling'
-}
-const EFFORT_HINTS: Record<string, string> = {
-  low: '低:最快,推理最少',
-  medium: '中:速度与深度折中',
-  high: '高:更深入的推理',
-  xhigh: '极高:接近最强的推理深度',
-  max: '最高:最完整推理,速度最慢'
-}
+/** 未匹配任何供应商的模型归入的分组键(内部哨兵,不在供应商名合法字符集内;显示时经 i18n 翻译) */
+const UNGROUPED_KEY = '(ungrouped)'
 
 /** 上下文大小紧凑显示:262144 → 256K,1048576 → 1M */
 function fmtCtx(n: unknown): string {
@@ -92,6 +79,7 @@ function Select(props: { value: string; onChange: (v: string) => void; options: 
 
 /** 密钥输入:默认密码掩码回显,右侧眼睛可切换明文 */
 function SecretInput(props: { value: string; onChange: (v: string) => void; placeholder?: string }) {
+  const t = useT()
   const [show, setShow] = useState(false)
   return (
     <div className="relative w-full max-w-xl">
@@ -105,7 +93,7 @@ function SecretInput(props: { value: string; onChange: (v: string) => void; plac
       <button
         type="button"
         className="absolute right-2 top-1/2 -translate-y-1/2 text-text-tertiary hover:text-text-secondary"
-        title={show ? '隐藏明文' : '显示明文'}
+        title={show ? t('settings.cliModels.hideSecret') : t('settings.cliModels.showSecret')}
         onClick={() => setShow(!show)}
       >
         {show ? <EyeOff size={13} /> : <Eye size={13} />}
@@ -169,6 +157,7 @@ interface SecModelDraft {
 }
 
 export function CliModelsSettings() {
+  const t = useT()
   const [config, setConfig] = useState<Rec | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -192,20 +181,20 @@ export function CliModelsSettings() {
 
   return (
     <Section
-      title="模型与供应商"
-      desc="可视化管理 config.toml 的 providers / models / default_model / secondary_model;直接写文件(保留注释、自动备份),不依赖服务运行"
+      title={t('settings.cliModels.title')}
+      desc={t('settings.cliModels.desc')}
     >
       {loading ? (
-        <Empty text="加载中…" />
+        <Empty text={t('settings.cliModels.loading')} />
       ) : error ? (
         <>
-          <Empty text={`读取失败:${error}`} />
+          <Empty text={t('settings.cliModels.readFailed', { error })} />
           <div className="mt-2 flex justify-end">
             <button
               className="rounded-lg border border-border bg-elevated px-3.5 py-2 text-[13px] text-text hover:bg-hover"
               onClick={() => void reload()}
             >
-              重试
+              {t('settings.cliModels.retry')}
             </button>
           </div>
         </>
@@ -217,6 +206,7 @@ export function CliModelsSettings() {
 }
 
 function ModelsForm({ config, reload }: { config: Rec; reload: (silent?: boolean) => Promise<void> }) {
+  const t = useT()
   const providers = asRec(config.providers)
   const models = asRec(config.models)
   const defaultModel = strOf(config.default_model)
@@ -254,7 +244,7 @@ function ModelsForm({ config, reload }: { config: Rec; reload: (silent?: boolean
     try {
       await window.kimiApi.cliConfigMerge(patch)
       await reload(true)
-      setSavedMsg(`${okText};新会话生效(如未生效请重启服务)`)
+      setSavedMsg(t('settings.cliModels.savedSuffix', { text: okText }))
       setTimeout(() => setSavedMsg(''), 4000)
       return true
     } catch (e) {
@@ -283,15 +273,16 @@ function ModelsForm({ config, reload }: { config: Rec; reload: (silent?: boolean
     const d = providerDraft
     if (!d) return
     const name = d.name.trim()
-    if (!name) return setError('供应商名称不能为空')
-    if (editProvider === '__add__' && providers[name]) return setError(`供应商 ${name} 已存在`)
-    if (!PROVIDER_TYPES.includes(d.type)) return setError('请选择供应商类型')
+    if (!name) return setError(t('settings.cliModels.errProviderNameEmpty'))
+    if (editProvider === '__add__' && providers[name])
+      return setError(t('settings.cliModels.errProviderExists', { name }))
+    if (!PROVIDER_TYPES.includes(d.type)) return setError(t('settings.cliModels.errProviderType'))
     const body: Rec = { type: d.type }
     // api_key 已回显进草稿:非空 = 写入,清空 = 删除该键(null 合并语义)
     body.api_key = d.api_key.trim() ? d.api_key.trim() : null
     body.base_url = d.base_url.trim() ? d.base_url.trim() : null
     const patch: Rec = { providers: { [name]: body } }
-    if (await apply(patch, `供应商 ${name} 已保存`)) {
+    if (await apply(patch, t('settings.cliModels.providerSaved', { name }))) {
       setEditProvider(null)
       setProviderDraft(null)
     }
@@ -300,11 +291,18 @@ function ModelsForm({ config, reload }: { config: Rec; reload: (silent?: boolean
   const removeProvider = async (name: string) => {
     const refs = Object.entries(models).filter(([, m]) => strOf(asRec(m).provider) === name)
     if (refs.length) {
-      setError(`供应商 ${name} 被 ${refs.length} 个模型引用(${refs.map(([a]) => a).join('、')}),请先删除或改绑这些模型`)
+      setError(
+        t('settings.cliModels.providerReferenced', {
+          name,
+          count: refs.length,
+          list: refs.map(([a]) => a).join(t('settings.cliModels.listSep'))
+        })
+      )
       return
     }
     if (confirmDel !== `p:${name}`) return setConfirmDel(`p:${name}`)
-    if (await apply({ providers: { [name]: null } }, `供应商 ${name} 已删除`)) setConfirmDel('')
+    if (await apply({ providers: { [name]: null } }, t('settings.cliModels.providerDeleted', { name })))
+      setConfirmDel('')
   }
 
   /* ---------------- 模型 ---------------- */
@@ -329,13 +327,15 @@ function ModelsForm({ config, reload }: { config: Rec; reload: (silent?: boolean
     const d = modelDraft
     if (!d) return
     const alias = d.alias.trim()
-    if (!alias) return setError('模型别名不能为空')
-    if (editModel === '__add__' && models[alias]) return setError(`模型别名 ${alias} 已存在`)
-    if (!d.provider) return setError('请选择供应商')
-    if (!providers[d.provider]) return setError(`供应商 ${d.provider} 不存在`)
-    if (!d.model.trim()) return setError('模型 ID 不能为空')
+    if (!alias) return setError(t('settings.cliModels.errAliasEmpty'))
+    if (editModel === '__add__' && models[alias])
+      return setError(t('settings.cliModels.errAliasExists', { alias }))
+    if (!d.provider) return setError(t('settings.cliModels.errNoProvider'))
+    if (!providers[d.provider])
+      return setError(t('settings.cliModels.errProviderMissing', { name: d.provider }))
+    if (!d.model.trim()) return setError(t('settings.cliModels.errModelIdEmpty'))
     const ctx = Number(d.max_context_size.trim())
-    if (!Number.isInteger(ctx) || ctx < 1) return setError('上下文大小必须是正整数(单位 token)')
+    if (!Number.isInteger(ctx) || ctx < 1) return setError(t('settings.cliModels.errCtxInvalid'))
     const body: Rec = {
       provider: d.provider,
       model: d.model.trim(),
@@ -345,7 +345,7 @@ function ModelsForm({ config, reload }: { config: Rec; reload: (silent?: boolean
       support_efforts: d.support_efforts,
       default_effort: d.default_effort ? d.default_effort : null
     }
-    if (await apply({ models: { [alias]: body } }, `模型 ${alias} 已保存`)) {
+    if (await apply({ models: { [alias]: body } }, t('settings.cliModels.modelSaved', { alias }))) {
       setEditModel(null)
       setModelDraft(null)
     }
@@ -353,15 +353,16 @@ function ModelsForm({ config, reload }: { config: Rec; reload: (silent?: boolean
 
   const removeModel = async (alias: string) => {
     if (alias === defaultModel) {
-      setError(`${alias} 是默认模型,请先把默认模型切换为其他别名`)
+      setError(t('settings.cliModels.errIsDefault', { alias }))
       return
     }
     if (confirmDel !== `m:${alias}`) return setConfirmDel(`m:${alias}`)
-    if (await apply({ models: { [alias]: null } }, `模型 ${alias} 已删除`)) setConfirmDel('')
+    if (await apply({ models: { [alias]: null } }, t('settings.cliModels.modelDeleted', { alias })))
+      setConfirmDel('')
   }
 
   const setDefault = async (alias: string) => {
-    await apply({ default_model: alias }, `默认模型已切换为 ${alias}`)
+    await apply({ default_model: alias }, t('settings.cliModels.defaultSwitched', { alias }))
   }
 
   /* ---------------- 子智能体模型池(secondary_model) ---------------- */
@@ -376,11 +377,11 @@ function ModelsForm({ config, reload }: { config: Rec; reload: (silent?: boolean
     const d = secDraft
     if (!d) return
     const alias = d.alias.trim()
-    if (!alias) return setError('模型别名不能为空')
-    if (alias === 'primary') return setError('primary 是保留字(始终绑定调用方模型),不能作为池条目')
-    if (!models[alias]) return setError(`模型别名 ${alias} 未在上方 models 中配置,请先添加该模型`)
+    if (!alias) return setError(t('settings.cliModels.errAliasEmpty'))
+    if (alias === 'primary') return setError(t('settings.cliModels.errReservedPrimary'))
+    if (!models[alias]) return setError(t('settings.cliModels.errAliasNotConfigured', { alias }))
     if (editSecModel === '__add__' && secModels[alias] !== undefined)
-      return setError(`模型池已包含 ${alias}`)
+      return setError(t('settings.cliModels.errAlreadyInPool', { alias }))
     const pool: Rec = { [alias]: d.description.trim() }
     // 从隐式单条目池(仅 default_model)扩建时,给默认模型补一条空描述,保持 default_model 是池中 key(同 /secondary-model 行为)
     if (Object.keys(secModels).length === 0 && secDefault && secDefault !== alias && models[secDefault])
@@ -393,7 +394,7 @@ function ModelsForm({ config, reload }: { config: Rec; reload: (silent?: boolean
     // 顺带清掉非规范键
     if (secLegacyModel) sec.model = null
     if (secLegacyEffort) sec.default_effort = null
-    if (await apply({ secondary_model: sec }, `子智能体模型 ${alias} 已加入模型池`)) {
+    if (await apply({ secondary_model: sec }, t('settings.cliModels.secAdded', { alias }))) {
       setEditSecModel(null)
       setSecDraft(null)
     }
@@ -405,36 +406,39 @@ function ModelsForm({ config, reload }: { config: Rec; reload: (silent?: boolean
     // 有 models 表时 default_model 必须是池中 key:删默认项须先切换默认
     if (alias === secDefault && remaining.length > 0) {
       setConfirmDel('')
-      return setError(`${alias} 是子智能体默认模型,请先把默认切换为池中其他模型`)
+      return setError(t('settings.cliModels.errSecIsDefault', { alias }))
     }
     // 删除最后一个条目:整表移除;若 default_model 指向它,保留 default_model 即降级为合法的隐式单条目池
     const patch: Rec =
       remaining.length === 0
         ? { secondary_model: { models: null } }
         : { secondary_model: { models: { [alias]: null } } }
-    if (await apply(patch, `子智能体模型 ${alias} 已移出模型池`)) setConfirmDel('')
+    if (await apply(patch, t('settings.cliModels.secRemoved', { alias }))) setConfirmDel('')
   }
 
   const setSecDefault = async (alias: string) => {
-    await apply({ secondary_model: { default_model: alias } }, `子智能体默认模型已切换为 ${alias}`)
+    await apply(
+      { secondary_model: { default_model: alias } },
+      t('settings.cliModels.secDefaultSwitched', { alias })
+    )
   }
 
   /** force 开关:固定所有 subagent 到 default_model,主 agent 不可改选(需 default_model,与 models 表互斥) */
   const toggleForce = async (on: boolean) => {
-    if (on && !secDefault) return setError('开启 force 前请先配置子智能体默认模型')
+    if (on && !secDefault) return setError(t('settings.cliModels.errForceNeedDefault'))
     await apply(
       { secondary_model: { force: on ? true : null } },
-      on ? '已固定所有 subagent 到默认模型' : '已取消强制绑定'
+      on ? t('settings.cliModels.forceOn') : t('settings.cliModels.forceOff')
     )
   }
 
   /** 非规范键迁移:default_model 单写即为合法的单条目隐式池 */
   const migrateLegacy = async () => {
     if (!models[secLegacyModel])
-      return setError(`${secLegacyModel} 未在上方 models 中配置,请先添加该模型再迁移`)
+      return setError(t('settings.cliModels.errMigrateNotConfigured', { alias: secLegacyModel }))
     await apply(
       { secondary_model: { default_model: secLegacyModel, model: null, default_effort: null } },
-      '已迁移为标准 secondary_model 配置'
+      t('settings.cliModels.migrated')
     )
   }
 
@@ -454,13 +458,15 @@ function ModelsForm({ config, reload }: { config: Rec; reload: (silent?: boolean
             <span className="truncate text-[12px] text-text-tertiary">{strOf(m.display_name)}</span>
           )}
           {isDefault && (
-            <span className="rounded bg-primary px-1.5 py-0.5 text-[11px] font-medium text-white">默认</span>
+            <span className="rounded bg-primary px-1.5 py-0.5 text-[11px] font-medium text-white">
+              {t('settings.cliModels.badgeDefault')}
+            </span>
           )}
           <div className="ml-auto flex shrink-0 gap-1.5">
             {!isDefault && (
               <button
                 className="rounded-lg border border-border p-1.5 text-text-tertiary hover:border-primary-border hover:text-primary"
-                title="设为默认模型"
+                title={t('settings.cliModels.setDefault')}
                 disabled={saving}
                 onClick={() => void setDefault(alias)}
               >
@@ -469,7 +475,7 @@ function ModelsForm({ config, reload }: { config: Rec; reload: (silent?: boolean
             )}
             <button
               className="rounded-lg border border-border p-1.5 text-text-tertiary hover:bg-fill hover:text-text"
-              title="编辑"
+              title={t('settings.cliModels.edit')}
               onClick={() => (editing ? setEditModel(null) : startEditModel(alias))}
             >
               <Pencil size={13} />
@@ -480,7 +486,11 @@ function ModelsForm({ config, reload }: { config: Rec; reload: (silent?: boolean
                   ? 'border-danger bg-danger-soft text-danger'
                   : 'border-border text-text-tertiary hover:bg-danger-soft hover:text-danger'
               }`}
-              title={confirmDel === `m:${alias}` ? '再点一次确认删除' : '删除'}
+              title={
+                confirmDel === `m:${alias}`
+                  ? t('settings.cliModels.confirmDelete')
+                  : t('settings.cliModels.delete')
+              }
               onClick={() => void removeModel(alias)}
             >
               <Trash2 size={13} />
@@ -489,9 +499,10 @@ function ModelsForm({ config, reload }: { config: Rec; reload: (silent?: boolean
         </div>
         {!editing && (
           <p className="mt-1 truncate font-mono text-[11.5px] text-text-tertiary">
-            {strOf(m.model) || '?'} · 上下文 {fmtCtx(m.max_context_size)}
+            {strOf(m.model) || '?'} · {t('settings.cliModels.ctx', { size: fmtCtx(m.max_context_size) })}
             {listOf(m.support_efforts).length > 0 && ` · efforts: ${listOf(m.support_efforts).join('/')}`}
-            {strOf(m.default_effort) && `(默认 ${strOf(m.default_effort)})`}
+            {strOf(m.default_effort) &&
+              t('settings.cliModels.defaultEffort', { effort: strOf(m.default_effort) })}
           </p>
         )}
         {editing && (
@@ -509,14 +520,14 @@ function ModelsForm({ config, reload }: { config: Rec; reload: (silent?: boolean
     )
   }
 
-  /** 按供应商分组:先按 providers 声明顺序,未匹配的归入"(未指定)" */
+  /** 按供应商分组:先按 providers 声明顺序,未匹配的归入 UNGROUPED_KEY 哨兵组(显示时翻译) */
   const modelGroups: { provider: string; entries: [string, unknown][] }[] = []
   {
     const byProvider = new Map<string, [string, unknown][]>()
     for (const name of Object.keys(providers)) byProvider.set(name, [])
     for (const entry of Object.entries(models)) {
       const prov = strOf(asRec(entry[1]).provider)
-      const key = prov && byProvider.has(prov) ? prov : '(未指定)'
+      const key = prov && byProvider.has(prov) ? prov : UNGROUPED_KEY
       if (!byProvider.has(key)) byProvider.set(key, [])
       byProvider.get(key)!.push(entry)
     }
@@ -527,10 +538,10 @@ function ModelsForm({ config, reload }: { config: Rec; reload: (silent?: boolean
 
   return (
     <>
-      <GroupLabel>供应商(providers)</GroupLabel>
+      <GroupLabel>{t('settings.cliModels.providersLabel')}</GroupLabel>
       <Card className="space-y-3">
         {Object.keys(providers).length === 0 && editProvider !== '__add__' && (
-          <p className="text-[12.5px] text-text-tertiary">尚未配置供应商</p>
+          <p className="text-[12.5px] text-text-tertiary">{t('settings.cliModels.noProviders')}</p>
         )}
         {Object.entries(providers).map(([name, pv]) => {
           const p = asRec(pv)
@@ -550,12 +561,16 @@ function ModelsForm({ config, reload }: { config: Rec; reload: (silent?: boolean
                       : 'bg-fill text-text-tertiary'
                   }`}
                 >
-                  {strOf(p.api_key) ? '密钥已配置' : asRec(p.oauth).key ? 'OAuth 登录' : '未配置密钥'}
+                  {strOf(p.api_key)
+                    ? t('settings.cliModels.keyConfigured')
+                    : asRec(p.oauth).key
+                      ? t('settings.cliModels.oauthLoggedIn')
+                      : t('settings.cliModels.noKey')}
                 </span>
                 <div className="ml-auto flex shrink-0 gap-1.5">
                   <button
                     className="rounded-lg border border-border p-1.5 text-text-tertiary hover:bg-fill hover:text-text"
-                    title="编辑"
+                    title={t('settings.cliModels.edit')}
                     onClick={() => (editing ? setEditProvider(null) : startEditProvider(name))}
                   >
                     <Pencil size={13} />
@@ -566,7 +581,11 @@ function ModelsForm({ config, reload }: { config: Rec; reload: (silent?: boolean
                         ? 'border-danger bg-danger-soft text-danger'
                         : 'border-border text-text-tertiary hover:bg-danger-soft hover:text-danger'
                     }`}
-                    title={confirmDel === `p:${name}` ? '再点一次确认删除' : '删除'}
+                    title={
+                      confirmDel === `p:${name}`
+                        ? t('settings.cliModels.confirmDelete')
+                        : t('settings.cliModels.delete')
+                    }
                     onClick={() => void removeProvider(name)}
                   >
                     <Trash2 size={13} />
@@ -578,21 +597,21 @@ function ModelsForm({ config, reload }: { config: Rec; reload: (silent?: boolean
               )}
               {editing && (
                 <div className="mt-3 space-y-2 border-t border-border-light pt-3">
-                  <Row label="类型">
+                  <Row label={t('settings.cliModels.type')}>
                     <Select value={providerDraft.type} onChange={(v) => setProviderDraft({ ...providerDraft, type: v })} options={PROVIDER_TYPES} />
                   </Row>
                   <Row label="Base URL">
-                    <TextInput mono value={providerDraft.base_url} onChange={(v) => setProviderDraft({ ...providerDraft, base_url: v })} placeholder="留空用类型默认端点" />
+                    <TextInput mono value={providerDraft.base_url} onChange={(v) => setProviderDraft({ ...providerDraft, base_url: v })} placeholder={t('settings.cliModels.baseUrlPlaceholder')} />
                   </Row>
                   <Row label="API Key">
-                    <SecretInput value={providerDraft.api_key} onChange={(v) => setProviderDraft({ ...providerDraft, api_key: v })} placeholder="sk-...(清空则删除密钥)" />
+                    <SecretInput value={providerDraft.api_key} onChange={(v) => setProviderDraft({ ...providerDraft, api_key: v })} placeholder={t('settings.cliModels.apiKeyPlaceholderEdit')} />
                   </Row>
                   <div className="flex justify-end gap-2 pt-1">
                     <button className="rounded-lg border border-border px-3 py-1 text-[12.5px] text-text hover:bg-fill" onClick={() => setEditProvider(null)}>
-                      取消
+                      {t('settings.cliModels.cancel')}
                     </button>
                     <button className="rounded-lg bg-primary px-3 py-1 text-[12.5px] font-medium text-white hover:bg-primary-hover disabled:opacity-50" disabled={saving} onClick={() => void saveProvider()}>
-                      {saving ? '保存中…' : '保存'}
+                      {saving ? t('settings.cliModels.saving') : t('settings.cliModels.save')}
                     </button>
                   </div>
                 </div>
@@ -603,24 +622,24 @@ function ModelsForm({ config, reload }: { config: Rec; reload: (silent?: boolean
         {editProvider === '__add__' && providerDraft && (
           <div className="rounded-lg border border-dashed border-primary-border bg-primary-soft/40 p-3">
             <div className="space-y-2">
-              <Row label="名称">
-                <TextInput mono value={providerDraft.name} onChange={(v) => setProviderDraft({ ...providerDraft, name: v })} placeholder="如 my-openai(字母数字、-、_、:)" />
+              <Row label={t('settings.cliModels.name')}>
+                <TextInput mono value={providerDraft.name} onChange={(v) => setProviderDraft({ ...providerDraft, name: v })} placeholder={t('settings.cliModels.providerNamePlaceholder')} />
               </Row>
-              <Row label="类型">
+              <Row label={t('settings.cliModels.type')}>
                 <Select value={providerDraft.type} onChange={(v) => setProviderDraft({ ...providerDraft, type: v })} options={PROVIDER_TYPES} />
               </Row>
               <Row label="Base URL">
-                <TextInput mono value={providerDraft.base_url} onChange={(v) => setProviderDraft({ ...providerDraft, base_url: v })} placeholder="如 https://api.openai.com/v1" />
+                <TextInput mono value={providerDraft.base_url} onChange={(v) => setProviderDraft({ ...providerDraft, base_url: v })} placeholder={t('settings.cliModels.baseUrlExamplePlaceholder')} />
               </Row>
               <Row label="API Key">
-                <SecretInput value={providerDraft.api_key} onChange={(v) => setProviderDraft({ ...providerDraft, api_key: v })} placeholder="sk-...(可留空)" />
+                <SecretInput value={providerDraft.api_key} onChange={(v) => setProviderDraft({ ...providerDraft, api_key: v })} placeholder={t('settings.cliModels.apiKeyPlaceholderAdd')} />
               </Row>
               <div className="flex justify-end gap-2 pt-1">
                 <button className="rounded-lg border border-border px-3 py-1 text-[12.5px] text-text hover:bg-fill" onClick={() => setEditProvider(null)}>
-                  取消
+                  {t('settings.cliModels.cancel')}
                 </button>
                 <button className="rounded-lg bg-primary px-3 py-1 text-[12.5px] font-medium text-white hover:bg-primary-hover disabled:opacity-50" disabled={saving} onClick={() => void saveProvider()}>
-                  {saving ? '保存中…' : '添加'}
+                  {saving ? t('settings.cliModels.saving') : t('settings.cliModels.add')}
                 </button>
               </div>
             </div>
@@ -635,15 +654,15 @@ function ModelsForm({ config, reload }: { config: Rec; reload: (silent?: boolean
               setConfirmDel('')
             }}
           >
-            <Plus size={12} /> 添加供应商
+            <Plus size={12} /> {t('settings.cliModels.addProvider')}
           </button>
         )}
       </Card>
 
-      <GroupLabel>模型(models,按供应商分组)</GroupLabel>
+      <GroupLabel>{t('settings.cliModels.modelsLabel')}</GroupLabel>
       <Card className="space-y-4">
         {Object.keys(models).length === 0 && editModel !== '__add__' && (
-          <p className="text-[12.5px] text-text-tertiary">尚未配置模型;添加模型后即可在通用行为页设为默认</p>
+          <p className="text-[12.5px] text-text-tertiary">{t('settings.cliModels.noModels')}</p>
         )}
         {modelGroups.map((g) => {
           const folded = collapsed.has(g.provider)
@@ -652,7 +671,7 @@ function ModelsForm({ config, reload }: { config: Rec; reload: (silent?: boolean
               <button
                 type="button"
                 className="flex w-full items-center gap-1.5 rounded-md px-1 py-0.5 text-left text-[12px] font-medium text-text-secondary hover:bg-fill hover:text-text"
-                title={folded ? '展开' : '折叠'}
+                title={folded ? t('settings.cliModels.expand') : t('settings.cliModels.collapse')}
                 onClick={() =>
                   setCollapsed((prev) => {
                     const next = new Set(prev)
@@ -668,7 +687,9 @@ function ModelsForm({ config, reload }: { config: Rec; reload: (silent?: boolean
                   <ChevronDown size={12} className="text-text-tertiary" />
                 )}
                 <Boxes size={12} className="text-text-tertiary" />
-                <span className="font-mono">{g.provider}</span>
+                <span className="font-mono">
+                  {g.provider === UNGROUPED_KEY ? t('settings.cliModels.ungrouped') : g.provider}
+                </span>
                 <span className="text-text-tertiary">({g.entries.length})</span>
               </button>
               {!folded && (
@@ -693,7 +714,7 @@ function ModelsForm({ config, reload }: { config: Rec; reload: (silent?: boolean
           <button
             className="inline-flex items-center gap-1 rounded-lg border border-dashed border-border px-2.5 py-1 text-[12.5px] text-text-secondary transition-colors hover:border-primary hover:bg-primary-soft hover:text-primary"
             disabled={Object.keys(providers).length === 0}
-            title={Object.keys(providers).length === 0 ? '请先添加供应商' : ''}
+            title={Object.keys(providers).length === 0 ? t('settings.cliModels.addModelNeedProvider') : ''}
             onClick={() => {
               setEditModel('__add__')
               setModelDraft({
@@ -709,32 +730,28 @@ function ModelsForm({ config, reload }: { config: Rec; reload: (silent?: boolean
               setConfirmDel('')
             }}
           >
-            <Plus size={12} /> 添加模型
+            <Plus size={12} /> {t('settings.cliModels.addModel')}
           </button>
         )}
       </Card>
 
-      <GroupLabel>子智能体模型池(secondary_model)</GroupLabel>
+      <GroupLabel>{t('settings.cliModels.secLabel')}</GroupLabel>
       <Card className="space-y-3">
-        <p className="text-[12px] text-text-tertiary">
-          实验功能(需 KIMI_CODE_EXPERIMENTAL_SECONDARY_MODEL=1 或 KIMI_CODE_EXPERIMENTAL_FLAG=1
-          启用):池内每个模型配一句描述(可留空),主 agent 派生子任务时按描述挑选;保留字 "primary"
-          始终可选(绑定调用方模型)
-        </p>
+        <p className="text-[12px] text-text-tertiary">{t('settings.cliModels.secDesc')}</p>
         {Object.keys(secModels).length > 0 && !secDefault && (
           <p className="rounded-lg border border-danger/20 bg-danger-soft px-3 py-2 text-[12px] text-danger">
-            已配置 models 表但缺少 default_model,会话启动会报错;请点池中某个模型的星标设为默认
+            {t('settings.cliModels.warnNoDefault')}
           </p>
         )}
         {Object.keys(secModels).length > 0 && secDefault && !(secDefault in secModels) && (
           <p className="rounded-lg border border-danger/20 bg-danger-soft px-3 py-2 text-[12px] text-danger">
             default_model(<span className="font-mono">{secDefault}</span>
-            )不在 models 表中,会话启动会报错;请把它加入模型池或改设为池中别名
+            {t('settings.cliModels.warnDefaultNotInPoolSuffix')}
           </p>
         )}
         {secForce && Object.keys(secModels).length > 0 && (
           <p className="rounded-lg border border-danger/20 bg-danger-soft px-3 py-2 text-[12px] text-danger">
-            force 与 models 表不能同时使用,会话启动会报错;请清空模型池或关闭 force
+            {t('settings.cliModels.warnForceConflict')}
           </p>
         )}
         {Object.keys(secModels).length === 0 &&
@@ -742,21 +759,22 @@ function ModelsForm({ config, reload }: { config: Rec; reload: (silent?: boolean
           (secLegacyModel ? (
             <div className="rounded-lg border border-warning/20 bg-warning-soft px-3 py-2">
               <p className="text-[12.5px] text-warning">
-                存在非规范键:
+                {t('settings.cliModels.legacyKeys')}
                 <span className="font-mono">model = "{secLegacyModel}"</span>
-                {secLegacyEffort && <span className="font-mono">、default_effort = "{secLegacyEffort}"</span>}
-                (不在官方 secondary_model 字段中)
+                {secLegacyEffort && (
+                  <span className="font-mono">
+                    {t('settings.cliModels.legacyEffortPart', { effort: secLegacyEffort })}
+                  </span>
+                )}
+                {t('settings.cliModels.legacySuffix')}
               </p>
-              <p className="mt-1 text-[12px] text-text-tertiary">
-                官方格式为 default_model + 可选 models 表;迁移会把该模型写为
-                default_model(即单条目隐式池)并清除非规范键
-              </p>
+              <p className="mt-1 text-[12px] text-text-tertiary">{t('settings.cliModels.legacyDesc')}</p>
               <button
                 className="mt-2 inline-flex items-center gap-1 rounded-lg border border-border bg-surface px-2.5 py-1 text-[12.5px] text-text-secondary transition-colors hover:border-primary hover:text-primary"
                 disabled={saving}
                 onClick={() => void migrateLegacy()}
               >
-                <Plus size={12} /> 迁移为标准配置
+                <Plus size={12} /> {t('settings.cliModels.migrateBtn')}
               </button>
             </div>
           ) : secDefault ? (
@@ -764,27 +782,29 @@ function ModelsForm({ config, reload }: { config: Rec; reload: (silent?: boolean
               <div className="flex items-center gap-2">
                 <Bot size={14} className="shrink-0 text-primary" />
                 <span className="truncate font-mono text-[13px] font-medium">{secDefault}</span>
-                <span className="rounded bg-primary px-1.5 py-0.5 text-[11px] font-medium text-white">默认</span>
+                <span className="rounded bg-primary px-1.5 py-0.5 text-[11px] font-medium text-white">
+                  {t('settings.cliModels.badgeDefault')}
+                </span>
                 {!models[secDefault] && (
                   <span
                     className="rounded bg-danger-soft px-1.5 py-0.5 text-[11px] text-danger"
-                    title="该别名未在上方 models 中配置,子智能体调用会失败"
+                    title={t('settings.cliModels.modelMissingTitle')}
                   >
-                    模型未配置
+                    {t('settings.cliModels.modelMissing')}
                   </span>
                 )}
               </div>
               <p className="mt-1 text-[12px] text-text-tertiary">
-                隐式单条目池(仅 default_model,无 models 表);添加更多模型时会自动为它补一条空描述
+                {t('settings.cliModels.implicitPoolDesc')}
               </p>
             </div>
           ) : (
-            <p className="text-[12.5px] text-text-tertiary">未配置:subagent 继承主 agent 正在运行的模型</p>
+            <p className="text-[12.5px] text-text-tertiary">{t('settings.cliModels.secEmpty')}</p>
           ))}
         {Object.keys(secModels).length === 0 && (
           <ToggleField
-            label="固定到默认模型(force)"
-            desc="所有 subagent 强制使用默认模型,主 agent 派生时不能改选;需先配置默认模型,与 models 表互斥"
+            label={t('settings.cliModels.forceLabel')}
+            desc={t('settings.cliModels.forceDesc')}
             checked={secForce}
             onChange={(v) => void toggleForce(v)}
           />
@@ -799,21 +819,23 @@ function ModelsForm({ config, reload }: { config: Rec; reload: (silent?: boolean
                 <Bot size={14} className="shrink-0 text-primary" />
                 <span className="truncate font-mono text-[13px] font-medium">{alias}</span>
                 {isDefault && (
-                  <span className="rounded bg-primary px-1.5 py-0.5 text-[11px] font-medium text-white">默认</span>
+                  <span className="rounded bg-primary px-1.5 py-0.5 text-[11px] font-medium text-white">
+                    {t('settings.cliModels.badgeDefault')}
+                  </span>
                 )}
                 {missing && (
                   <span
                     className="rounded bg-danger-soft px-1.5 py-0.5 text-[11px] text-danger"
-                    title="该别名未在上方 models 中配置,子智能体调用会失败"
+                    title={t('settings.cliModels.modelMissingTitle')}
                   >
-                    模型未配置
+                    {t('settings.cliModels.modelMissing')}
                   </span>
                 )}
                 <div className="ml-auto flex shrink-0 gap-1.5">
                   {!isDefault && (
                     <button
                       className="rounded-lg border border-border p-1.5 text-text-tertiary hover:border-primary-border hover:text-primary"
-                      title="设为子智能体默认模型"
+                      title={t('settings.cliModels.setSecDefault')}
                       disabled={saving}
                       onClick={() => void setSecDefault(alias)}
                     >
@@ -822,7 +844,7 @@ function ModelsForm({ config, reload }: { config: Rec; reload: (silent?: boolean
                   )}
                   <button
                     className="rounded-lg border border-border p-1.5 text-text-tertiary hover:bg-fill hover:text-text"
-                    title="编辑描述"
+                    title={t('settings.cliModels.editDesc')}
                     onClick={() => (editing ? setEditSecModel(null) : startEditSecModel(alias))}
                   >
                     <Pencil size={13} />
@@ -833,7 +855,11 @@ function ModelsForm({ config, reload }: { config: Rec; reload: (silent?: boolean
                         ? 'border-danger bg-danger-soft text-danger'
                         : 'border-border text-text-tertiary hover:bg-danger-soft hover:text-danger'
                     }`}
-                    title={confirmDel === `s:${alias}` ? '再点一次确认移出' : '移出模型池'}
+                    title={
+                      confirmDel === `s:${alias}`
+                        ? t('settings.cliModels.confirmRemove')
+                        : t('settings.cliModels.removeFromPool')
+                    }
                     onClick={() => void removeSecModel(alias)}
                   >
                     <Trash2 size={13} />
@@ -841,26 +867,28 @@ function ModelsForm({ config, reload }: { config: Rec; reload: (silent?: boolean
                 </div>
               </div>
               {!editing && (
-                <p className="mt-1 text-[12px] text-text-tertiary">{strOf(desc) || '(无描述)'}</p>
+                <p className="mt-1 text-[12px] text-text-tertiary">
+                  {strOf(desc) || t('settings.cliModels.noDesc')}
+                </p>
               )}
               {editing && (
                 <div className="mt-3 space-y-2 border-t border-border-light pt-3">
-                  <Row label="模型别名">
+                  <Row label={t('settings.cliModels.aliasLabel')}>
                     <span className="font-mono text-[12.5px] text-text-secondary">{secDraft.alias}</span>
                   </Row>
-                  <Row label="描述">
+                  <Row label={t('settings.cliModels.descLabel')}>
                     <TextInput
                       value={secDraft.description}
                       onChange={(v) => setSecDraft({ ...secDraft, description: v })}
-                      placeholder="主 agent 的挑选依据,如:快速便宜,适合日常重构(可留空)"
+                      placeholder={t('settings.cliModels.secDescPlaceholderEdit')}
                     />
                   </Row>
                   <div className="flex justify-end gap-2 pt-1">
                     <button className="rounded-lg border border-border px-3 py-1 text-[12.5px] text-text hover:bg-fill" onClick={() => setEditSecModel(null)}>
-                      取消
+                      {t('settings.cliModels.cancel')}
                     </button>
                     <button className="rounded-lg bg-primary px-3 py-1 text-[12.5px] font-medium text-white hover:bg-primary-hover disabled:opacity-50" disabled={saving} onClick={() => void saveSecModel()}>
-                      {saving ? '保存中…' : '保存'}
+                      {saving ? t('settings.cliModels.saving') : t('settings.cliModels.save')}
                     </button>
                   </div>
                 </div>
@@ -871,26 +899,26 @@ function ModelsForm({ config, reload }: { config: Rec; reload: (silent?: boolean
         {editSecModel === '__add__' && secDraft && (
           <div className="rounded-lg border border-dashed border-primary-border bg-primary-soft/40 p-3">
             <div className="space-y-2">
-              <Row label="模型别名">
+              <Row label={t('settings.cliModels.aliasLabel')}>
                 <Select
                   value={secDraft.alias}
                   onChange={(v) => setSecDraft({ ...secDraft, alias: v })}
                   options={Object.keys(models).filter((a) => !(a in secModels))}
                 />
               </Row>
-              <Row label="描述">
+              <Row label={t('settings.cliModels.descLabel')}>
                 <TextInput
                   value={secDraft.description}
                   onChange={(v) => setSecDraft({ ...secDraft, description: v })}
-                  placeholder="主 agent 的挑选依据,如:擅长复杂推理与深度调试,难题选它(可留空)"
+                  placeholder={t('settings.cliModels.secDescPlaceholderAdd')}
                 />
               </Row>
               <div className="flex justify-end gap-2 pt-1">
                 <button className="rounded-lg border border-border px-3 py-1 text-[12.5px] text-text hover:bg-fill" onClick={() => setEditSecModel(null)}>
-                  取消
+                  {t('settings.cliModels.cancel')}
                 </button>
                 <button className="rounded-lg bg-primary px-3 py-1 text-[12.5px] font-medium text-white hover:bg-primary-hover disabled:opacity-50" disabled={saving} onClick={() => void saveSecModel()}>
-                  {saving ? '保存中…' : '添加'}
+                  {saving ? t('settings.cliModels.saving') : t('settings.cliModels.add')}
                 </button>
               </div>
             </div>
@@ -902,9 +930,9 @@ function ModelsForm({ config, reload }: { config: Rec; reload: (silent?: boolean
             disabled={Object.keys(models).filter((a) => !(a in secModels)).length === 0}
             title={
               Object.keys(models).length === 0
-                ? '请先在上方添加模型'
+                ? t('settings.cliModels.addModelFirst')
                 : Object.keys(models).filter((a) => !(a in secModels)).length === 0
-                  ? '所有模型都已在池中'
+                  ? t('settings.cliModels.allInPool')
                   : ''
             }
             onClick={() => {
@@ -913,16 +941,14 @@ function ModelsForm({ config, reload }: { config: Rec; reload: (silent?: boolean
               setConfirmDel('')
             }}
           >
-            <Plus size={12} /> 添加子智能体模型
+            <Plus size={12} /> {t('settings.cliModels.addSecModel')}
           </button>
         )}
       </Card>
 
       {error && <p className="text-[12px] text-danger">{error}</p>}
       {savedMsg && <p className="text-[12px] text-success">{savedMsg}</p>}
-      <p className="text-[11.5px] text-text-tertiary">
-        保存直接写入 config.toml(自动备份 .kimi-desktop-bak);模型别名习惯为 供应商/模型 形式,带 . 的别名在 TOML 中会自动加引号
-      </p>
+      <p className="text-[11.5px] text-text-tertiary">{t('settings.cliModels.footnote')}</p>
     </>
   )
 }
@@ -937,39 +963,57 @@ function ModelEditor(props: {
   onCancel: () => void
   onSave: () => void
 }) {
+  const t = useT()
   const { draft: d, onChange } = props
+  /** 能力标签的悬浮提示 */
+  const capabilityHints: Record<string, string> = {
+    thinking: t('settings.cliModels.capHint.thinking'),
+    always_thinking: t('settings.cliModels.capHint.always_thinking'),
+    image_in: t('settings.cliModels.capHint.image_in'),
+    video_in: t('settings.cliModels.capHint.video_in'),
+    audio_in: t('settings.cliModels.capHint.audio_in'),
+    tool_use: t('settings.cliModels.capHint.tool_use')
+  }
+  /** 思考档位的悬浮提示 */
+  const effortHints: Record<string, string> = {
+    low: t('settings.cliModels.effortHint.low'),
+    medium: t('settings.cliModels.effortHint.medium'),
+    high: t('settings.cliModels.effortHint.high'),
+    xhigh: t('settings.cliModels.effortHint.xhigh'),
+    max: t('settings.cliModels.effortHint.max')
+  }
   return (
     <div className="mt-3 space-y-2 border-t border-border-light pt-3">
-      <Row label="别名">
-        <TextInput mono value={d.alias} onChange={(v) => !props.lockAlias && onChange({ ...d, alias: v })} placeholder="如 kimi-code/k3(供应商/模型)" />
+      <Row label={t('settings.cliModels.alias')}>
+        <TextInput mono value={d.alias} onChange={(v) => !props.lockAlias && onChange({ ...d, alias: v })} placeholder={t('settings.cliModels.aliasPlaceholder')} />
       </Row>
-      <Row label="供应商">
+      <Row label={t('settings.cliModels.provider')}>
         <Select value={d.provider} onChange={(v) => onChange({ ...d, provider: v })} options={props.providers} />
       </Row>
-      <Row label="模型 ID">
-        <TextInput mono value={d.model} onChange={(v) => onChange({ ...d, model: v })} placeholder="发给服务端的模型标识,如 k3" />
+      <Row label={t('settings.cliModels.modelId')}>
+        <TextInput mono value={d.model} onChange={(v) => onChange({ ...d, model: v })} placeholder={t('settings.cliModels.modelIdPlaceholder')} />
       </Row>
-      <Row label="显示名">
-        <TextInput value={d.display_name} onChange={(v) => onChange({ ...d, display_name: v })} placeholder="可选,UI 显示用" />
+      <Row label={t('settings.cliModels.displayName')}>
+        <TextInput value={d.display_name} onChange={(v) => onChange({ ...d, display_name: v })} placeholder={t('settings.cliModels.displayNamePlaceholder')} />
       </Row>
-      <Row label="上下文大小">
-        <TextInput mono value={d.max_context_size} onChange={(v) => onChange({ ...d, max_context_size: v })} placeholder="token 数,如 262144" />
+      <Row label={t('settings.cliModels.ctxSize')}>
+        <TextInput mono value={d.max_context_size} onChange={(v) => onChange({ ...d, max_context_size: v })} placeholder={t('settings.cliModels.ctxPlaceholder')} />
       </Row>
-      <Row label="能力">
-        <CheckTags options={CAPABILITIES} values={d.capabilities} hints={CAPABILITY_HINTS} onChange={(v) => onChange({ ...d, capabilities: v })} />
+      <Row label={t('settings.cliModels.capabilities')}>
+        <CheckTags options={CAPABILITIES} values={d.capabilities} hints={capabilityHints} onChange={(v) => onChange({ ...d, capabilities: v })} />
       </Row>
-      <Row label="思考档位">
-        <CheckTags options={EFFORTS} values={d.support_efforts} hints={EFFORT_HINTS} onChange={(v) => onChange({ ...d, support_efforts: v, default_effort: v.includes(d.default_effort) ? d.default_effort : '' })} />
+      <Row label={t('settings.cliModels.efforts')}>
+        <CheckTags options={EFFORTS} values={d.support_efforts} hints={effortHints} onChange={(v) => onChange({ ...d, support_efforts: v, default_effort: v.includes(d.default_effort) ? d.default_effort : '' })} />
       </Row>
-      <Row label="默认档位">
-        <Select value={d.default_effort} onChange={(v) => onChange({ ...d, default_effort: v })} options={d.support_efforts} allowEmpty="未设置(跟随全局/内置)" />
+      <Row label={t('settings.cliModels.defaultEffortLabel')}>
+        <Select value={d.default_effort} onChange={(v) => onChange({ ...d, default_effort: v })} options={d.support_efforts} allowEmpty={t('settings.cliModels.effortUnset')} />
       </Row>
       <div className="flex justify-end gap-2 pt-1">
         <button className="rounded-lg border border-border px-3 py-1 text-[12.5px] text-text hover:bg-fill" onClick={props.onCancel}>
-          取消
+          {t('settings.cliModels.cancel')}
         </button>
         <button className="rounded-lg bg-primary px-3 py-1 text-[12.5px] font-medium text-white hover:bg-primary-hover disabled:opacity-50" disabled={props.saving} onClick={props.onSave}>
-          {props.saving ? '保存中…' : '保存'}
+          {props.saving ? t('settings.cliModels.saving') : t('settings.cliModels.save')}
         </button>
       </div>
     </div>

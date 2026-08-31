@@ -112,7 +112,7 @@ pub fn spawn_startup_check(app: AppHandle) {
                     .notification()
                     .builder()
                     .title("Kimi Code Desktop")
-                    .body(format!("发现新版本 v{},可前往 设置 → 常规 更新", info.version))
+                    .body(format!("发现新版本 v{},可点击标题栏更新按钮下载安装", info.version))
                     .show();
             }
             Ok(None) => {}

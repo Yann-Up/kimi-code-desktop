@@ -1,6 +1,7 @@
 /**
  * Segmented: 复刻官方 kimi web UI 的分段选择器(官方为 Vue 自研组件,此处为 React 复刻)。
- * 槽:透明底(不加背景色)+ 0.5px border-strong 边,圆角 10px,内边距 3px;
+ * 槽:透明底(官方样式,在设置页灰面板上呈现浅灰槽)+ 0.5px border-strong 边,圆角 10px,内边距 3px;
+ *   ⚠️ 用在白底页面上时槽会隐形(选中面也是白),需经 className 补 bg-surface-tertiary(如统计页用法,与设置页灰面板透出的槽色一致)。
  * 项:h-7 px-3,圆角 7px,未选中 text-secondary(hover 变深);
  * 选中:elevated 凸起面 + 轻投影 + text 加粗(浅色下为白底浮于灰槽,深色下为亮灰)。
  * 适合 2-4 个短选项(权限模式/字体大小等);选项多或动态时用 Select。

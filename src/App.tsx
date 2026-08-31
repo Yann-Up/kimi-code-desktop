@@ -3,8 +3,10 @@ import { TitleBar } from './components/TitleBar'
 import { ShellHome } from './components/ShellHome'
 import { OnboardingPage } from './pages/OnboardingPage'
 import { useUi } from './stores/ui'
+import { useT, t as tStatic } from './i18n'
 
 export default function App() {
+  const t = useT()
   // 后端服务阶段:starting=启动中 ready=主页面 error=启动失败
   // (首次启动不再强制全屏向导;连接目标在对话页占位图上选择,或从设置页重进向导)
   const [phase, setPhase] = useState<'starting' | 'ready' | 'error'>('starting')
@@ -36,7 +38,7 @@ export default function App() {
       window.kimiApi.onServerExited((info) => {
         useUi.getState().setChannelRunning(info.channel, false)
         if (info.channel !== useUi.getState().activeChannel) return
-        setServerError(`后端服务意外退出:${info.detail}`)
+        setServerError(tStatic('app.serverExited', { detail: info.detail }))
         setPhase('error')
       }),
       window.kimiApi.onServerStopped((info) => {
@@ -63,11 +65,11 @@ export default function App() {
         setUpgradeMsg(
           info.restartOk
             ? info.version
-              ? `已更新到 ${info.version},服务已自动重启`
-              : '更新已执行,但无法确认新版本,请重启应用确认'
+              ? tStatic('app.upgrade.doneRestarted', { version: info.version })
+              : tStatic('app.upgrade.doneUnconfirmed')
             : info.version
-              ? `已更新到 ${info.version};若服务在运行,重启后生效`
-              : '更新已执行;若服务在运行,重启后生效'
+              ? tStatic('app.upgrade.done', { version: info.version })
+              : tStatic('app.upgrade.doneNoVersion')
         )
         setTimeout(() => setUpgradeMsg(''), 5000)
       })
@@ -90,6 +92,16 @@ export default function App() {
       .catch(() => {})
     return () => offs.forEach((off) => off())
   }, [])
+
+  // 关窗确认框打开期间:Esc 取消(与点遮罩/取消按钮一致)
+  useEffect(() => {
+    if (closeConfirm === null) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setCloseConfirm(null)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [closeConfirm])
 
   const startBackend = () => {
     setServerError(null)
@@ -124,17 +136,17 @@ export default function App() {
       {phase === 'error' ? (
         <div className="flex flex-1 items-center justify-center">
           <div className="max-w-md rounded-xl border border-danger-soft bg-danger-soft p-6 text-center">
-            <p className="mb-2 text-base font-semibold text-danger">无法启动 Kimi Code 服务</p>
+            <p className="mb-2 text-base font-semibold text-danger">{t('app.error.title')}</p>
             <p className="text-sm text-text-secondary">{serverError}</p>
             <p className="mt-3 text-xs text-text-tertiary">
-              请确认已安装 Kimi Code CLI(kimi --version 可用)
+              {t('app.error.hint')}
             </p>
             <div className="mt-4 flex justify-center">
               <button
                 className="rounded-lg bg-primary px-4 py-1.5 text-[13px] font-medium text-white hover:bg-primary-hover"
                 onClick={startBackend}
               >
-                重试
+                {t('app.error.retry')}
               </button>
             </div>
           </div>
@@ -146,12 +158,10 @@ export default function App() {
           <div className="text-center">
             <div className="mx-auto mb-4 h-8 w-8 animate-spin rounded-full border-2 border-primary border-t-transparent" />
             <p className="text-sm text-text-secondary">
-              {installing
-                ? '未检测到 Kimi Code CLI,正在自动下载安装最新版…'
-                : '正在启动 Kimi Code 服务…'}
+              {installing ? t('app.starting.installingCli') : t('app.starting.starting')}
             </p>
             {installing && (
-              <p className="mt-2 text-xs text-text-tertiary">首次安装需要几分钟,请保持网络畅通</p>
+              <p className="mt-2 text-xs text-text-tertiary">{t('app.starting.installHint')}</p>
             )}
           </div>
         </div>
@@ -160,17 +170,15 @@ export default function App() {
       {updateInfo && (
         <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/30">
           <div className="w-[380px] rounded-xl bg-surface p-5 shadow-2xl">
-            <p className="text-[15px] font-semibold">发现 Kimi Code CLI 新版本</p>
+            <p className="text-[15px] font-semibold">{t('app.update.title')}</p>
             <p className="mt-2 text-[13px] text-text-secondary">
-              当前 {updateInfo.current} → 最新 {updateInfo.latest}
+              {t('app.update.versions', { current: updateInfo.current, latest: updateInfo.latest })}
             </p>
             <p className="mt-1 text-[12px] text-text-tertiary">
-              {updateInfo.source === 'home'
-                ? '更新通过 `kimi upgrade` 完成,更新后服务会自动重启'
-                : '当前为 npm 安装,更新通过 `npm update -g @moonshot-ai/kimi-code` 完成,更新后服务会自动重启'}
+              {updateInfo.source === 'home' ? t('app.update.viaHome') : t('app.update.viaNpm')}
             </p>
             <p className="mt-1 truncate font-mono text-[11px] text-text-tertiary" title={updateInfo.bin}>
-              更新对象:{updateInfo.bin}
+              {t('app.update.target', { bin: updateInfo.bin })}
             </p>
             <div className="mt-4 flex justify-end gap-2">
               <button
@@ -180,13 +188,13 @@ export default function App() {
                   setUpdateInfo(null)
                 }}
               >
-                跳过此版本
+                {t('app.update.skip')}
               </button>
               <button
                 className="rounded-lg border border-border bg-elevated px-4 py-2 text-[13px] text-text hover:bg-hover"
                 onClick={() => setUpdateInfo(null)}
               >
-                稍后
+                {t('app.update.later')}
               </button>
               <button
                 className="rounded-lg bg-primary px-4 py-1.5 text-[13px] font-medium text-white hover:bg-primary-hover disabled:opacity-50"
@@ -194,8 +202,8 @@ export default function App() {
                 onClick={() => {
                   const failHint =
                     updateInfo.source === 'home'
-                      ? '更新失败,请稍后在终端手动运行 kimi upgrade'
-                      : '更新失败,请稍后在终端手动运行 npm update -g @moonshot-ai/kimi-code'
+                      ? t('app.update.failHome')
+                      : t('app.update.failNpm')
                   setUpgrading(true)
                   window.kimiApi.cliUpgrade().catch((e) => {
                     setUpgrading(false)
@@ -206,7 +214,7 @@ export default function App() {
                   })
                 }}
               >
-                {upgrading ? '正在更新…' : '立即更新'}
+                {upgrading ? t('app.update.updating') : t('app.update.now')}
               </button>
             </div>
           </div>
@@ -220,17 +228,28 @@ export default function App() {
       )}
 
       {/* 关窗确认:点 X(标题栏/Alt+F4/任务栏关闭)时由 Rust 侧拦截触发。
-          "进入托盘"=不关闭进程仅隐藏窗口;"退出程序"=真正退出(优雅关停后端) */}
+          "进入托盘"=不关闭进程仅隐藏窗口;"退出程序"=真正退出(优雅关停后端);
+          取消:点遮罩 / Esc / 取消按钮 */}
       {closeConfirm !== null && (
-        <div className="fixed inset-0 z-[85] flex items-center justify-center bg-black/30">
-          <div className="w-[380px] rounded-xl bg-surface p-5 shadow-2xl">
-            <p className="text-[15px] font-semibold">是否关闭 Kimi Code Desktop?</p>
+        <div
+          className="fixed inset-0 z-[85] flex items-center justify-center bg-black/30"
+          onClick={() => setCloseConfirm(null)}
+        >
+          <div
+            className="w-[380px] rounded-xl bg-surface p-5 shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <p className="text-[15px] font-semibold">{t('app.close.title')}</p>
             <p className="mt-2 text-[13px] text-text-secondary">
-              {closeConfirm
-                ? 'Kimi Code 服务正在运行中,退出将停止服务并中断所有进行中的会话;进入托盘则保持后台运行。'
-                : '可以退出程序,或进入托盘保持后台驻留(托盘图标可随时唤回)。'}
+              {closeConfirm ? t('app.close.descRunning') : t('app.close.descIdle')}
             </p>
             <div className="mt-4 flex justify-end gap-2">
+              <button
+                className="rounded-lg border border-border bg-elevated px-4 py-2 text-[13px] text-text hover:bg-hover"
+                onClick={() => setCloseConfirm(null)}
+              >
+                {t('app.close.cancel')}
+              </button>
               <button
                 className="rounded-lg border border-border bg-elevated px-4 py-2 text-[13px] text-text hover:bg-hover"
                 onClick={() => {
@@ -238,13 +257,13 @@ export default function App() {
                   window.kimiApi.hideToTray().catch(() => {})
                 }}
               >
-                进入托盘
+                {t('app.close.toTray')}
               </button>
               <button
                 className="rounded-lg bg-danger px-4 py-1.5 text-[13px] font-medium text-white hover:opacity-90"
                 onClick={() => window.kimiApi.confirmClose().catch(() => {})}
               >
-                退出程序
+                {t('app.close.exit')}
               </button>
             </div>
           </div>

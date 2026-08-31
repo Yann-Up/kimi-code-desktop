@@ -1,8 +1,10 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { CalendarDays, Coins, Cpu, Flame, Layers, MessagesSquare } from 'lucide-react'
-import { Section, Card, GroupLabel, Empty } from '../../components/settings/common'
+import { Section, SurfaceCard, GroupLabel, Empty } from '../../components/settings/common'
+import { Segmented } from '../../components/ui/Segmented'
 import { shortWorkspace } from '../stats/ApiCallsTable'
-import { useUi } from '../../stores/ui'
+import { useUi, resolveTheme } from '../../stores/ui'
+import { useT } from '../../i18n'
 
 interface DailyUsage {
   date: string // YYYY-MM-DD
@@ -30,24 +32,29 @@ const HEATMAP_WEEKS = 52
 const HEATMAP_DAYS = HEATMAP_WEEKS * 7
 /** 堆叠/donut 调色板:蓝/绿/橙/紫/青/灰(其他) */
 const MODEL_COLORS = ['#2563eb', '#16a34a', '#ea580c', '#7c3aed', '#0891b2', '#64748b']
-/** 热力图 5 档:面板灰(无)→浅蓝→深蓝;暗色主题换暗基底 + 亮高端(跟随壳主题) */
-const HEAT_COLORS_LIGHT = ['#f5f5f5', '#dbeafe', '#93c5fd', '#1783ff', '#0f5fd0']
-const HEAT_COLORS_DARK = ['#1f1f1f', '#0d3a75', '#1460c8', '#1a88ff', '#7ab8ff']
+/** 热力图 5 档:fill 灰(无)→浅蓝→深蓝;暗色主题换亮高端(跟随壳主题);无色档用 fill 令牌,白/深卡片上都可见 */
+const HEAT_COLORS_LIGHT = ['var(--color-fill)', '#dbeafe', '#93c5fd', '#1783ff', '#0f5fd0']
+const HEAT_COLORS_DARK = ['var(--color-fill)', '#0d3a75', '#1460c8', '#1a88ff', '#7ab8ff']
 function useHeatColors() {
-  return useUi((s) => s.theme) === 'dark' ? HEAT_COLORS_DARK : HEAT_COLORS_LIGHT
+  return useUi((s) => resolveTheme(s.theme)) === 'dark' ? HEAT_COLORS_DARK : HEAT_COLORS_LIGHT
 }
 
-/** 按天趋势「按 Token 类型」模式系列(配色对齐今日实时趋势) */
+/** 按天趋势「按 Token 类型」模式系列(配色对齐今日实时趋势;nameKey 指向 i18n 词条) */
 const TOKEN_TYPE_SERIES = [
-  { key: 'input', name: '输入', color: '#2563eb' },
-  { key: 'output', name: '输出', color: '#16a34a' },
-  { key: 'cacheRead', name: '缓存命中', color: '#7c3aed' },
-  { key: 'cacheCreation', name: '缓存创建', color: '#ea580c' }
+  { key: 'input', nameKey: 'settings.usage.seriesInput', color: '#2563eb' },
+  { key: 'output', nameKey: 'settings.usage.seriesOutput', color: '#16a34a' },
+  { key: 'cacheRead', nameKey: 'settings.usage.seriesCacheRead', color: '#7c3aed' },
+  { key: 'cacheCreation', nameKey: 'settings.usage.seriesCacheCreation', color: '#ea580c' }
 ] as const
 
-/** tokens 人性化:亿 / 万 / 原值 */
+/** tokens 人性化:中文 亿 / 万 / 原值;英文 M / k / 原值 */
 function fmtTokens(n: number): string {
   if (!Number.isFinite(n) || n <= 0) return '0'
+  if (useUi.getState().locale === 'en') {
+    if (n >= 1e6) return `${(n / 1e6).toFixed(2).replace(/\.?0+$/, '')}M`
+    if (n >= 1e3) return `${(n / 1e3).toFixed(1).replace(/\.0$/, '')}k`
+    return `${Math.round(n)}`
+  }
   if (n >= 1e8) return `${(n / 1e8).toFixed(2).replace(/\.?0+$/, '')}亿`
   if (n >= 1e4) return `${(n / 1e4).toFixed(1).replace(/\.0$/, '')}万`
   return Math.round(n).toLocaleString('zh-CN')
@@ -102,6 +109,7 @@ function StatCard(props: { icon: typeof Coins; label: string; value: string; sub
 
 /** GitHub 风格活跃热力图:每列一周(周日起),每格一天 */
 function Heatmap({ days }: { days: DailyUsage[] }) {
+  const t = useT()
   const heatColors = useHeatColors()
   const { weeks, monthLabels } = useMemo(() => {
     const totals = new Map(days.map((d) => [d.date, d.total]))
@@ -126,10 +134,10 @@ function Heatmap({ days }: { days: DailyUsage[] }) {
       weeks.push(col)
     }
     const monthLabels = weeks.map((col, w) =>
-      w === 0 || col[0].month !== weeks[w - 1][0].month ? `${col[0].month + 1}月` : ''
+      w === 0 || col[0].month !== weeks[w - 1][0].month ? t(`settings.usage.month${col[0].month + 1}`) : ''
     )
     return { weeks, monthLabels }
-  }, [days])
+  }, [days, t])
 
   const max = useMemo(() => days.reduce((a, d) => Math.max(a, d.total), 0), [days])
 
@@ -156,14 +164,20 @@ function Heatmap({ days }: { days: DailyUsage[] }) {
       {weeks[0].map((_, dow) => (
         <Fragment key={dow}>
           <div className="flex items-center justify-end pr-1 text-[10px] leading-none text-text-tertiary">
-            {dow === 1 ? '一' : dow === 3 ? '三' : dow === 5 ? '五' : ''}
+            {dow === 1
+              ? t('settings.usage.dowMon')
+              : dow === 3
+                ? t('settings.usage.dowWed')
+                : dow === 5
+                  ? t('settings.usage.dowFri')
+                  : ''}
           </div>
           {weeks.map((col, w) => {
             const c = col[dow]
             return (
               <div
                 key={w}
-                title={`${c.key} · ${c.total > 0 ? `${fmtTokens(c.total)} tokens` : '无记录'}`}
+                title={`${c.key} · ${c.total > 0 ? `${fmtTokens(c.total)} tokens` : t('settings.usage.noRecord')}`}
                 className="aspect-square w-full min-w-0 rounded-[3px] transition-transform hover:scale-125"
                 style={{
                   background: heatColors[level(c.total)],
@@ -198,6 +212,7 @@ function TrendChart({
   days: StackDay[]
   models: { name: string; color: string }[]
 }) {
+  const t = useT()
   const maxDay = Math.max(1, ...days.map((d) => d.total))
   const step = days.length > 14 ? 5 : days.length > 8 ? 2 : 1
   return (
@@ -216,7 +231,7 @@ function TrendChart({
             const tip = [
               d.date,
               ...d.parts.filter((p) => p.v > 0).map((p) => `${shortModel(p.name)} ${fmtTokens(p.v)}`),
-              `合计 ${fmtTokens(d.total)}`
+              t('settings.usage.dailyTotal', { v: fmtTokens(d.total) })
             ].join('\n')
             return (
               <div
@@ -278,6 +293,7 @@ function Donut({
   rows: { name: string; value: number; color: string }[]
   total: number
 }) {
+  const t = useT()
   const [hovered, setHovered] = useState<string | null>(null)
   const R = 62
   const C = 2 * Math.PI * R
@@ -287,7 +303,7 @@ function Donut({
     <div className="flex w-full items-center gap-6">
       <div className="relative aspect-square w-1/3 min-w-40 max-w-60 shrink-0">
         <svg viewBox="0 0 160 160" className="h-full w-full">
-          <circle cx="80" cy="80" r={R} fill="none" stroke="var(--color-surface-tertiary)" strokeWidth="16" />
+          <circle cx="80" cy="80" r={R} fill="none" stroke="var(--color-fill)" strokeWidth="16" />
           {rows.map((r) => {
             const len = total > 0 ? (r.value / total) * C : 0
             const off = acc
@@ -316,7 +332,7 @@ function Donut({
         </svg>
         <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
           <span className="text-lg font-semibold tabular-nums">{fmtTokens(total)}</span>
-          <span className="text-[11px] text-text-tertiary">tokens 总计</span>
+          <span className="text-[11px] text-text-tertiary">{t('settings.usage.tokensTotal')}</span>
         </div>
       </div>
       <div className="min-w-0 flex-1 space-y-0.5">
@@ -387,12 +403,12 @@ interface UsageTodayReport {
   totalTurns: number
 }
 
-/** 实时趋势系列(对齐 ccswitch:输入/输出/缓存命中/缓存创建) */
+/** 实时趋势系列(对齐 ccswitch:输入/输出/缓存命中/缓存创建;labelKey 指向 i18n 词条) */
 const LIVE_SERIES = [
-  { key: 'input', totalKey: 'totalInput', label: '输入', color: '#2563eb' },
-  { key: 'output', totalKey: 'totalOutput', label: '输出', color: '#16a34a' },
-  { key: 'cacheRead', totalKey: 'totalCacheRead', label: '缓存命中', color: '#7c3aed' },
-  { key: 'cacheCreation', totalKey: 'totalCacheCreation', label: '缓存创建', color: '#ea580c' }
+  { key: 'input', totalKey: 'totalInput', labelKey: 'settings.usage.seriesInput', color: '#2563eb' },
+  { key: 'output', totalKey: 'totalOutput', labelKey: 'settings.usage.seriesOutput', color: '#16a34a' },
+  { key: 'cacheRead', totalKey: 'totalCacheRead', labelKey: 'settings.usage.seriesCacheRead', color: '#7c3aed' },
+  { key: 'cacheCreation', totalKey: 'totalCacheCreation', labelKey: 'settings.usage.seriesCacheCreation', color: '#ea580c' }
 ] as const
 
 type SeriesKey = (typeof LIVE_SERIES)[number]['key']
@@ -424,6 +440,9 @@ function niceCeil(v: number): number {
  * 跟随窗口任意拉伸,不用 preserveAspectRatio(避免非等比变形)。
  */
 function LiveTrend() {
+  const t = useT()
+  /** 系列 + 本地化标签(随语言切换重渲染即可,无需 memo) */
+  const series = LIVE_SERIES.map((s) => ({ ...s, label: t(s.labelKey) }))
   const [data, setData] = useState<UsageTodayReport | null>(null)
   const [err, setErr] = useState('')
   const [updatedAt, setUpdatedAt] = useState<Date | null>(null)
@@ -460,7 +479,7 @@ function LiveTrend() {
           setUpdatedAt(new Date())
         })
         .catch((e: unknown) => {
-          if (!cancelled) setErr(e instanceof Error ? e.message : '读取失败')
+          if (!cancelled) setErr(e instanceof Error ? e.message : t('settings.usage.readFailed'))
         })
     }
     load()
@@ -489,14 +508,14 @@ function LiveTrend() {
 
   const rawMax = Math.max(
     0,
-    ...visible.flatMap((b) => LIVE_SERIES.map((s) => b[s.key as SeriesKey]))
+    ...visible.flatMap((b) => series.map((s) => b[s.key as SeriesKey]))
   )
   const yMax = niceCeil(rawMax || 1)
 
   const x = (slot: number) => PL + (slot / 47) * (width - PL - PR)
   const y = (v: number) => PT + (1 - v / yMax) * (H - PT - PB)
 
-  const paths = LIVE_SERIES.map((s) => {
+  const paths = series.map((s) => {
     const pts = visible.filter((b) => (b[s.key as SeriesKey] as number) >= 0)
     if (!pts.length) return { ...s, d: '' }
     let d = `M ${x(pts[0].slot)} ${y(pts[0][s.key as SeriesKey])}`
@@ -520,30 +539,30 @@ function LiveTrend() {
   }
 
   return (
-    <Card>
+    <SurfaceCard>
       <div className="mb-3 flex items-center justify-between">
         <div className="flex items-center gap-2">
           <span className="relative flex h-2 w-2">
             <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-success opacity-60" />
             <span className="relative inline-flex h-2 w-2 rounded-full bg-success" />
           </span>
-          <span className="text-[13px] font-medium">今日实时趋势</span>
+          <span className="text-[13px] font-medium">{t('settings.usage.liveTrend')}</span>
         </div>
         <div className="flex items-baseline gap-3 text-[12px] text-text-tertiary">
           {data && (
             <span>
-              合计 <span className="font-semibold tabular-nums text-text">{fmtTokens(totalTokens)}</span> tokens
-              · <span className="tabular-nums">{fmtCount(data.totalTurns)}</span> 条消息
+              {t('settings.usage.totalLabel')} <span className="font-semibold tabular-nums text-text">{fmtTokens(totalTokens)}</span> tokens
+              · <span className="tabular-nums">{fmtCount(data.totalTurns)}</span> {t('settings.usage.msgUnit')}
               {hitRate !== null && (
                 <>
-                  {' '}· 缓存命中率 <span className="tabular-nums text-success">{hitRate}%</span>
+                  {' '}· {t('settings.usage.cacheHitRate')} <span className="tabular-nums text-success">{hitRate}%</span>
                 </>
               )}
             </span>
           )}
           {updatedAt && (
             <span className="tabular-nums">
-              {updatedAt.toLocaleTimeString('zh-CN', { hour12: false })} 更新
+              {t('settings.usage.updatedAt', { time: updatedAt.toLocaleTimeString('zh-CN', { hour12: false }) })}
             </span>
           )}
         </div>
@@ -552,7 +571,7 @@ function LiveTrend() {
       {err ? (
         <p className="text-[12px] text-danger">{err}</p>
       ) : !data ? (
-        <Empty text="加载中…" />
+        <Empty text={t('settings.usage.loading')} />
       ) : (
         <>
           <div ref={wrapRef} className="relative">
@@ -630,7 +649,7 @@ function LiveTrend() {
                       y2={H - PB}
                       stroke="var(--color-border)"
                     />
-                    {LIVE_SERIES.map((s) => (
+                    {series.map((s) => (
                       <circle
                         key={s.key}
                         cx={x(hover)}
@@ -657,9 +676,9 @@ function LiveTrend() {
                 }}
               >
                 <p className="mb-1 text-[11px] font-medium text-text-secondary">
-                  {fmtSlot(hover)} · {hoverBucket.turns} 条消息
+                  {t('settings.usage.hoverLine', { slot: fmtSlot(hover), turns: hoverBucket.turns })}
                 </p>
-                {LIVE_SERIES.map((s) => (
+                {series.map((s) => (
                   <div key={s.key} className="flex items-center gap-1.5 text-[11px]">
                     <span className="h-1.5 w-1.5 rounded-full" style={{ background: s.color }} />
                     <span className="text-text-tertiary">{s.label}</span>
@@ -673,7 +692,7 @@ function LiveTrend() {
           </div>
           {/* 图例 */}
           <div className="mt-2 flex items-center justify-center gap-x-5">
-            {LIVE_SERIES.map((s) => (
+            {series.map((s) => (
               <span key={s.key} className="flex items-center gap-1.5 text-[12px] text-text-secondary">
                 <span className="h-2 w-2 rounded-full" style={{ background: s.color }} />
                 {s.label}
@@ -687,11 +706,12 @@ function LiveTrend() {
           </div>
         </>
       )}
-    </Card>
+    </SurfaceCard>
   )
 }
 
 export function UsageSettings() {
+  const t = useT()
   const heatColors = useHeatColors()
   const [range, setRange] = useState<RangeDays>(30)
   // 364 天全量(仅请求一次):热力图 + 统计卡中可从 days 推导的字段(tokens/models/activeDays/streak)
@@ -711,7 +731,7 @@ export function UsageSettings() {
     window.kimiApi
       .localUsageDaily(HEATMAP_DAYS)
       .then((r) => setData(r as UsageDailyReport))
-      .catch((e: unknown) => setHeatErr(e instanceof Error ? e.message : '读取热力图数据失败'))
+      .catch((e: unknown) => setHeatErr(e instanceof Error ? e.message : t('settings.usage.readHeatFailed')))
   }, [])
 
   // 仅 turns/sessions 需要按范围单独取
@@ -726,7 +746,7 @@ export function UsageSettings() {
         setErr('')
       })
       .catch((e: unknown) => {
-        if (!cancelled) setErr(e instanceof Error ? e.message : '读取使用数据失败')
+        if (!cancelled) setErr(e instanceof Error ? e.message : t('settings.usage.readUsageFailed'))
       })
       .finally(() => {
         if (!cancelled) setLoading(false)
@@ -758,18 +778,19 @@ export function UsageSettings() {
   const totalTokens = useMemo(() => modelEntries.reduce((a, [, v]) => a + v, 0), [modelEntries])
 
   /** 图表模型:Top5 + 其他,按用量降序 */
+  const otherLabel = t('settings.usage.other')
   const chartModels = useMemo(() => {
     const top = modelEntries.slice(0, 5)
     const rest = modelEntries.slice(5).reduce((a, [, v]) => a + v, 0)
     const list = top.map(([name, value], i) => ({ name, value, color: MODEL_COLORS[i] }))
-    if (rest > 0) list.push({ name: '其他', value: rest, color: MODEL_COLORS[5] })
+    if (rest > 0) list.push({ name: otherLabel, value: rest, color: MODEL_COLORS[5] })
     return list
-  }, [modelEntries])
+  }, [modelEntries, otherLabel])
 
   /** 按天补零的堆叠序列(后端只返回活跃日);按模型 / 按 Token 类型两种堆叠维度 */
   const stackedDays = useMemo<StackDay[]>(() => {
     const map = new Map(rangeDays.map((d) => [d.date, d]))
-    const topNames = new Set(chartModels.map((m) => m.name).filter((n) => n !== '其他'))
+    const topNames = new Set(chartModels.map((m) => m.name).filter((n) => n !== otherLabel))
     const out: StackDay[] = []
     const cur = todayZero()
     cur.setDate(cur.getDate() - (range - 1))
@@ -779,13 +800,13 @@ export function UsageSettings() {
       const parts: StackPart[] =
         trendMode === 'type'
           ? TOKEN_TYPE_SERIES.map((s) => ({
-              name: s.name,
+              name: t(s.nameKey),
               color: s.color,
               v: day ? day[s.key] : 0
             }))
           : chartModels.map((m) => {
               if (!day) return { name: m.name, color: m.color, v: 0 }
-              if (m.name === '其他') {
+              if (m.name === otherLabel) {
                 const v = Object.entries(day.models).reduce(
                   (a, [name, val]) => (topNames.has(name) ? a : a + val),
                   0
@@ -798,13 +819,13 @@ export function UsageSettings() {
       cur.setDate(cur.getDate() + 1)
     }
     return out
-  }, [rangeDays, range, chartModels, trendMode])
+  }, [rangeDays, range, chartModels, trendMode, otherLabel, t])
 
   /** 趋势图图例:随堆叠维度切换 */
   const trendLegend =
     trendMode === 'model'
       ? chartModels
-      : TOKEN_TYPE_SERIES.map((s) => ({ name: s.name, color: s.color }))
+      : TOKEN_TYPE_SERIES.map((s) => ({ name: t(s.nameKey), color: s.color }))
 
   /** 当前 range 的项目用量排行(wd → tokens,列表内滚动,不截断) */
   const workspaceEntries = useMemo(
@@ -819,7 +840,7 @@ export function UsageSettings() {
   const hasRangeData = totalTokens > 0
 
   /** 窗口展示口径:range=1 时读作「今日」 */
-  const rangeLabel = range === 1 ? '今日' : `最近 ${range} 天`
+  const rangeLabel = range === 1 ? t('settings.usage.rangeToday') : t('settings.usage.rangeDays', { n: range })
 
   /** 近一年累计(364 天全量窗口,长期区展示) */
   const yearTotal = useMemo(
@@ -830,71 +851,66 @@ export function UsageSettings() {
   const stats: { icon: typeof Coins; label: string; value: string; sub?: string; color?: string }[] = [
     {
       icon: Coins,
-      label: 'Token 用量',
+      label: t('settings.usage.statTokens'),
       value: data ? fmtTokens(totalTokens) : '—',
-      sub: `${rangeLabel}合计`,
+      sub: t('settings.usage.rangeTotal', { label: rangeLabel }),
       color: '#2563eb'
     },
     {
       icon: Layers,
-      label: '会话数量',
+      label: t('settings.usage.statSessions'),
       value: rangeUsage ? fmtCount(rangeUsage.sessions) : '—',
       sub: rangeLabel,
       color: '#16a34a'
     },
     {
       icon: MessagesSquare,
-      label: '消息数量',
+      label: t('settings.usage.statMessages'),
       value: rangeUsage ? fmtCount(rangeUsage.turns) : '—',
       sub: rangeLabel,
       color: '#ea580c'
     },
     {
       icon: CalendarDays,
-      label: '活跃天数',
+      label: t('settings.usage.statActiveDays'),
       value: data ? fmtCount(rangeDays.length) : '—',
-      sub: `/ ${range} 天`,
+      sub: t('settings.usage.ofDays', { n: range }),
       color: '#7c3aed'
     },
     {
       icon: Cpu,
-      label: '最常用模型',
+      label: t('settings.usage.statTopModel'),
       value: topModel ? shortModel(topModel[0]) : '—',
       sub:
         topModel && totalTokens > 0
-          ? `占比 ${((topModel[1] / totalTokens) * 100).toFixed(1)}%`
+          ? t('settings.usage.share', { p: ((topModel[1] / totalTokens) * 100).toFixed(1) })
           : undefined,
       color: '#0891b2'
     }
   ]
 
   return (
-    <Section title="使用统计" desc="Token 用量、费用和额度概览">
+    <Section title={t('settings.usage.title')} desc={t('settings.usage.desc')}>
       {err && <p className="text-[12px] text-danger">{err}</p>}
 
       {/* 今天:实时口径(30 分钟桶),不随下方筛选变化 */}
-      <GroupLabel>今天 · 实时</GroupLabel>
+      <GroupLabel>{t('settings.usage.todayRealtime')}</GroupLabel>
       <LiveTrend />
 
       {/* 近 N 天:时间筛选只作用于本分区 */}
       <div className="mb-1 mt-5 flex items-center justify-between gap-3">
         <h3 className="text-[13px] font-semibold text-primary">{rangeLabel}</h3>
-        <div className="inline-flex shrink-0 rounded-lg border border-border bg-fill p-0.5">
-          {([1, 7, 30] as const).map((r) => (
-            <button
-              key={r}
-              disabled={loading}
-              onClick={() => setRange(r)}
-              className={`rounded-md px-3 py-1 text-[12.5px] transition-colors ${
-                range === r
-                  ? 'bg-surface font-medium text-primary shadow-sm'
-                  : 'text-text-secondary hover:text-text'
-              }`}
-            >
-              {r === 1 ? '今日' : `最近 ${r} 天`}
-            </button>
-          ))}
-        </div>
+        <Segmented
+          className="shrink-0 bg-surface-tertiary"
+          value={String(range)}
+          disabled={loading}
+          options={[
+            { value: '1', label: t('settings.usage.rangeToday') },
+            { value: '7', label: t('settings.usage.rangeDays', { n: 7 }) },
+            { value: '30', label: t('settings.usage.rangeDays', { n: 30 }) }
+          ]}
+          onChange={(v) => setRange(Number(v) as RangeDays)}
+        />
       </div>
 
       <div className={`transition-opacity duration-200 ${loading ? 'opacity-60' : 'opacity-100'}`}>
@@ -904,100 +920,89 @@ export function UsageSettings() {
           ))}
         </div>
 
-        <GroupLabel>按天 Token 趋势</GroupLabel>
+        <GroupLabel>{t('settings.usage.dailyTrend')}</GroupLabel>
         {!hasRangeData ? (
-          <Empty text="暂无使用记录" />
+          <Empty text={t('settings.usage.empty')} />
         ) : (
-          <Card>
+          <SurfaceCard>
             <div className="mb-2 flex items-center justify-between">
-              <div className="inline-flex rounded-lg border border-border bg-fill p-0.5">
-                {(
-                  [
-                    ['model', '按模型'],
-                    ['type', '按 Token 类型']
-                  ] as const
-                ).map(([m, label]) => (
-                  <button
-                    key={m}
-                    onClick={() => setTrendMode(m)}
-                    className={`rounded-md px-2.5 py-0.5 text-[12px] transition-colors ${
-                      trendMode === m
-                        ? 'bg-surface font-medium text-primary shadow-sm'
-                        : 'text-text-secondary hover:text-text'
-                    }`}
-                  >
-                    {label}
-                  </button>
-                ))}
-              </div>
+              <Segmented
+                className="bg-surface-tertiary"
+                value={trendMode}
+                options={[
+                  { value: 'model', label: t('settings.usage.byModel') },
+                  { value: 'type', label: t('settings.usage.byTokenType') }
+                ]}
+                onChange={(v) => setTrendMode(v as 'model' | 'type')}
+              />
               <p className="text-[12px] tabular-nums text-text-tertiary">
-                峰值 {fmtTokens(Math.max(...stackedDays.map((d) => d.total)))} / 天
+                {t('settings.usage.peakPerDay', { v: fmtTokens(Math.max(...stackedDays.map((d) => d.total))) })}
               </p>
             </div>
             <TrendChart days={stackedDays} models={trendLegend} />
-          </Card>
+          </SurfaceCard>
         )}
 
         <div className="mt-5 grid gap-x-3 gap-y-2 xl:grid-cols-2">
           <div>
-            <h3 className="mb-1 text-[13px] font-semibold text-primary">模型用量</h3>
+            <h3 className="mb-1 text-[13px] font-semibold text-primary">{t('settings.usage.modelUsage')}</h3>
             {!hasRangeData ? (
-              <Empty text="暂无使用记录" />
+              <Empty text={t('settings.usage.empty')} />
             ) : (
-              <Card className="flex h-60 items-center">
+              <SurfaceCard className="flex h-60 items-center">
                 <Donut rows={chartModels} total={totalTokens} />
-              </Card>
+              </SurfaceCard>
             )}
           </div>
           <div>
-            <h3 className="mb-1 text-[13px] font-semibold text-primary">项目用量</h3>
+            <h3 className="mb-1 text-[13px] font-semibold text-primary">{t('settings.usage.workspaceUsage')}</h3>
             {workspaceEntries.length === 0 ? (
-              <Empty text="暂无使用记录" />
+              <Empty text={t('settings.usage.empty')} />
             ) : (
               // 与模型用量卡同高;项目超多时列表内部滚动,卡片不再被撑高
-              <Card className="h-60 overflow-y-auto">
+              <SurfaceCard className="h-60 overflow-y-auto">
                 <WorkspaceRank entries={workspaceEntries} />
-              </Card>
+              </SurfaceCard>
             )}
           </div>
         </div>
       </div>
 
       {/* 长期:全历史口径(连续天数按全窗口计算,热力图固定 52 周) */}
-      <GroupLabel>长期 · 全部历史</GroupLabel>
+      <GroupLabel>{t('settings.usage.longTerm')}</GroupLabel>
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
         <StatCard
           icon={Flame}
-          label="当前连续天数"
+          label={t('settings.usage.streakDays')}
           value={data ? fmtCount(streak) : '—'}
-          sub={data && streak > 0 ? '连续保持中' : '今天还未活跃'}
+          sub={data && streak > 0 ? t('settings.usage.streakOn') : t('settings.usage.streakOff')}
           color="#e11d48"
         />
         <StatCard
           icon={Coins}
-          label="近一年累计 Token"
+          label={t('settings.usage.yearTokens')}
           value={data ? fmtTokens(yearTotal) : '—'}
-          sub="最近 364 天"
+          sub={t('settings.usage.yearRange')}
           color="#2563eb"
         />
       </div>
       {heatErr ? (
         <p className="text-[12px] text-danger">{heatErr}</p>
       ) : data === null ? (
-        <Empty text="加载中…" />
+        <Empty text={t('settings.usage.loading')} />
       ) : data.days.length === 0 ? (
-        <Empty text="暂无使用记录" />
+        <Empty text={t('settings.usage.empty')} />
       ) : (
-        <Card>
+        <SurfaceCard>
           <Heatmap days={data.days} />
           <div className="mt-3 flex items-center justify-end gap-1 text-[11px] text-text-tertiary">
-            较少
+            {t('settings.usage.less')}
             {heatColors.map((c) => (
               <span key={c} className="h-[11px] w-[11px] rounded-[2px]" style={{ background: c }} />
             ))}
-            较多
+            {t('settings.usage.more')}
           </div>
-        </Card>
+        </SurfaceCard>
       )}
     </Section>
   )

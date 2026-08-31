@@ -7,12 +7,14 @@ import { useState } from 'react'
 import { Monitor, Plus, Server, Terminal, Trash2 } from 'lucide-react'
 import { Section, Card } from '../../components/settings/common'
 import { useUi } from '../../stores/ui'
+import { useT } from '../../i18n'
 import type { ChannelInfo } from '../../platform/kimi-api'
 
 /** 通道类型徽标:本机 / WSL / SSH */
 function ChannelBadge({ target }: { target: ChannelInfo['target'] }) {
+  const t = useT()
   const cfg: Record<ChannelInfo['target'], { label: string; cls: string }> = {
-    local: { label: '本机', cls: 'bg-primary-soft text-primary' },
+    local: { label: t('settings.channels.targetLocal'), cls: 'bg-primary-soft text-primary' },
     wsl: { label: 'WSL', cls: 'bg-emerald-500/10 text-emerald-600' },
     ssh: { label: 'SSH', cls: 'bg-sky-500/10 text-sky-600' }
   }
@@ -29,6 +31,7 @@ const TARGET_ICON: Record<ChannelInfo['target'], typeof Monitor> = {
 }
 
 export function ChannelsSettings() {
+  const t = useT()
   const channels = useUi((s) => s.channels)
   const activeChannel = useUi((s) => s.activeChannel)
   const setActiveChannel = useUi((s) => s.setActiveChannel)
@@ -76,7 +79,7 @@ export function ChannelsSettings() {
   }
 
   return (
-    <Section title="通道" desc="kimi web 服务可以同时运行在多个环境(本机 / WSL / SSH),各自独立启停、互不影响">
+    <Section title={t('settings.channels.title')} desc={t('settings.channels.desc')}>
       <Card>
         <div className="space-y-1">
           {channels.map((c) => {
@@ -97,12 +100,12 @@ export function ChannelsSettings() {
                     <ChannelBadge target={c.target} />
                     {isActive && (
                       <span className="rounded bg-primary px-1.5 py-0.5 text-[11px] font-medium text-white">
-                        当前
+                        {t('settings.channels.current')}
                       </span>
                     )}
                   </div>
                   <p className="mt-0.5 text-[11.5px] text-text-tertiary">
-                    {c.running ? '运行中,会话保持在线' : '未启动'}
+                    {c.running ? t('settings.channels.running') : t('settings.channels.stopped')}
                   </p>
                 </div>
                 <div className="flex shrink-0 items-center gap-2">
@@ -112,7 +115,7 @@ export function ChannelsSettings() {
                       disabled={busy}
                       onClick={() => void setActiveChannel(c.id)}
                     >
-                      设为当前
+                      {t('settings.channels.setActive')}
                     </button>
                   )}
                   <button
@@ -124,7 +127,11 @@ export function ChannelsSettings() {
                     disabled={busy}
                     onClick={() => void toggle(c)}
                   >
-                    {busy ? '处理中…' : c.running ? '停止' : '启动'}
+                    {busy
+                      ? t('settings.channels.busy')
+                      : c.running
+                        ? t('settings.channels.stop')
+                        : t('settings.channels.start')}
                   </button>
                   {c.id !== 'local' && (
                     <button
@@ -133,7 +140,7 @@ export function ChannelsSettings() {
                           ? 'border-danger bg-danger-soft px-2 text-[12px] text-danger'
                           : 'border-border text-text-tertiary hover:border-danger-soft hover:bg-danger-soft hover:text-danger'
                       }`}
-                      title="删除该通道(服务在跑会先停止,SSH 密码一并从凭据管理器清除)"
+                      title={t('settings.channels.deleteTitle')}
                       disabled={busy}
                       onClick={() => {
                         if (confirmDel !== c.id) {
@@ -145,7 +152,7 @@ export function ChannelsSettings() {
                         void remove(c)
                       }}
                     >
-                      {confirmDel === c.id ? '确认删除' : <Trash2 size={14} />}
+                      {confirmDel === c.id ? t('settings.channels.confirmDelete') : <Trash2 size={14} />}
                     </button>
                   )}
                 </div>
@@ -159,10 +166,10 @@ export function ChannelsSettings() {
             className="flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-[13px] font-medium text-white hover:bg-primary-hover"
             onClick={() => useUi.getState().openOnboarding(undefined, 'add')}
           >
-            <Plus size={14} /> 添加通道
+            <Plus size={14} /> {t('settings.channels.add')}
           </button>
           <p className="mt-1.5 text-[11.5px] text-text-tertiary">
-            添加 WSL / SSH 连接通道;添加后可在顶部导航切换当前通道
+            {t('settings.channels.addHint')}
           </p>
         </div>
       </Card>

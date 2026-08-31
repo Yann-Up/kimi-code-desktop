@@ -7,16 +7,12 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { ChevronDown, Plus, Save, Trash2, Undo2 } from 'lucide-react'
 import { Section, Card, GroupLabel } from '../../components/settings/common'
 import { Select } from '../../components/ui/Select'
+import { Segmented } from '../../components/ui/Segmented'
 import { Switch } from '../../components/ui/Switch'
 import { inputCls as uiInputCls, textareaCls } from '../../components/ui/Input'
+import { useT } from '../../i18n'
 
 type ServerType = 'stdio' | 'http' | 'sse'
-
-const TYPE_OPTIONS: { value: ServerType; label: string }[] = [
-  { value: 'stdio', label: 'stdio(本地命令)' },
-  { value: 'http', label: 'http(远程)' },
-  { value: 'sse', label: 'sse(远程)' }
-]
 
 interface ServerDraft {
   type: ServerType
@@ -105,6 +101,13 @@ const inputCls = uiInputCls('md', 'w-full')
 const fieldLabelCls = 'mb-1 block text-[12px] font-medium text-text-secondary'
 
 export function McpSettings() {
+  const t = useT()
+  // 类型选项标签需随语言切换,由模块级常量移入组件内
+  const TYPE_OPTIONS: { value: ServerType; label: string }[] = [
+    { value: 'stdio', label: t('settings.mcp.typeStdio') },
+    { value: 'http', label: t('settings.mcp.typeHttp') },
+    { value: 'sse', label: t('settings.mcp.typeSse') }
+  ]
   // ---------- 配置 ----------
   const [config, setConfig] = useState<Record<string, unknown> | null>(null)
   const [configErr, setConfigErr] = useState('')
@@ -187,11 +190,11 @@ export function McpSettings() {
   const applyDraft = () => {
     if (!expanded || !draft) return
     if (draft.type === 'stdio' && !draft.command.trim()) {
-      setDraftErr('stdio 类型必须填写 command')
+      setDraftErr(t('settings.mcp.errNeedCommand'))
       return
     }
     if (draft.type !== 'stdio' && !draft.url.trim()) {
-      setDraftErr('http/sse 类型必须填写 url')
+      setDraftErr(t('settings.mcp.errNeedUrl'))
       return
     }
     const name = expanded
@@ -239,10 +242,11 @@ export function McpSettings() {
 
   const submitAdd = () => {
     const name = addName.trim()
-    if (!name) return setAddErr('请填写服务器名称')
-    if (serversMap(config)[name]) return setAddErr(`服务器 “${name}” 已存在`)
-    if (addType === 'stdio' && !addCommand.trim()) return setAddErr('stdio 类型必须填写 command')
-    if (addType !== 'stdio' && !addUrl.trim()) return setAddErr('http/sse 类型必须填写 url')
+    if (!name) return setAddErr(t('settings.mcp.errNeedName'))
+    if (serversMap(config)[name]) return setAddErr(t('settings.mcp.errNameExists', { name }))
+    if (addType === 'stdio' && !addCommand.trim())
+      return setAddErr(t('settings.mcp.errNeedCommand'))
+    if (addType !== 'stdio' && !addUrl.trim()) return setAddErr(t('settings.mcp.errNeedUrl'))
     const d: ServerDraft = {
       type: addType,
       command: addCommand,
@@ -281,13 +285,13 @@ export function McpSettings() {
     try {
       const parsed = JSON.parse(jsonText) as unknown
       if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed))
-        throw new Error('顶层必须是 JSON 对象')
+        throw new Error(t('settings.mcp.errTopObject'))
       if (JSON.stringify(parsed) !== JSON.stringify(config)) setDirty(true)
       setConfig(parsed as Record<string, unknown>)
       setJsonErr('')
       setMode('visual')
     } catch (e) {
-      setJsonErr(`无法切换到可视化模式:${errMsg(e)}`)
+      setJsonErr(t('settings.mcp.errSwitchVisual', { error: errMsg(e) }))
     }
   }
 
@@ -297,11 +301,11 @@ export function McpSettings() {
       try {
         const parsed = JSON.parse(jsonText) as unknown
         if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed))
-          throw new Error('顶层必须是 JSON 对象')
+          throw new Error(t('settings.mcp.errTopObject'))
         data = parsed as Record<string, unknown>
         setJsonErr('')
       } catch (e) {
-        setJsonErr(`JSON 解析失败:${errMsg(e)}`)
+        setJsonErr(t('settings.mcp.errJsonParse', { error: errMsg(e) }))
         return
       }
     } else {
@@ -314,9 +318,9 @@ export function McpSettings() {
       setConfig(data)
       setJsonText(JSON.stringify(data, null, 2))
       setDirty(false)
-      flashSaveMsg({ ok: true, text: '已保存(配置已自动备份),重启 MCP 服务器后生效' })
+      flashSaveMsg({ ok: true, text: t('settings.mcp.savedOk') })
     } catch (e) {
-      flashSaveMsg({ ok: false, text: `保存失败:${errMsg(e)}` })
+      flashSaveMsg({ ok: false, text: t('settings.mcp.saveFailed', { error: errMsg(e) }) })
     } finally {
       setSaving(false)
     }
@@ -332,29 +336,26 @@ export function McpSettings() {
   return (
     <Section
       title="MCP"
-      desc={`全局(用户级)MCP 服务器配置,文件位于当前数据目录下:\n${kimiHome ? `${kimiHome}/mcp.json` : '<数据目录>/mcp.json'}\n项目级 .kimi-code/mcp.json 不在此管理;保存后重启 MCP 服务器生效`}
+      desc={t('settings.mcp.desc', {
+        path: `${kimiHome || `<${t('settings.mcp.dataDirName')}>`}/mcp.json`
+      })}
     >
       {/* ---------- 配置编辑器 ---------- */}
-      <GroupLabel>服务器配置</GroupLabel>
+      <GroupLabel>{t('settings.mcp.serverConfig')}</GroupLabel>
       <Card>
         {/* 工具栏:模式切换 + 撤销/保存 */}
         <div className="flex items-center gap-2">
-          <div className="flex rounded-lg bg-fill p-0.5">
-            {(['visual', 'json'] as const).map((m) => (
-              <button
-                key={m}
-                className={`rounded-md px-3 py-1 text-[12.5px] transition-colors ${
-                  mode === m ? 'bg-surface font-medium text-text shadow-sm' : 'text-text-secondary hover:text-text'
-                }`}
-                onClick={() => switchMode(m)}
-              >
-                {m === 'visual' ? '可视化' : '原始 JSON'}
-              </button>
-            ))}
-          </div>
+          <Segmented
+            value={mode}
+            options={[
+              { value: 'visual', label: t('settings.mcp.modeVisual') },
+              { value: 'json', label: t('settings.mcp.modeJson') }
+            ]}
+            onChange={(v) => switchMode(v as 'visual' | 'json')}
+          />
           {dirty && (
             <span className="inline-flex items-center gap-1.5 text-[12px] text-warning">
-              <span className="h-1.5 w-1.5 rounded-full bg-current" /> 有未保存的更改
+              <span className="h-1.5 w-1.5 rounded-full bg-current" /> {t('settings.mcp.unsaved')}
             </span>
           )}
           <div className="ml-auto flex items-center gap-2">
@@ -363,14 +364,14 @@ export function McpSettings() {
               disabled={!dirty || saving}
               onClick={undo}
             >
-              <Undo2 size={12} /> 撤销
+              <Undo2 size={12} /> {t('settings.mcp.undo')}
             </button>
             <button
               className="inline-flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-[12.5px] font-medium text-white transition-colors hover:bg-primary-hover disabled:opacity-50"
               disabled={saving || (!dirty && mode === 'visual')}
               onClick={() => void save()}
             >
-              <Save size={12} /> {saving ? '保存中…' : '保存配置'}
+              <Save size={12} /> {saving ? t('settings.mcp.saving') : t('settings.mcp.save')}
             </button>
           </div>
         </div>
@@ -385,7 +386,7 @@ export function McpSettings() {
         )}
         {configErr && (
           <p className="mt-3 rounded-lg bg-danger-soft px-2.5 py-1.5 text-[12px] text-danger">
-            配置读取失败(将使用空配置):{configErr}
+            {t('settings.mcp.readFailed', { error: configErr })}
           </p>
         )}
 
@@ -409,7 +410,7 @@ export function McpSettings() {
           <div className="mt-3 space-y-2">
             {names.length === 0 && (
               <p className="rounded-lg border border-dashed border-border py-6 text-center text-[12.5px] text-text-tertiary">
-                暂无 MCP 服务器配置,点击下方“添加服务器”开始
+                {t('settings.mcp.empty')}
               </p>
             )}
             {names.map((name) => {
@@ -435,13 +436,13 @@ export function McpSettings() {
                       </span>
                       {!enabled && (
                         <span className="shrink-0 rounded bg-fill px-1.5 py-0.5 text-[10.5px] text-text-tertiary">
-                          已禁用
+                          {t('settings.mcp.disabled')}
                         </span>
                       )}
                     </button>
                     <Switch
                       checked={enabled}
-                      title={enabled ? '点击禁用' : '点击启用'}
+                      title={enabled ? t('settings.mcp.clickDisable') : t('settings.mcp.clickEnable')}
                       onChange={() => toggleEnabled(name)}
                     />
                     {confirmDel === name ? (
@@ -449,12 +450,12 @@ export function McpSettings() {
                         className="shrink-0 rounded-lg bg-danger px-2.5 py-1 text-[12px] font-medium text-white transition-colors hover:opacity-90"
                         onClick={() => askDelete(name)}
                       >
-                        确认删除?
+                        {t('settings.mcp.confirmDelete')}
                       </button>
                     ) : (
                       <button
                         className="shrink-0 rounded-lg border border-border p-1.5 text-text-tertiary transition-colors hover:bg-danger-soft hover:text-danger"
-                        title="删除"
+                        title={t('settings.mcp.delete')}
                         onClick={() => askDelete(name)}
                       >
                         <Trash2 size={13} />
@@ -467,7 +468,7 @@ export function McpSettings() {
                     <div className="space-y-3 border-t border-border-light px-3 py-3">
                       <div className="grid grid-cols-2 gap-3">
                         <div>
-                          <label className={fieldLabelCls}>类型</label>
+                          <label className={fieldLabelCls}>{t('settings.mcp.type')}</label>
                           <Select
                             className="w-full"
                             size="md"
@@ -482,7 +483,7 @@ export function McpSettings() {
                               checked={draft.enabled}
                               onChange={(next) => setDraft({ ...draft, enabled: next })}
                             />
-                            启用
+                            {t('settings.mcp.enable')}
                           </label>
                         </div>
                       </div>
@@ -499,7 +500,7 @@ export function McpSettings() {
                             />
                           </div>
                           <div>
-                            <label className={fieldLabelCls}>args(每行一个)</label>
+                            <label className={fieldLabelCls}>{t('settings.mcp.argsLabel')}</label>
                             <textarea
                               className={textareaCls('w-full h-20 font-mono')}
                               placeholder={'-y\n@modelcontextprotocol/server-filesystem\n/path'}
@@ -508,7 +509,7 @@ export function McpSettings() {
                             />
                           </div>
                           <div>
-                            <label className={fieldLabelCls}>env(每行 KEY=VALUE)</label>
+                            <label className={fieldLabelCls}>{t('settings.mcp.envLabel')}</label>
                             <textarea
                               className={textareaCls('w-full h-16 font-mono')}
                               placeholder="API_KEY=xxx"
@@ -529,7 +530,7 @@ export function McpSettings() {
                             />
                           </div>
                           <div>
-                            <label className={fieldLabelCls}>headers(每行 KEY=VALUE)</label>
+                            <label className={fieldLabelCls}>{t('settings.mcp.headersLabel')}</label>
                             <textarea
                               className={textareaCls('w-full h-16 font-mono')}
                               placeholder="Authorization=Bearer xxx"
@@ -546,13 +547,13 @@ export function McpSettings() {
                           className="rounded-lg border border-border px-3 py-1.5 text-[12.5px] text-text transition-colors hover:bg-fill"
                           onClick={() => openEditor(name)}
                         >
-                          取消
+                          {t('settings.mcp.cancel')}
                         </button>
                         <button
                           className="rounded-lg bg-primary px-3 py-1.5 text-[12.5px] font-medium text-white transition-colors hover:bg-primary-hover"
                           onClick={applyDraft}
                         >
-                          应用更改
+                          {t('settings.mcp.apply')}
                         </button>
                       </div>
                     </div>
@@ -566,7 +567,7 @@ export function McpSettings() {
               <div className="space-y-3 rounded-lg border border-primary-border bg-primary-soft/40 px-3 py-3">
                 <div className="grid grid-cols-2 gap-3">
                   <div>
-                    <label className={fieldLabelCls}>名称</label>
+                    <label className={fieldLabelCls}>{t('settings.mcp.name')}</label>
                     <input
                       className={inputCls}
                       placeholder="my-server"
@@ -575,7 +576,7 @@ export function McpSettings() {
                     />
                   </div>
                   <div>
-                    <label className={fieldLabelCls}>类型</label>
+                    <label className={fieldLabelCls}>{t('settings.mcp.type')}</label>
                     <Select
                       className="w-full"
                       size="md"
@@ -597,7 +598,7 @@ export function McpSettings() {
                       />
                     </div>
                     <div>
-                      <label className={fieldLabelCls}>args(每行一个)</label>
+                      <label className={fieldLabelCls}>{t('settings.mcp.argsLabel')}</label>
                       <textarea
                         className={textareaCls('w-full h-20 font-mono')}
                         value={addArgs}
@@ -605,7 +606,7 @@ export function McpSettings() {
                       />
                     </div>
                     <div>
-                      <label className={fieldLabelCls}>env(每行 KEY=VALUE,可选)</label>
+                      <label className={fieldLabelCls}>{t('settings.mcp.envLabelOptional')}</label>
                       <textarea
                         className={textareaCls('w-full h-16 font-mono')}
                         value={addEnv}
@@ -625,7 +626,7 @@ export function McpSettings() {
                       />
                     </div>
                     <div>
-                      <label className={fieldLabelCls}>headers(每行 KEY=VALUE,可选)</label>
+                      <label className={fieldLabelCls}>{t('settings.mcp.headersLabelOptional')}</label>
                       <textarea
                         className={textareaCls('w-full h-16 font-mono')}
                         value={addHeaders}
@@ -643,13 +644,13 @@ export function McpSettings() {
                       setAddErr('')
                     }}
                   >
-                    取消
+                    {t('settings.mcp.cancel')}
                   </button>
                   <button
                     className="inline-flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-[12.5px] font-medium text-white transition-colors hover:bg-primary-hover"
                     onClick={submitAdd}
                   >
-                    <Plus size={12} /> 添加
+                    <Plus size={12} /> {t('settings.mcp.add')}
                   </button>
                 </div>
               </div>
@@ -658,7 +659,7 @@ export function McpSettings() {
                 className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-dashed border-border py-2.5 text-[12.5px] text-text-secondary transition-colors hover:border-primary hover:bg-primary-soft hover:text-primary"
                 onClick={() => setShowAdd(true)}
               >
-                <Plus size={13} /> 添加服务器
+                <Plus size={13} /> {t('settings.mcp.addServer')}
               </button>
             )}
           </div>

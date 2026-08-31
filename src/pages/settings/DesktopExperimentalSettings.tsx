@@ -9,8 +9,10 @@ import type { PetInfo } from '../../platform/kimi-api'
 import { useUi } from '../../stores/ui'
 import { Select } from '../../components/ui/Select'
 import { Switch } from '../../components/ui/Switch'
+import { useT } from '../../i18n'
 
 export function DesktopExperimentalSettings() {
+  const t = useT()
   // 对话 iframe 桥接健康(chatPrefsBridge 自检上报;官方改版导致契约失效时此处可见)
   const bridgeHealth = useUi((s) => s.bridgeHealth)
   // 桌宠:开关状态与写入中标记
@@ -93,19 +95,14 @@ export function DesktopExperimentalSettings() {
   }, [skinEnabled])
 
   return (
-    <Section
-      title="实验性功能"
-      desc="桌面端自身的实验性特性,可能不稳定,后续版本可能调整或移除;如遇异常关闭对应开关即可"
-    >
-      <GroupLabel>桌宠</GroupLabel>
+    <Section title={t('settings.exp.title')} desc={t('settings.deskExp.desc')}>
+      <GroupLabel>{t('settings.deskExp.pet')}</GroupLabel>
       <Card>
         {/* 桌宠:透明置顶悬浮窗,渲染本地 spritesheet */}
         <div className="flex items-center justify-between">
           <div>
-            <p className="text-[13px] font-[475]">桌宠</p>
-            <p className="text-[12px] text-text-tertiary">
-              在桌面悬浮一只宠物,随 Kimi Code 任务状态切换动作(左键拖动)
-            </p>
+            <p className="text-[13px] font-[475]">{t('settings.deskExp.pet')}</p>
+            <p className="text-[12px] text-text-tertiary">{t('settings.deskExp.petDesc')}</p>
             {petError && <p className="mt-1 text-[12px] text-danger">{petError}</p>}
           </div>
           <Switch
@@ -126,12 +123,12 @@ export function DesktopExperimentalSettings() {
         {petEnabled && (
           <div className="mt-3 flex items-center justify-between gap-3 border-t border-border pt-3">
             <div className="min-w-0">
-              <p className="text-[13px] font-[475]">宠物形象</p>
+              <p className="text-[13px] font-[475]">{t('settings.deskExp.petAvatar')}</p>
               <p className="text-[12px] text-text-tertiary">
-                外部宠物扫描自应用数据目录的 pets/(导入的宠物存这里)、kimi-code 数据目录与 ~/.petdex/pets/(需含 pet.json 与精灵图);切换即时生效
+                {t('settings.deskExp.petScanDesc')}
               </p>
               <p className="text-[12px] text-text-tertiary">
-                导入 zip 时,目录名与显示名优先取 pet.json 的 slug/id/displayName/name 字段,这些字段都没有时才用 zip 文件名
+                {t('settings.deskExp.petImportDesc')}
               </p>
             </div>
             <div className="flex shrink-0 items-center gap-2">
@@ -141,7 +138,7 @@ export function DesktopExperimentalSettings() {
                   petBusy ? 'pointer-events-none opacity-50' : ''
                 }`}
               >
-                导入 zip
+                {t('settings.deskExp.importZip')}
                 <input
                   type="file"
                   accept=".zip"
@@ -152,7 +149,7 @@ export function DesktopExperimentalSettings() {
                     e.target.value = ''
                     if (!f) return
                     if (f.size > 32 * 1024 * 1024) {
-                      setPetError('宠物包过大(上限 32MB)')
+                      setPetError(t('settings.deskExp.petTooLarge'))
                       return
                     }
                     setPetBusy(true)
@@ -199,9 +196,9 @@ export function DesktopExperimentalSettings() {
         {petEnabled && (
           <div className="mt-3 flex items-center justify-between border-t border-border pt-3">
             <div className="min-w-0">
-              <p className="text-[13px] font-[475]">点击穿透</p>
+              <p className="text-[13px] font-[475]">{t('settings.deskExp.clickThrough')}</p>
               <p className="text-[12px] text-text-tertiary">
-                开启后鼠标直接穿过桌宠(无法拖动或右键),需回本页关闭
+                {t('settings.deskExp.clickThroughDesc')}
               </p>
             </div>
             <Switch
@@ -224,9 +221,9 @@ export function DesktopExperimentalSettings() {
         {petEnabled && (
           <div className="mt-3 flex items-center justify-between gap-3 border-t border-border pt-3">
             <div className="min-w-0">
-              <p className="text-[13px] font-[475]">闲置时四处走动</p>
+              <p className="text-[13px] font-[475]">{t('settings.deskExp.wander')}</p>
               <p className="text-[12px] text-text-tertiary">
-                空闲时宠物会在屏幕上随机溜达,来活了就停下
+                {t('settings.deskExp.wanderDesc')}
               </p>
             </div>
             <Switch
@@ -245,14 +242,14 @@ export function DesktopExperimentalSettings() {
           </div>
         )}
       </Card>
-      <GroupLabel>皮肤</GroupLabel>
+      <GroupLabel>{t('settings.deskExp.skin')}</GroupLabel>
       <Card>
         {/* 皮肤立绘:主页/统计/设置页右侧显示内置立绘(SkinStandee),对话 iframe 不生效 */}
         <div className="flex items-center justify-between">
           <div>
-            <p className="text-[13px] font-[475]">背景立绘</p>
+            <p className="text-[13px] font-[475]">{t('settings.deskExp.standee')}</p>
             <p className="text-[12px] text-text-tertiary">
-              在主页、统计、设置页右侧显示内置立绘(对话页不生效)
+              {t('settings.deskExp.standeeDesc')}
             </p>
             {skinError && <p className="mt-1 text-[12px] text-danger">{skinError}</p>}
           </div>
@@ -282,9 +279,9 @@ export function DesktopExperimentalSettings() {
                 draggable={false}
               />
               <div className="min-w-0">
-                <p className="text-[13px] font-[475]">皮肤形象</p>
+                <p className="text-[13px] font-[475]">{t('settings.deskExp.skinAvatar')}</p>
                 <p className="text-[12px] text-text-tertiary">
-                  除内置皮肤外,也可把自己的图片(png/webp/jpg)放进皮肤目录使用,
+                  {t('settings.deskExp.skinDirPre')}
                   <button
                     className="text-primary hover:underline"
                     onClick={() => {
@@ -296,9 +293,9 @@ export function DesktopExperimentalSettings() {
                         )
                     }}
                   >
-                    打开皮肤目录
+                    {t('settings.deskExp.skinDirLink')}
                   </button>
-                  ;放入后重开本页即可选择
+                  {t('settings.deskExp.skinDirPost')}
                 </p>
               </div>
             </div>
@@ -315,7 +312,7 @@ export function DesktopExperimentalSettings() {
               }}
               options={skinOptions.map((s) => ({
                 value: s.slug,
-                label: s.name + (s.source === 'custom' ? '(自选)' : '')
+                label: s.name + (s.source === 'custom' ? t('settings.deskExp.customSuffix') : '')
               }))}
             />
           </div>
@@ -324,9 +321,9 @@ export function DesktopExperimentalSettings() {
         {skinEnabled && (
           <div className="mt-3 flex items-center justify-between gap-3 border-t border-border pt-3">
             <div className="min-w-0">
-              <p className="text-[13px] font-[475]">卡片不透明度</p>
+              <p className="text-[13px] font-[475]">{t('settings.deskExp.opacity')}</p>
               <p className="text-[12px] text-text-tertiary">
-                数值越低,立绘从卡片下透出越明显(30% - 100%)
+                {t('settings.deskExp.opacityDesc')}
               </p>
             </div>
             <div className="flex shrink-0 items-center gap-2">
@@ -358,9 +355,9 @@ export function DesktopExperimentalSettings() {
         {skinEnabled && (
           <div className="mt-3 flex items-center justify-between gap-3 border-t border-border pt-3">
             <div className="min-w-0">
-              <p className="text-[13px] font-[475]">对话页内显示立绘</p>
+              <p className="text-[13px] font-[475]">{t('settings.deskExp.inChat')}</p>
               <p className="text-[12px] text-text-tertiary">
-                在对话窗口(官方 web UI)右下角叠加显示当前皮肤立绘
+                {t('settings.deskExp.inChatDesc')}
               </p>
             </div>
             <Switch
@@ -382,13 +379,13 @@ export function DesktopExperimentalSettings() {
 
       {/* 页面桥接:皮肤立绘与主题/语言跟随都依赖注入官方 web UI 的桥接脚本,
           官方改版导致契约失效时降级为"不生效但不影响官方页面",此处给出可见状态 */}
-      <GroupLabel>页面桥接</GroupLabel>
+      <GroupLabel>{t('settings.deskExp.bridge')}</GroupLabel>
       <Card>
         <div className="flex items-center justify-between gap-3">
           <div className="min-w-0">
-            <p className="text-[13px] font-[475]">官方页面桥接</p>
+            <p className="text-[13px] font-[475]">{t('settings.deskExp.bridgeTitle')}</p>
             <p className="text-[12px] text-text-tertiary">
-              皮肤立绘、主题/语言跟随依赖注入官方 web UI 的桥接脚本
+              {t('settings.deskExp.bridgeDesc')}
             </p>
             {bridgeHealth?.detail && (
               <p className="mt-1 break-all font-mono text-[11px] text-text-tertiary">
@@ -406,10 +403,10 @@ export function DesktopExperimentalSettings() {
             }`}
           >
             {bridgeHealth === null
-              ? '未连接(对话服务未启动)'
+              ? t('settings.deskExp.bridgeNone')
               : bridgeHealth.ok
-                ? '正常'
-                : '降级:官方主题契约缺失(官方可能已改版)'}
+                ? t('settings.deskExp.bridgeOk')
+                : t('settings.deskExp.bridgeDegraded')}
           </span>
         </div>
       </Card>

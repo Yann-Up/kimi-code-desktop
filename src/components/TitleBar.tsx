@@ -1,10 +1,12 @@
-import { BarChart3, Minus, Moon, RadioTower, Settings, Square, Sun, X } from 'lucide-react'
+import { ArrowDownToLine, BarChart3, Loader2, MessageSquare, Minus, Moon, RadioTower, Settings, Square, Sun, X } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import logoUrl from '../assets/logo.png'
-import { useUi, type ShellView } from '../stores/ui'
+import { useUi, resolveTheme, type ShellView } from '../stores/ui'
 import { QuotaStrip } from './QuotaStrip'
+import { UpdateDialog } from './UpdateDialog'
 import { pushThemeToFrames } from './chatPrefsBridge'
 import { Select } from './ui/Select'
+import { useT } from '../i18n'
 
 /** 标题栏图标按钮统一式样(对齐官方幽灵按钮:透明底 + hover 中性灰) */
 const ICON_BTN =
@@ -24,6 +26,7 @@ function Tip({ text, align = 'center' }: { text: string; align?: 'center' | 'rig
 }
 
 export function TitleBar() {
+  const t = useT()
   const [cliVersion, setCliVersion] = useState<string>('')
   const activeChannel = useUi((s) => s.activeChannel)
   const channels = useUi((s) => s.channels)
@@ -32,6 +35,52 @@ export function TitleBar() {
   const setView = useUi((s) => s.setView)
   const theme = useUi((s) => s.theme)
   const setTheme = useUi((s) => s.setTheme)
+  // 应用更新:启动静默自检/设置页检查写入 store;有新版本且未被忽略时标题栏按钮出红点
+  const appUpdate = useUi((s) => s.appUpdate)
+  const appUpdateIgnored = useUi((s) => s.appUpdateIgnored)
+  const [updateOpen, setUpdateOpen] = useState(false)
+  const [updateChecking, setUpdateChecking] = useState(false)
+  // 手动检查的瞬时反馈(已是最新/检查失败),2.5s 自动消失
+  const [updateFeedback, setUpdateFeedback] = useState<string | null>(null)
+  const updateVisible = appUpdate !== null && appUpdate.version !== appUpdateIgnored
+
+  // 挂载时静默检查一次(store 为空才查;release 由 Rust 启动自检兜底,dev 下这是唯一自动检查途径)
+  useEffect(() => {
+    if (useUi.getState().appUpdate) return
+    window.kimiApi
+      .appUpdateCheck()
+      .then((r) => r && useUi.getState().setAppUpdate(r))
+      .catch(() => {})
+  }, [])
+
+  useEffect(() => {
+    if (!updateFeedback) return
+    const timer = setTimeout(() => setUpdateFeedback(null), 2500)
+    return () => clearTimeout(timer)
+  }, [updateFeedback])
+
+  /** 点击更新按钮 = 手动检查:已有结果直接开弹窗;查到新版写 store(出红点)并开弹窗 */
+  const clickUpdate = () => {
+    if (updateVisible) {
+      setUpdateOpen(true)
+      return
+    }
+    if (updateChecking) return
+    setUpdateChecking(true)
+    setUpdateFeedback(null)
+    window.kimiApi
+      .appUpdateCheck()
+      .then((r) => {
+        if (r) {
+          useUi.getState().setAppUpdate(r)
+          setUpdateOpen(true)
+        } else {
+          setUpdateFeedback(t('titlebar.upToDate'))
+        }
+      })
+      .catch((e) => setUpdateFeedback(e instanceof Error ? e.message : String(e)))
+      .finally(() => setUpdateChecking(false))
+  }
 
   useEffect(() => {
     // CLI 版本跟随激活通道:切换通道后重探
@@ -48,10 +97,11 @@ export function TitleBar() {
   /** 图标导航:统计/设置 toggle,再点一次回对话 */
   const toggleView = (v: ShellView) => setView(view === v ? 'chat' : v)
 
-  /** 主题切换:翻转壳主题(持久化 + data-theme)并反推所有对话 iframe(官方无刷新跟随;
-   *  已知行为:会把官方的 system 态写成显式 light/dark) */
+  /** 主题切换:按当前实际明暗翻转成显式 light/dark(持久化 + data-theme)并反推所有对话
+   *  iframe(官方无刷新跟随;system 态下点按 = 钉到当前系统明暗的反态) */
+  const effective = resolveTheme(theme)
   const toggleTheme = () => {
-    const next = theme === 'dark' ? 'light' : 'dark'
+    const next = effective === 'dark' ? 'light' : 'dark'
     setTheme(next)
     pushThemeToFrames(next)
   }
@@ -72,11 +122,11 @@ export function TitleBar() {
             <Select
               size="sm"
               className="h-7 w-[130px] px-2 text-[11.5px]"
-              title="切换连接通道"
+              title={t('titlebar.switchChannel')}
               value={activeChannel}
               options={channels.map((c) => ({
                 value: c.id,
-                label: c.label + (c.running ? '' : ' (未启动)')
+                label: c.label + (c.running ? '' : t('titlebar.notRunningSuffix'))
               }))}
               onChange={(v) => void setActiveChannel(v)}
             />
@@ -85,27 +135,52 @@ export function TitleBar() {
       </div>
       {/* Tauri 拖区在父级,这里阻止 mousedown 冒泡保证按钮可点 */}
       <div className="flex h-full items-center gap-1" onMouseDown={(e) => e.stopPropagation()}>
-        {/* 操作图标:铺平额度条 / 统计 / 设置 / 主题切换(版本升级在 设置→常规,不占标题栏) */}
+        {/* 操作图标:铺平额度条 / 对话 / 统计 / 设置 / 检查更新(常驻,有新版出红点) / 主题切换(版本升级同时保留在 设置→常规) */}
         <div className="mr-3 flex h-full items-center">
           <QuotaStrip />
         </div>
+        <button
+          className={`${ICON_BTN} ${view === 'chat' ? 'bg-surface-tertiary text-text' : ''}`}
+          onClick={() => setView('chat')}
+        >
+          <MessageSquare size={16} />
+          <Tip text={t('titlebar.navChat')} />
+        </button>
         <button
           className={`${ICON_BTN} ${view === 'stats' ? 'bg-surface-tertiary text-text' : ''}`}
           onClick={() => toggleView('stats')}
         >
           <BarChart3 size={16} />
-          <Tip text="用量统计" />
+          <Tip text={t('titlebar.navStats')} />
         </button>
         <button
           className={`${ICON_BTN} ${view === 'settings' ? 'bg-surface-tertiary text-text' : ''}`}
           onClick={() => toggleView('settings')}
         >
           <Settings size={16} />
-          <Tip text="设置" />
+          <Tip text={t('titlebar.navSettings')} />
+        </button>
+        {/* 应用更新:常驻按钮,点击=检查更新;有新版本且未忽略时出红点并直接开「发现新版本」弹窗 */}
+        <button className={ICON_BTN} onClick={clickUpdate}>
+          {updateChecking ? (
+            <Loader2 size={16} className="animate-spin" />
+          ) : (
+            <ArrowDownToLine size={16} />
+          )}
+          {updateVisible && !updateChecking && (
+            <span className="absolute right-1 top-1 h-2 w-2 rounded-full bg-danger" />
+          )}
+          <Tip text={appUpdate ? t('titlebar.newVersionFound', { version: appUpdate.version }) : t('titlebar.checkUpdate')} />
+          {/* 手动检查结果反馈:复用 Tip 的黑底胶囊样式,常显 2.5s */}
+          {updateFeedback && (
+            <span className="pointer-events-none absolute top-full z-[600] mt-1 whitespace-nowrap rounded-md bg-[#1f1f1f] px-2 py-1 text-[11px] font-normal text-white shadow-lg">
+              {updateFeedback}
+            </span>
+          )}
         </button>
         <button className={ICON_BTN} onClick={toggleTheme}>
-          {theme === 'dark' ? <Sun size={16} /> : <Moon size={16} />}
-          <Tip text={theme === 'dark' ? '切换为浅色主题' : '切换为深色主题'} />
+          {effective === 'dark' ? <Sun size={16} /> : <Moon size={16} />}
+          <Tip text={effective === 'dark' ? t('titlebar.themeToLight') : t('titlebar.themeToDark')} />
         </button>
 
         <span className="mx-2 h-4 w-px shrink-0 bg-border" />
@@ -116,23 +191,26 @@ export function TitleBar() {
           onClick={() => window.kimiApi.windowControl('minimize')}
         >
           <Minus size={15} />
-          <Tip text="最小化" align="right" />
+          <Tip text={t('titlebar.minimize')} align="right" />
         </button>
         <button
           className="no-drag group relative flex h-full w-11 items-center justify-center text-text-secondary hover:bg-surface-tertiary hover:text-text"
           onClick={() => window.kimiApi.windowControl('maximize')}
         >
           <Square size={13} />
-          <Tip text="最大化 / 还原" align="right" />
+          <Tip text={t('titlebar.maximizeRestore')} align="right" />
         </button>
         <button
           className="no-drag group relative flex h-full w-11 items-center justify-center text-text-secondary hover:bg-danger hover:text-white"
           onClick={() => window.kimiApi.windowControl('close')}
         >
           <X size={16} />
-          <Tip text="关闭" align="right" />
+          <Tip text={t('titlebar.close')} align="right" />
         </button>
       </div>
+      {updateOpen && appUpdate && (
+        <UpdateDialog info={appUpdate} onClose={() => setUpdateOpen(false)} />
+      )}
     </div>
   )
 }

@@ -5,6 +5,7 @@
 import { useState } from 'react'
 import { Card, GroupLabel } from '../../components/settings/common'
 import { useCliConfig, type CliConfig } from '../../hooks/useCliConfig'
+import { useT } from '../../i18n'
 import {
   bool,
   CliConfigGate,
@@ -24,24 +25,26 @@ const EFFORT_OPTIONS = [
   { value: 'max', label: 'max' }
 ]
 
-const KEEP_OPTIONS = [
-  { value: 'all', label: 'all(保留历史思考内容)' },
-  { value: 'off', label: 'off(关闭)' }
-]
-
 export function CliThinkingSettings() {
+  const t = useT()
   const { config, loading, error, reload, saveSection, offline } = useCliConfig()
   return (
-    <CliConfigGate title="思考" desc="Thinking 模式的全局默认行为(config.toml [thinking] 块)" loading={loading} error={error} onRetry={reload} offline={offline}>
+    <CliConfigGate title={t('settings.cliThinking')} desc={t('settings.cliThinking.desc')} loading={loading} error={error} onRetry={reload} offline={offline}>
       <ThinkingForm config={config ?? {}} saveSection={saveSection} offline={offline} />
     </CliConfigGate>
   )
 }
 
 function ThinkingForm({ config, saveSection, offline }: { config: CliConfig; saveSection: (p: Record<string, unknown>) => Promise<void>; offline: boolean }) {
+  const t = useT()
   const [enabled, setEnabled] = useState<boolean>(bool(nested(config, 'thinking', 'enabled'), true))
   const [effort, setEffort] = useState<string>(str(nested(config, 'thinking', 'effort')))
   const [keep, setKeep] = useState<string>(str(nested(config, 'thinking', 'keep')) || 'all')
+
+  const KEEP_OPTIONS = [
+    { value: 'all', label: t('settings.cliThinking.keepAll') },
+    { value: 'off', label: t('settings.cliThinking.keepOff') }
+  ]
 
   const { saving, saved, error, save } = useSaveState()
 
@@ -58,29 +61,29 @@ function ThinkingForm({ config, saveSection, offline }: { config: CliConfig; sav
       <GroupLabel>Thinking</GroupLabel>
       <Card className="space-y-4">
         <ToggleField
-          label="默认开启思考"
-          desc="新会话默认启用 Thinking 模式;关闭则强制不思考"
+          label={t('settings.cliThinking.enableLabel')}
+          desc={t('settings.cliThinking.enableDesc')}
           checked={enabled}
           onChange={setEnabled}
         />
         <SelectField
-          label="思考强度(effort)"
-          desc="Kimi 模型若配置值不在 support_efforts 列表中,会回退到该模型的默认强度;留空跟随模型默认"
-          placeholder="未设置(跟随模型默认)"
+          label={t('settings.cliThinking.effortLabel')}
+          desc={t('settings.cliThinking.effortDesc')}
+          placeholder={t('settings.cliThinking.effortPlaceholder')}
           value={effort}
           onChange={setEffort}
           options={EFFORT_OPTIONS}
         />
         <SelectField
-          label="保留历史思考(keep)"
-          desc="保留之前轮次的思考内容供后续参考;关闭后不保留"
+          label={t('settings.cliThinking.keepLabel')}
+          desc={t('settings.cliThinking.keepDesc')}
           value={keep}
           onChange={setKeep}
           options={KEEP_OPTIONS}
         />
       </Card>
 
-      <SaveBar saving={saving} saved={saved} error={error} onSave={onSave} savedText={offline ? '已写入 config.toml;重启服务后新会话生效' : undefined} />
+      <SaveBar saving={saving} saved={saved} error={error} onSave={onSave} savedText={offline ? t('settings.cliCommon.savedOffline') : undefined} />
     </>
   )
 }

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Bot, X } from 'lucide-react'
 import { Section, Card, GroupLabel, Empty } from '../../components/settings/common'
+import { useT } from '../../i18n'
 
 interface AgentProfile {
   name: string
@@ -18,22 +19,24 @@ function errMsg(e: unknown, fallback: string): string {
 
 /** 来源徽标:内置 / ~/.agents / 数据目录(卡片与详情弹层共用) */
 function ScopeBadge({ profile }: { profile: AgentProfile }) {
+  const t = useT()
   if (profile.builtin) {
     return (
       <span className="shrink-0 rounded-full border border-primary-border bg-primary-soft px-1.5 py-px text-[11px] text-primary">
-        内置
+        {t('settings.subagents.builtin')}
       </span>
     )
   }
   return (
     <span className="shrink-0 rounded-full border border-border bg-fill px-1.5 py-px text-[11px] text-text-tertiary">
-      {profile.scope === 'agents' ? '~/.agents' : '数据目录'}
+      {profile.scope === 'agents' ? '~/.agents' : t('settings.subagents.scopeDataDir')}
     </span>
   )
 }
 
 /** 子智能体设置:只读展示全局(用户级)profile;项目级与会话内的委派由官方 UI 管理 */
 export function SubagentsSettings() {
+  const t = useT()
   const [profiles, setProfiles] = useState<AgentProfile[]>([])
   const [profilesError, setProfilesError] = useState('')
   const [kimiHome, setKimiHome] = useState('')
@@ -43,7 +46,7 @@ export function SubagentsSettings() {
     window.kimiApi
       .localAgents()
       .then((v) => setProfiles(Array.isArray(v) ? (v as AgentProfile[]) : []))
-      .catch((e) => setProfilesError(errMsg(e, '加载子智能体列表失败')))
+      .catch((e) => setProfilesError(errMsg(e, t('settings.subagents.loadFailed'))))
     window.kimiApi
       .kimiHomeGet()
       .then((h) => setKimiHome(String((h as { home?: string })?.home ?? '')))
@@ -51,16 +54,16 @@ export function SubagentsSettings() {
   }, [])
 
   const desc = kimiHome
-    ? `全局(用户级)子智能体 profile,对当前目标的所有项目生效,来自两个目录:\n${kimiHome}/agents(数据目录/agents)\n~/.agents/agents\n项目级子智能体不在此管理;点击卡片查看完整信息,新会话生效`
-    : '全局(用户级)子智能体 profile:数据目录/agents 与 ~/.agents/agents 对所有项目生效;项目级不在此管理'
+    ? t('settings.subagents.desc', { home: kimiHome })
+    : t('settings.subagents.descNoHome')
 
   return (
-    <Section title="子智能体" desc={desc}>
-      <GroupLabel>用户级 Profile</GroupLabel>
+    <Section title={t('settings.subagents')} desc={desc}>
+      <GroupLabel>{t('settings.subagents.userLevel')}</GroupLabel>
       {profilesError ? (
         <p className="text-[12px] text-danger">{profilesError}</p>
       ) : profiles.length === 0 ? (
-        <Empty text="未发现子智能体 profile(数据目录/agents 与 ~/.agents/agents)" />
+        <Empty text={t('settings.subagents.empty')} />
       ) : (
         <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
           {profiles.map((p) => (
@@ -104,13 +107,17 @@ export function SubagentsSettings() {
               </button>
             </div>
             <div className="overflow-y-auto px-5 py-4">
-              <p className="text-[12px] font-medium text-text-tertiary">描述</p>
+              <p className="text-[12px] font-medium text-text-tertiary">
+                {t('settings.subagents.detailDesc')}
+              </p>
               <p className="mt-1 whitespace-pre-wrap text-[13px] text-text-secondary">
-                {detail.description || '(无描述)'}
+                {detail.description || t('settings.subagents.noDesc')}
               </p>
               {detail.tools && detail.tools.length > 0 && (
                 <>
-                  <p className="mt-4 text-[12px] font-medium text-text-tertiary">可用工具</p>
+                  <p className="mt-4 text-[12px] font-medium text-text-tertiary">
+                    {t('settings.subagents.tools')}
+                  </p>
                   <div className="mt-1.5 flex flex-wrap gap-1.5">
                     {detail.tools.map((t) => (
                       <span
@@ -125,7 +132,9 @@ export function SubagentsSettings() {
               )}
               {detail.path && (
                 <>
-                  <p className="mt-4 text-[12px] font-medium text-text-tertiary">路径</p>
+                  <p className="mt-4 text-[12px] font-medium text-text-tertiary">
+                    {t('settings.subagents.detailPath')}
+                  </p>
                   <p className="mt-1 break-all font-mono text-[12px] text-text-secondary">
                     {detail.path}
                   </p>

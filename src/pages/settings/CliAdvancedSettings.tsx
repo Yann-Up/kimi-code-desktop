@@ -6,8 +6,10 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Edit3, RotateCw, Save, Undo2 } from 'lucide-react'
 import { Card, GroupLabel, Section, Empty } from '../../components/settings/common'
+import { useT } from '../../i18n'
 
 export function CliAdvancedSettings() {
+  const t = useT()
   const [content, setContent] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [editing, setEditing] = useState(false)
@@ -56,9 +58,9 @@ export function CliAdvancedSettings() {
       const backup = await window.kimiApi.cliConfigWrite(draft)
       setContent(draft)
       setEditing(false)
-      setMsg({ ok: true, text: `已写入(备份于 ${backup}),新会话生效` })
+      setMsg({ ok: true, text: t('settings.cliAdvanced.savedOk', { backup }) })
     } catch (e) {
-      setMsg({ ok: false, text: `保存失败:${e instanceof Error ? e.message : String(e)}` })
+      setMsg({ ok: false, text: t('settings.cliAdvanced.saveFailed', { error: e instanceof Error ? e.message : String(e) }) })
     } finally {
       setSaving(false)
     }
@@ -66,35 +68,35 @@ export function CliAdvancedSettings() {
 
   return (
     <Section
-      title="高级"
-      desc="直接编辑 config.toml 源文件(当前连接目标的数据目录下);其余可视化页面覆盖不到的键(telemetry、permission、tools、hooks 等)都可以在这里维护"
+      title={t('settings.cliAdvanced')}
+      desc={t('settings.cliAdvanced.desc')}
       fill
     >
-      <GroupLabel>config.toml 源文件</GroupLabel>
+      <GroupLabel>{t('settings.cliAdvanced.groupSource')}</GroupLabel>
       <Card className="flex min-h-0 flex-1 flex-col">
         {loading ? (
-          <Empty text="加载中…" />
+          <Empty text={t('settings.cliAdvanced.loading')} />
         ) : error ? (
           <>
-            <Empty text={`读取失败:${error}`} />
+            <Empty text={t('settings.cliAdvanced.readFailed', { error })} />
             <div className="mt-2 flex justify-end">
               <button
                 className="rounded-lg border border-border bg-elevated px-3.5 py-2 text-[13px] text-text hover:bg-hover"
                 onClick={() => void load()}
               >
-                重试
+                {t('settings.cliAdvanced.retry')}
               </button>
             </div>
           </>
         ) : content === null && !editing ? (
           <>
-            <Empty text="未找到 config.toml(CLI 首次运行后自动创建);点击下方编辑可直接新建" />
+            <Empty text={t('settings.cliAdvanced.notFound')} />
             <div className="mt-2 flex justify-end gap-2">
               <button
                 className="inline-flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-[13px] font-medium text-white hover:bg-primary-hover"
                 onClick={startEdit}
               >
-                <Edit3 size={13} /> 新建并编辑
+                <Edit3 size={13} /> {t('settings.cliAdvanced.createEdit')}
               </button>
             </div>
           </>
@@ -103,7 +105,7 @@ export function CliAdvancedSettings() {
             {/* 工具栏:只读/编辑切换 + 重新载入 */}
             <div className="mb-3 flex items-center gap-2">
               <span className="font-mono text-[11.5px] text-text-tertiary">
-                {content === null ? '(文件尚不存在)' : `${content.length} 字节`}
+                {content === null ? t('settings.cliAdvanced.fileMissing') : t('settings.cliAdvanced.bytes', { n: content.length })}
               </span>
               <div className="ml-auto flex items-center gap-2">
                 {editing ? (
@@ -113,14 +115,14 @@ export function CliAdvancedSettings() {
                       disabled={saving}
                       onClick={cancelEdit}
                     >
-                      <Undo2 size={12} /> 取消
+                      <Undo2 size={12} /> {t('settings.cliAdvanced.cancel')}
                     </button>
                     <button
                       className="inline-flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-[12.5px] font-medium text-white transition-colors hover:bg-primary-hover disabled:opacity-50"
                       disabled={saving}
                       onClick={() => void save()}
                     >
-                      <Save size={12} /> {saving ? '写入中…' : '保存'}
+                      <Save size={12} /> {saving ? t('settings.cliAdvanced.writing') : t('settings.cliAdvanced.save')}
                     </button>
                   </>
                 ) : (
@@ -129,13 +131,13 @@ export function CliAdvancedSettings() {
                       className="inline-flex items-center gap-1 rounded-lg border border-border px-2.5 py-1.5 text-[12.5px] text-text transition-colors hover:bg-fill"
                       onClick={() => void load()}
                     >
-                      <RotateCw size={12} /> 重新载入
+                      <RotateCw size={12} /> {t('settings.cliAdvanced.reload')}
                     </button>
                     <button
                       className="inline-flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-[12.5px] font-medium text-white transition-colors hover:bg-primary-hover"
                       onClick={startEdit}
                     >
-                      <Edit3 size={12} /> 编辑
+                      <Edit3 size={12} /> {t('settings.cliAdvanced.edit')}
                     </button>
                   </>
                 )}
@@ -163,7 +165,7 @@ export function CliAdvancedSettings() {
       </Card>
 
       <p className="mt-3 text-[11.5px] text-text-tertiary">
-        写入前会自动备份当前文件为 .kimi-desktop-bak;不对内容做 TOML 语法校验,配置错误将在 CLI 下次启动时报出,修改后需重启服务并在新会话中生效
+        {t('settings.cliAdvanced.footnote')}
       </p>
     </Section>
   )

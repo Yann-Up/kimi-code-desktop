@@ -12,18 +12,35 @@
  * 同一用户偏好,可接受;服务未启动时壳用上次持久化值。
  */
 import { useEffect } from 'react'
-import { useUi, type ShellTheme } from '../stores/ui'
+import { useUi, type ShellLocale, type ShellTheme } from '../stores/ui'
 import { LOOPBACK_ORIGIN, verifyBridgeMessage } from './bridgeGuard'
 
 const TAG = '__kimiChatPrefs'
 
-/** 壳标题栏主题切换:反推所有受管对话 iframe(注入脚本写官方存储+DOM,官方无刷新跟随) */
+/** 壳侧主题切换(标题栏/设置页):反推所有受管对话 iframe。
+ *  三态:light/dark 写存储+DOM 官方无刷新跟随;system 写 'system' 存储,DOM 置解析值。
+ *  已知限制:官方主题选择器是挂载时读存储的 React 态(bundle 里无该键的 storage 监听),
+ *  正打开着的官方设置页选中显示要重挂载才更新;CSS 与后续挂载均即时正确 */
 export function pushThemeToFrames(theme: ShellTheme) {
   document.querySelectorAll('iframe').forEach((f) => {
     try {
       const origin = new URL(f.src).origin
       if (!LOOPBACK_ORIGIN.test(origin) || !f.contentWindow) return
       f.contentWindow.postMessage({ [TAG]: 'set', theme }, origin)
+    } catch {
+      /* 静默 */
+    }
+  })
+}
+
+/** 设置页语言切换:反推所有受管对话 iframe(注入脚本写 kimi-locale 存储;
+ *  官方是否无刷新跟随取决于其自身实现,下次加载必然生效;壳自定义页面由 store 即时切换) */
+export function pushLocaleToFrames(locale: ShellLocale) {
+  document.querySelectorAll('iframe').forEach((f) => {
+    try {
+      const origin = new URL(f.src).origin
+      if (!LOOPBACK_ORIGIN.test(origin) || !f.contentWindow) return
+      f.contentWindow.postMessage({ [TAG]: 'set', locale }, origin)
     } catch {
       /* 静默 */
     }
@@ -39,7 +56,14 @@ export function useChatPrefsBridge() {
       if (!verifyBridgeMessage(e)) return
       if (d[TAG] === 'state') {
         const { theme, locale, setTheme, setLocale } = useUi.getState()
-        if ((d.theme === 'light' || d.theme === 'dark') && d.theme !== theme) setTheme(d.theme)
+        // themePref=官方三态原始偏好(light/dark/system);旧版注入脚本无此字段时回退解析值
+        const pref: ShellTheme =
+          d.themePref === 'light' || d.themePref === 'dark' || d.themePref === 'system'
+            ? d.themePref
+            : d.theme === 'dark'
+              ? 'dark'
+              : 'light'
+        if (pref !== theme) setTheme(pref)
         if ((d.locale === 'zh' || d.locale === 'en') && d.locale !== locale) setLocale(d.locale)
       } else if (d[TAG] === 'health') {
         useUi.getState().setBridgeHealth({

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Wand2, X } from 'lucide-react'
 import { Section, Card, GroupLabel, Empty } from '../../components/settings/common'
+import { useT } from '../../i18n'
 
 interface LocalSkill {
   name: string
@@ -22,19 +23,21 @@ function pathSummary(p: string): string {
 
 /** 技能来源徽标(卡片与详情弹层共用) */
 function ScopeBadge({ scope }: { scope: string }) {
+  const t = useT()
   return scope === 'agents' ? (
     <span className="shrink-0 rounded-full border border-border bg-fill px-1.5 py-px text-[11px] text-text-tertiary">
       ~/.agents
     </span>
   ) : (
     <span className="shrink-0 rounded-full border border-border bg-fill px-1.5 py-px text-[11px] text-text-tertiary">
-      数据目录
+      {t('settings.skills.scopeDataDir')}
     </span>
   )
 }
 
 /** 技能设置:只展示全局(用户级)技能;项目级/工作区技能在会话语境下由官方 UI 管理 */
 export function SkillsSettings() {
+  const t = useT()
   const [local, setLocal] = useState<LocalSkill[]>([])
   const [localError, setLocalError] = useState('')
   const [kimiHome, setKimiHome] = useState('')
@@ -44,7 +47,7 @@ export function SkillsSettings() {
     window.kimiApi
       .localSkills()
       .then((v) => setLocal(Array.isArray(v) ? (v as LocalSkill[]) : []))
-      .catch((e) => setLocalError(errMsg(e, '加载用户级技能失败')))
+      .catch((e) => setLocalError(errMsg(e, t('settings.skills.loadFailed'))))
     window.kimiApi
       .kimiHomeGet()
       .then((h) => setKimiHome(String((h as { home?: string })?.home ?? '')))
@@ -52,16 +55,16 @@ export function SkillsSettings() {
   }, [])
 
   const desc = kimiHome
-    ? `全局(用户级)技能,对当前目标的所有项目生效,来自两个目录:\n${kimiHome}/skills(数据目录/skills)\n~/.agents/skills\n项目级技能不在此管理,在会话中由官方 UI 加载;技能在下次会话生效`
-    : '全局(用户级)技能:数据目录/skills 与 ~/.agents/skills 对所有项目生效;项目级技能在会话中由官方 UI 管理'
+    ? t('settings.skills.desc', { home: kimiHome })
+    : t('settings.skills.descNoHome')
 
   return (
-    <Section title="技能" desc={desc}>
-      <GroupLabel>用户级技能</GroupLabel>
+    <Section title={t('settings.skills')} desc={desc}>
+      <GroupLabel>{t('settings.skills.userLevel')}</GroupLabel>
       {localError ? (
         <p className="text-[12px] text-danger">{localError}</p>
       ) : local.length === 0 ? (
-        <Empty text="未发现用户级技能(数据目录/skills 与 ~/.agents/skills)" />
+        <Empty text={t('settings.skills.empty')} />
       ) : (
         <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
           {local.map((s) => (
@@ -111,11 +114,15 @@ export function SkillsSettings() {
               </button>
             </div>
             <div className="overflow-y-auto px-5 py-4">
-              <p className="text-[12px] font-medium text-text-tertiary">描述</p>
-              <p className="mt-1 whitespace-pre-wrap text-[13px] text-text-secondary">
-                {selected.description || '(无描述)'}
+              <p className="text-[12px] font-medium text-text-tertiary">
+                {t('settings.skills.detailDesc')}
               </p>
-              <p className="mt-4 text-[12px] font-medium text-text-tertiary">路径</p>
+              <p className="mt-1 whitespace-pre-wrap text-[13px] text-text-secondary">
+                {selected.description || t('settings.skills.noDesc')}
+              </p>
+              <p className="mt-4 text-[12px] font-medium text-text-tertiary">
+                {t('settings.skills.detailPath')}
+              </p>
               <p className="mt-1 break-all font-mono text-[12px] text-text-secondary">
                 {selected.path}
               </p>

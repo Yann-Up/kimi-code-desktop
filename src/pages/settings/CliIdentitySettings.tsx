@@ -7,6 +7,7 @@
 import { useState } from 'react'
 import { Card, GroupLabel } from '../../components/settings/common'
 import { useCliConfig, type CliConfig } from '../../hooks/useCliConfig'
+import { useT } from '../../i18n'
 import {
   CliConfigGate,
   nested,
@@ -17,15 +18,17 @@ import {
 } from './cliForm'
 
 export function CliIdentitySettings() {
+  const t = useT()
   const { config, loading, error, reload, offline } = useCliConfig()
   return (
-    <CliConfigGate title="身份" desc="自定义 agent 的身份标识(config.toml [identity] 块)" loading={loading} error={error} onRetry={reload} offline={offline}>
+    <CliConfigGate title={t('settings.cliIdentity')} desc={t('settings.cliIdentity.desc')} loading={loading} error={error} onRetry={reload} offline={offline}>
       <IdentityForm config={config ?? {}} />
     </CliConfigGate>
   )
 }
 
 function IdentityForm({ config }: { config: CliConfig }) {
+  const t = useT()
   const [name, setName] = useState<string>(str(nested(config, 'identity', 'name')))
   const [slug, setSlug] = useState<string>(str(nested(config, 'identity', 'slug')))
   const [savedMsg, setSavedMsg] = useState('')
@@ -41,25 +44,25 @@ function IdentityForm({ config }: { config: CliConfig }) {
           slug: slug.trim() ? slug.trim() : null
         }
       })
-      setSavedMsg(`已写入 config.toml(备份于 ${backup});重启服务后新会话生效`)
+      setSavedMsg(t('settings.cliIdentity.savedOk', { backup }))
       setTimeout(() => setSavedMsg(''), 4000)
     })
 
   return (
     <>
-      <GroupLabel>身份标识</GroupLabel>
+      <GroupLabel>{t('settings.cliIdentity.group')}</GroupLabel>
       <Card className="space-y-4">
         <TextField
-          label="名称(name)"
-          desc="agent 在系统提示中的自称(填充 ${product_name}),支持中文;留空则使用默认"
-          placeholder="如 Acme Dev Agent / 小明助手"
+          label={t('settings.cliIdentity.nameLabel')}
+          desc={t('settings.cliIdentity.nameDesc')}
+          placeholder={t('settings.cliIdentity.namePlaceholder')}
           value={name}
           onChange={setName}
         />
         <TextField
-          label="标识(slug)"
-          desc="协议字段使用的机器标识(User-Agent、MCP 客户端名),仅 ASCII;留空由 name 派生(小写、非字母数字折叠为 -),纯中文名无法派生时将回退为 agent"
-          placeholder="留空自动派生"
+          label={t('settings.cliIdentity.slugLabel')}
+          desc={t('settings.cliIdentity.slugDesc')}
+          placeholder={t('settings.cliIdentity.slugPlaceholder')}
           mono
           value={slug}
           onChange={setSlug}
@@ -68,12 +71,12 @@ function IdentityForm({ config }: { config: CliConfig }) {
 
       <div className="pt-3">
         <p className="text-[11.5px] text-text-tertiary">
-          身份在启动时解析一次,并随连接宣告给 MCP 服务器与提供商;修改后需重启服务并在新会话中生效
+          {t('settings.cliIdentity.noteResolve')}
         </p>
       </div>
       <div className="pt-3">
         <p className="text-[11.5px] text-text-tertiary">
-          保存直接写入 config.toml(留空 = 删除该自定义键,恢复默认身份),写前自动备份为 .kimi-desktop-bak
+          {t('settings.cliIdentity.noteWrite')}
         </p>
       </div>
       {savedMsg && <p className="pt-2 text-[12px] text-success">{savedMsg}</p>}

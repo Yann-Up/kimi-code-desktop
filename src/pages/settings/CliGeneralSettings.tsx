@@ -10,6 +10,7 @@ import { Card, GroupLabel } from '../../components/settings/common'
 import { Segmented } from '../../components/ui/Segmented'
 import { inputCls as uiInputCls } from '../../components/ui/Input'
 import { useCliConfig, type CliConfig } from '../../hooks/useCliConfig'
+import { useT } from '../../i18n'
 import {
   bool,
   cleanList,
@@ -25,13 +26,8 @@ import {
   useSaveState
 } from './cliForm'
 
-const PERMISSION_OPTIONS = [
-  { value: 'manual', label: '逐条确认' },
-  { value: 'yolo', label: '自动通过' },
-  { value: 'auto', label: '完全自主' }
-]
-
 export function CliGeneralSettings() {
+  const t = useT()
   const { config, loading, error, reload, saveSection, offline } = useCliConfig()
   // 激活通道的 kimi 数据目录(本机/远端通用),用于把用户级默认目录解析成真实路径展示
   const [home, setHome] = useState('')
@@ -42,7 +38,7 @@ export function CliGeneralSettings() {
       .catch(() => setHome('~/.kimi-code'))
   }, [])
   return (
-    <CliConfigGate title="通用行为" desc="新会话的默认模型、权限与技能等通用行为(config.toml 顶层键)" loading={loading} error={error} onRetry={reload} offline={offline}>
+    <CliConfigGate title={t('cliGeneral.title')} desc={t('cliGeneral.desc')} loading={loading} error={error} onRetry={reload} offline={offline}>
       <GeneralForm config={config ?? {}} saveSection={saveSection} home={home || '~/.kimi-code'} offline={offline} />
     </CliConfigGate>
   )
@@ -50,11 +46,12 @@ export function CliGeneralSettings() {
 
 /** 默认搜索目录只读清单:按优先级从高到低列出各层级,给「额外目录」一个参照系 */
 function DefaultDirs(props: { tiers: { label: string; paths: string[]; note?: string }[] }) {
+  const t = useT()
   return (
     <div>
-      <p className="text-[13px] font-[475]">默认搜索目录</p>
+      <p className="text-[13px] font-[475]">{t('cliGeneral.dirs.title')}</p>
       <p className="mt-0.5 text-[12px] text-text-tertiary">
-        按优先级从高到低排列;出现同名条目时,高优先级层级的生效
+        {t('cliGeneral.dirs.desc')}
       </p>
       <div className="mt-2 space-y-2">
         {props.tiers.map((t) => (
@@ -76,6 +73,12 @@ function DefaultDirs(props: { tiers: { label: string; paths: string[]; note?: st
 }
 
 function GeneralForm({ config, saveSection, home, offline }: { config: CliConfig; saveSection: (p: Record<string, unknown>) => Promise<void>; home: string; offline: boolean }) {
+  const t = useT()
+  const permissionOptions = [
+    { value: 'manual', label: t('cliGeneral.perm.manual') },
+    { value: 'yolo', label: t('cliGeneral.perm.yolo') },
+    { value: 'auto', label: t('cliGeneral.perm.auto') }
+  ]
   // default_model 选项来自 config.models 的键;当前值不在其中时兜底加入
   const modelKeys = (() => {
     const m = nested(config, 'models')
@@ -111,25 +114,25 @@ function GeneralForm({ config, saveSection, home, offline }: { config: CliConfig
 
   return (
     <>
-      <GroupLabel>模型与权限</GroupLabel>
+      <GroupLabel>{t('cliGeneral.group.modelPermission')}</GroupLabel>
       <Card className="space-y-4">
         {modelOptions.length > 0 ? (
           <SelectField
-            label="默认模型"
-            desc="新会话使用的模型,必须是 models 中已定义的别名"
-            placeholder="未设置"
+            label={t('cliGeneral.defaultModel')}
+            desc={t('cliGeneral.defaultModelDesc')}
+            placeholder={t('cliGeneral.defaultModelUnset')}
             value={defaultModel}
             onChange={setDefaultModel}
             options={modelOptions.map((m) => ({ value: m, label: m }))}
           />
         ) : (
           <FieldRow
-            label="默认模型"
-            desc="未在配置中发现 models 定义,可直接填写模型别名(如 kimi-code/k3)"
+            label={t('cliGeneral.defaultModel')}
+            desc={t('cliGeneral.defaultModelNoModelsDesc')}
             control={
               <input
                 className={uiInputCls('md', 'w-64 font-mono')}
-                placeholder="如 kimi-code/k3"
+                placeholder={t('cliGeneral.defaultModelPlaceholder')}
                 value={defaultModel}
                 onChange={(e) => setDefaultModel(e.target.value)}
               />
@@ -137,93 +140,93 @@ function GeneralForm({ config, saveSection, home, offline }: { config: CliConfig
           />
         )}
         <FieldRow
-          label="默认权限模式"
-          desc="新会话的工具调用审批策略:manual=每次询问、yolo=自动批准工具(仍可能提问)、auto=完全自主"
+          label={t('cliGeneral.defaultPermissionMode')}
+          desc={t('cliGeneral.defaultPermissionModeDesc')}
           control={
             <Segmented
               value={permissionMode || 'manual'}
-              options={PERMISSION_OPTIONS}
+              options={permissionOptions}
               onChange={setPermissionMode}
             />
           }
         />
         <ToggleField
-          label="默认计划模式"
-          desc="新会话默认开启计划模式(先产出计划再执行)"
+          label={t('cliGeneral.defaultPlanMode')}
+          desc={t('cliGeneral.defaultPlanModeDesc')}
           checked={planMode}
           onChange={setPlanMode}
         />
       </Card>
 
-      <GroupLabel>技能</GroupLabel>
+      <GroupLabel>{t('cliGeneral.group.skills')}</GroupLabel>
       <Card className="space-y-4">
         <ToggleField
-          label="合并所有可用技能"
-          desc="把各目录中的技能合并提供给模型(默认开启)"
+          label={t('cliGeneral.mergeSkills')}
+          desc={t('cliGeneral.mergeSkillsDesc')}
           checked={mergeSkills}
           onChange={setMergeSkills}
         />
         <ToggleField
-          label="内置产品技能"
-          desc="向模型提供 Kimi Code 自身的内置技能(update-config、check-kimi-code-docs 等,默认开启);内置层优先级最低"
+          label={t('cliGeneral.builtinSkills')}
+          desc={t('cliGeneral.builtinSkillsDesc')}
           checked={builtinSkills}
           onChange={setBuiltinSkills}
         />
       </Card>
 
-      <GroupLabel>技能目录</GroupLabel>
+      <GroupLabel>{t('cliGeneral.group.skillDirs')}</GroupLabel>
       <Card className="space-y-4">
         <DefaultDirs
           tiers={[
             {
-              label: '项目级',
-              paths: ['<项目根>/.kimi-code/skills', '<项目根>/.agents/skills'],
-              note: '项目根 = 从工作目录向上查找、最近的含 .git 的目录;仅对该项目生效'
+              label: t('cliGeneral.dirs.project'),
+              paths: [`${t('cliGeneral.dirs.projectRoot')}/.kimi-code/skills`, `${t('cliGeneral.dirs.projectRoot')}/.agents/skills`],
+              note: t('cliGeneral.dirs.projectNote')
             },
             {
-              label: '用户级',
+              label: t('cliGeneral.dirs.user'),
               paths: [`${home}/skills`, '~/.agents/skills'],
-              note: '对所有项目生效;~/.agents/skills 为跨工具共享目录,不随数据目录迁移'
+              note: t('cliGeneral.dirs.userNote', { dir: 'skills' })
             },
-            { label: '内置', paths: ['随 CLI 自带'], note: '产品类内置技能由上方开关控制' }
+            { label: t('cliGeneral.dirs.builtin'), paths: [t('cliGeneral.dirs.builtinPath')], note: t('cliGeneral.dirs.skillBuiltinNote') }
           ]}
         />
         <PathListField
-          label="额外技能目录(extra_skill_dirs)"
-          desc="叠加在默认目录之上,优先级介于用户级与内置之间;适合团队共享技能库等场景"
-          placeholder="如 ~/team-skills"
+          label={t('cliGeneral.extraSkillDirs')}
+          desc={t('cliGeneral.extraSkillDirsDesc')}
+          placeholder={t('cliGeneral.extraSkillDirsPlaceholder')}
           values={skillDirs}
           onChange={setSkillDirs}
         />
       </Card>
 
-      <GroupLabel>智能体目录</GroupLabel>
+      <GroupLabel>{t('cliGeneral.group.agentDirs')}</GroupLabel>
       <Card className="space-y-4">
         <DefaultDirs
           tiers={[
             {
-              label: '项目级',
-              paths: ['<项目根>/.kimi-code/agents', '<项目根>/.agents/agents'],
-              note: '项目根 = 从工作目录向上查找、最近的含 .git 的目录;仅对该项目生效'
+              label: t('cliGeneral.dirs.project'),
+              paths: [`${t('cliGeneral.dirs.projectRoot')}/.kimi-code/agents`, `${t('cliGeneral.dirs.projectRoot')}/.agents/agents`],
+              note: t('cliGeneral.dirs.projectNote')
             },
             {
-              label: '用户级',
+              label: t('cliGeneral.dirs.user'),
               paths: [`${home}/agents`, '~/.agents/agents'],
-              note: '对所有项目生效;~/.agents/agents 为跨工具共享目录,不随数据目录迁移'
+              note: t('cliGeneral.dirs.userNote', { dir: 'agents' })
             },
-            { label: '内置', paths: ['plan / coder / explore'], note: '随 CLI 自带;插件级介于用户级与内置之间' }
+            { label: t('cliGeneral.dirs.builtin'), paths: ['plan / coder / explore'], note: t('cliGeneral.dirs.agentBuiltinNote') }
           ]}
         />
         <PathListField
-          label="额外智能体目录(extra_agent_dirs)"
-          desc="额外的自定义 agent 搜索目录,优先级介于项目级与用户级之间"
-          placeholder="如 ~/team-agents"
+          label={t('cliGeneral.extraAgentDirs')}
+          desc={t('cliGeneral.extraAgentDirsDesc')}
+          placeholder={t('cliGeneral.extraAgentDirsPlaceholder')}
           values={agentDirs}
           onChange={setAgentDirs}
         />
       </Card>
 
-      <SaveBar saving={saving} saved={saved} error={error} onSave={onSave} savedText={offline ? '已写入 config.toml;重启服务后新会话生效' : undefined} />
+      <SaveBar saving={saving} saved={saved} error={error} onSave={onSave} savedText={offline ? t('cliGeneral.savedOffline') : undefined} />
     </>
   )
 }
