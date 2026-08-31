@@ -10,6 +10,8 @@ export default {
     'settings.cliExp.groupToggles': '功能开关',
     'settings.cliExp.loading': '加载中…',
     'settings.cliExp.savedOk': '已保存;服务运行中时已自动重启,未启动则下次启动生效',
+    'settings.cliExp.saving': '保存中…服务正在重启,期间开关暂不可操作',
+    'settings.cliExp.saveTimeout': '保存超时;已重新同步服务侧状态,若开关未生效请重试',
     'settings.cliExp.saveFailed': '保存失败:{error}',
     'settings.cliExp.footnote':
       '实验性功能可能不稳定,随 CLI 版本可能更名或移除;如遇异常可回到本页关闭对应开关',
@@ -102,6 +104,10 @@ export default {
     'settings.cliExp.loading': 'Loading…',
     'settings.cliExp.savedOk':
       'Saved. If the service was running it has been restarted automatically; otherwise it takes effect on next start',
+    'settings.cliExp.saving':
+      'Saving… the service is restarting and toggles are temporarily unavailable',
+    'settings.cliExp.saveTimeout':
+      'Save timed out; state has been re-synced from the service — retry if the toggle did not apply',
     'settings.cliExp.saveFailed': 'Save failed: {error}',
     'settings.cliExp.footnote':
       'Experimental features may be unstable and may be renamed or removed with CLI versions; if something goes wrong, come back here and turn off the toggle',

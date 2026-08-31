@@ -150,12 +150,18 @@ export function SelectField(props: {
 }
 
 /** 开关行(复刻官方 .ui-switch,见 components/ui/Switch) */
-export function ToggleField(props: { label: string; desc?: string; checked: boolean; onChange: (v: boolean) => void }) {
+export function ToggleField(props: {
+  label: string
+  desc?: string
+  checked: boolean
+  onChange: (v: boolean) => void
+  disabled?: boolean
+}) {
   return (
     <FieldRow
       label={props.label}
       desc={props.desc}
-      control={<Switch checked={props.checked} onChange={props.onChange} />}
+      control={<Switch checked={props.checked} onChange={props.onChange} disabled={props.disabled} />}
     />
   )
 }

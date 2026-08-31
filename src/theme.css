@@ -53,6 +53,16 @@
   --shadow-xs: 0 1px 2px rgb(16 24 40 / 0.04);
 }
 
+/* 亮色默认(非 @theme 令牌):滚动条与皮肤卡片底色。
+   必须位于 [data-theme='dark'] 之前——:root 与它优先级相同(0,1,0),后写者胜,
+   放后面会把暗色覆盖顶掉(皮肤开启时暗色卡片发白的根因) */
+:root {
+  --scrollbar-thumb: rgb(0 0 0 / 0.2);
+  --scrollbar-thumb-hover: rgb(0 0 0 / 0.3);
+  /* 皮肤卡片底色 = 卡片面板色(surface-tertiary),皮肤开启时按透明度叠在立绘上 */
+  --skin-card-bg: 245 245 245;
+}
+
 /* 暗色令牌:跟随官方 web UI 主题(chat_skin_inject.js 上报 → chatPrefsBridge →
    stores/ui.ts 写 documentElement[data-theme]);@theme 变量编译在 :root 上,
    这里按属性选择器覆盖即可,组件类名零改动。
@@ -88,13 +98,6 @@
   --scrollbar-thumb: rgb(255 255 255 / 0.16);
   --scrollbar-thumb-hover: rgb(255 255 255 / 0.28);
   --skin-card-bg: 31 31 31;
-}
-
-:root {
-  --scrollbar-thumb: rgb(0 0 0 / 0.2);
-  --scrollbar-thumb-hover: rgb(0 0 0 / 0.3);
-  /* 皮肤卡片底色 = 卡片面板色(surface-tertiary),皮肤开启时按透明度叠在立绘上 */
-  --skin-card-bg: 245 245 245;
 }
 
 html,
