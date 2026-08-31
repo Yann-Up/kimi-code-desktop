@@ -33,7 +33,8 @@ export default {
     'settings.cliExp.f.subagentFork.desc':
       'Agent / AgentSwarm 派生子代理时携带调用方的上下文快照,而不是全新空白上下文',
     'settings.cliExp.f.tower.label': 'tower 模式',
-    'settings.cliExp.f.tower.desc': '协调多个 agent 围绕同一目标协作(tower mode)',
+    'settings.cliExp.f.tower.desc':
+      '协调多个 agent 围绕同一目标协作(tower mode)。注意:CLI 0.39.0 的 Web UI 尚无 /tower 入口,开启后目前只能在终端 TUI 里用(KIMI_CODE_EXPERIMENTAL_TOWER=1 kimi,然后 /tower on)',
     'settings.cliExp.f.waitFor.label': 'WaitFor 工具',
     'settings.cliExp.f.waitFor.desc':
       '模型可在当前轮内等待后台任务完成(WaitFor);CLI 默认开启,可在此关闭',
@@ -124,7 +125,7 @@ export default {
       "Agent / AgentSwarm fork subagents with the caller's context snapshot instead of a fresh blank context",
     'settings.cliExp.f.tower.label': 'tower mode',
     'settings.cliExp.f.tower.desc':
-      'Coordinates multiple agents collaborating around the same goal (tower mode)',
+      'Coordinates multiple agents collaborating around the same goal (tower mode). Note: the CLI 0.39.0 Web UI has no /tower entry yet; once enabled it can only be used in the terminal TUI for now (KIMI_CODE_EXPERIMENTAL_TOWER=1 kimi, then /tower on)',
     'settings.cliExp.f.waitFor.label': 'WaitFor Tool',
     'settings.cliExp.f.waitFor.desc':
       'The model can wait for background tasks to finish within the current turn (WaitFor); enabled by default in the CLI, can be disabled here',

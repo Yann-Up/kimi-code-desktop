@@ -17,9 +17,9 @@ Kimi Code Desktop:基于 [Kimi Code CLI](https://github.com/moonshotai/kimi-code
 
 ```
 src/                    渲染进程(React)
-  components/           壳组件:ShellHome(视图容器,导航在标题栏)/ TitleBar(铺平用量条(QuotaStrip)+ 统计/设置/主题切换图标导航(官方同款黑底 tooltip)+ 多通道切换器 + 窗口控制;主题切换经 pushThemeToFrames 反推官方 iframe,官方 MutationObserver 监听 data-color-scheme 无刷新跟随;版本升级在 设置→常规,不占标题栏)/ QuotaStrip(标题栏铺平式用量直显:实时指标胶囊 + 各窗口迷你额度计 + 钱包,停止服务带确认)/ SkinStandee(实验性皮肤立绘,设置/统计/主页透出) / settings/ / pet/(桌宠窗口 PetWindow + 悬浮菜单 PetMenu)
-  components/ui/        官方 kimi web 自研 ui-* 组件库(Vue)的 React 复刻:Select(fixed+portal 毛玻璃弹层、行首蓝对勾)、Switch(36×20)、Segmented(分段选择器,2-4 个短选项用;透明槽(不加背景色)+ 细边,elevated 选中面)、Input/Textarea(inputCls/textareaCls 类串 + 组件;md 38px/sm 32px,0.5px border-strong 边,input-bg 底[浅纯白/深 10% 白]+ shadow-xs,focus = accent 边 + 3px accent-soft 环,hover 无变化);样式值实测自 CLI dist-web,新增表单控件一律用这套,不用原生 <select>/自绘开关/手写 input 类串。设置页卡片为官方填充式灰面板(components/settings/common.tsx 的 Card = surface-tertiary 无底边),面板内徽章/控件槽用 bg-fill、按钮/选中项用 bg-elevated(令牌见 theme.css)
-  pages/                Onboarding / Settings / stats
+  components/           壳组件:ShellHome(视图容器,导航在标题栏)/ TitleBar(铺平用量条(QuotaStrip)+ 对话/统计/设置/检查更新/主题切换图标导航(官方同款黑底 tooltip)+ 多通道切换器 + 窗口控制;主题切换经 pushThemeToFrames 反推官方 iframe,官方 MutationObserver 监听 data-color-scheme 无刷新跟随;检查更新按钮常驻,点击=手动检查,有新版出红点,点开 UpdateDialog(发现新版本/忽略此版本/下载安装))/ QuotaStrip(标题栏铺平式用量直显:实时指标胶囊 + 各窗口迷你额度计 + 钱包,停止服务带确认)/ SkinStandee(实验性皮肤立绘,设置/统计/主页透出) / settings/ / pet/(桌宠窗口 PetWindow + 悬浮菜单 PetMenu)
+  components/ui/        官方 kimi web 自研 ui-* 组件库(Vue)的 React 复刻:Select(fixed+portal 毛玻璃弹层、行首蓝对勾)、Switch(36×20)、Segmented(分段选择器,2-4 个短选项用;透明槽(不加背景色)+ 细边,elevated 选中面;白底页面上使用需经 className 补 bg-surface-tertiary 槽色)、Input/Textarea(inputCls/textareaCls 类串 + 组件;md 38px/sm 32px,0.5px border-strong 边,input-bg 底[浅纯白/深 10% 白]+ shadow-xs,focus = accent 边 + 3px accent-soft 环,hover 无变化);样式值实测自 CLI dist-web,新增表单控件一律用这套,不用原生 <select>/自绘开关/手写 input 类串。设置页卡片为官方填充式灰面板(components/settings/common.tsx 的 Card = surface-tertiary 无底边),面板内徽章/控件槽用 bg-fill、按钮/选中项用 bg-elevated;图表/明细表等数据可视化用 SurfaceCard(白底细边,灰面板会让图表发闷、热力图无色档融底)
+  pages/                Onboarding / Settings(设置页「资源」组含插件分区 PluginsSettings:经 kimi web REST /api/v1/plugins* 管理插件,与 TUI /plugins 等效,安装/启停/移除均由 CLI 自身落盘;老版本 CLI 无此路由时提示升级)/ stats
   platform/kimi-api.ts  壳与渲染层的 API 契约(window.kimiApi)
   platform/tauri.ts     契约的 Tauri 实现(invoke / 事件监听)
   stores/ui.ts          界面状态(zustand)

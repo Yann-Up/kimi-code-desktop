@@ -22,6 +22,7 @@ import cliMisc from './messages/cliMisc'
 import experimental from './messages/experimental'
 import mcp from './messages/mcp'
 import agentic from './messages/agentic'
+import plugins from './messages/plugins'
 import stats from './messages/stats'
 import pet from './messages/pet'
 import app from './messages/app'
@@ -42,6 +43,7 @@ for (const m of [
   experimental,
   mcp,
   agentic,
+  plugins,
   stats,
   pet,
   app

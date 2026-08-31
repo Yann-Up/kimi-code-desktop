@@ -9,6 +9,7 @@ import {
   Globe,
   Network,
   PawPrint,
+  Puzzle,
   Repeat,
   Settings2,
   SlidersHorizontal,
@@ -31,6 +32,7 @@ import { CliExperimentalSettings } from './settings/CliExperimentalSettings'
 import { SubagentsSettings } from './settings/SubagentsSettings'
 import { SkillsSettings } from './settings/SkillsSettings'
 import { McpSettings } from './settings/McpSettings'
+import { PluginsSettings } from './settings/PluginsSettings'
 import { CommandsSettings } from './settings/CommandsSettings'
 
 // 模型/供应商/OAuth/权限/主题等设置交给官方 web UI;这里只保留官方 UI 没有的壳设置页
@@ -66,6 +68,7 @@ function useGroups(t: ReturnType<typeof useT>): { label: string; items: SectionD
       label: t('settings.groupResources'),
       items: [
         { id: 'mcp', label: t('settings.mcp'), icon: Database },
+        { id: 'plugins', label: t('settings.plugins'), icon: Puzzle },
         { id: 'skills', label: t('settings.skills'), icon: Wand2 },
         { id: 'subagents', label: t('settings.subagents'), icon: Bot },
         { id: 'commands', label: t('settings.commands'), icon: Command }
@@ -106,6 +109,8 @@ export function SettingsPage() {
         return <CliAdvancedSettings />
       case 'mcp':
         return <McpSettings />
+      case 'plugins':
+        return <PluginsSettings />
       case 'skills':
         return <SkillsSettings />
       case 'subagents':
