@@ -72,6 +72,9 @@ export default {
     'settings.general.svcBusy': '处理中…',
     'settings.general.svcStop': '停止服务',
     'settings.general.svcStart': '启动服务',
+    // 启动自动拉起开关(本地服务卡片内)
+    'settings.general.autoStartTitle': '启动应用时自动拉起服务',
+    'settings.general.autoStartDesc': '打开应用后自动启动激活通道的 Kimi Code 服务;关闭后需在对话页手动启动',
     // 服务启动参数卡片
     'settings.general.portTitle': '服务端口',
     'settings.general.portDesc':
@@ -177,6 +180,9 @@ export default {
     'settings.general.svcBusy': 'Working…',
     'settings.general.svcStop': 'Stop Service',
     'settings.general.svcStart': 'Start Service',
+    'settings.general.autoStartTitle': 'Auto-start service on launch',
+    'settings.general.autoStartDesc':
+      'Automatically start the Kimi Code service of the active channel when the app opens; when off, start it manually from the chat page',
     'settings.general.portTitle': 'Service Port',
     'settings.general.portDesc':
       'Preferred port kimi web binds to (default 58666); automatically increments when occupied, and saving restarts the running service',

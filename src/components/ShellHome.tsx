@@ -36,6 +36,8 @@ function WebFrame() {
   const [installing, setInstalling] = useState(false)
   // 本机缺 CLI 时的安装确认(避免未经同意下载安装;仅 local 通道生效)
   const [installConfirm, setInstallConfirm] = useState(false)
+  // 安装确认框「重新检测」在途标记(覆盖用户自行 npm/brew 安装的场景)
+  const [rechecking, setRechecking] = useState(false)
   // 每通道 src 拉取在途标记(避免 effect 重跑时并发重复拉取)
   const fetching = useRef<Set<string>>(new Set())
   // 每通道桥 nonce:经 iframe name 属性下发,注入脚本 window.name 回传,
@@ -182,6 +184,22 @@ function WebFrame() {
       setStates((s) => ({ ...s, [ch]: 'off' }))
     })
   }
+
+  // 启动自动拉起:通道列表就绪后对激活通道自动 startChannel(每次启动只做一次,
+  // 切通道不自动拉;本机缺 CLI 会走 startChannel 的安装确认,不静默下载;可在设置关闭)
+  const autoStartedRef = useRef(false)
+  const autoStartService = useUi((s) => s.autoStartService)
+  useEffect(() => {
+    if (!autoStartService || autoStartedRef.current || channels.length === 0) return
+    const ch = channels.find((c) => c.id === activeChannel)
+    if (!ch || ch.running) return
+    autoStartedRef.current = true
+    // 先同步切 starting:状态初始化 effect 会把未运行通道置 off(占位页带按钮),
+    // 而 startChannel 里的 CLI 检测是异步的,不同步切会先闪一帧启动按钮
+    setStates((s) => ({ ...s, [ch.id]: 'starting' }))
+    startChannel(ch.id)
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- startChannel 随渲染重建,此处只需 channels/activeChannel 驱动
+  }, [channels, activeChannel, autoStartService])
 
   /** 重试拉取 src(加载失败态入口) */
   const retryLoad = (ch: string) => {
@@ -338,9 +356,33 @@ function WebFrame() {
               {t('shell.installCli.hint')}
             </p>
             <div className="mt-4 flex justify-end gap-2">
+              {/* 用户可能已自行用 npm/brew 装好,给重新检测入口:检测到即关窗并启动 */}
+              <button
+                className="mr-auto rounded-lg border border-border bg-elevated px-4 py-2 text-[13px] text-text hover:bg-hover disabled:opacity-50"
+                disabled={rechecking}
+                onClick={() => {
+                  setRechecking(true)
+                  window.kimiApi
+                    .kimiCliGet()
+                    .then((c: { version?: string | null }) => {
+                      if (c?.version) {
+                        setInstallConfirm(false)
+                        doStart('local')
+                      }
+                    })
+                    .catch(() => undefined)
+                    .finally(() => setRechecking(false))
+                }}
+              >
+                {t('shell.installCli.recheck')}
+              </button>
               <button
                 className="rounded-lg border border-border bg-elevated px-4 py-2 text-[13px] text-text hover:bg-hover"
-                onClick={() => setInstallConfirm(false)}
+                onClick={() => {
+                  setInstallConfirm(false)
+                  // 自动拉起时已把状态切成 starting(防占位页按钮闪帧),取消安装要落回占位页
+                  setStates((s) => ({ ...s, local: 'off' }))
+                }}
               >
                 {t('shell.installCli.cancel')}
               </button>

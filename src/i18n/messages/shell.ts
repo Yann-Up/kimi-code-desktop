@@ -30,6 +30,7 @@ export default {
     'shell.installCli.desc': '本机未检测到 Kimi Code CLI。将使用官方安装脚本下载并安装最新版:',
     'shell.installCli.hint': '首次安装需要几分钟,请保持网络畅通;安装完成后服务会自动启动',
     'shell.installCli.cancel': '取消',
+    'shell.installCli.recheck': '我已自行安装,重新检测',
     'shell.installCli.confirm': '安装并启动'
   } as Record<string, string>,
   en: {
@@ -56,6 +57,7 @@ export default {
     'shell.installCli.hint':
       'The first install takes a few minutes, please stay online; the service will start automatically once installed',
     'shell.installCli.cancel': 'Cancel',
+    'shell.installCli.recheck': 'I installed it myself — re-detect',
     'shell.installCli.confirm': 'Install & Start'
   } as Record<string, string>
 }
