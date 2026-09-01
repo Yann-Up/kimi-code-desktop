@@ -2,8 +2,9 @@
 # 触发链:GitHub Release 正式发布(published)→ .github/workflows/sync-cnb.yml
 # 把 tag 推送到 CNB 仓 → 本流水线执行:
 #   1. git:release 自动创建同名 Release(标记为最新版)
-#   2. 从 GitHub 已发布 Release 拉取更新包(setup.exe + msi,Tauri v2 更新器直接
-#      用安装器本体,无 nsis.zip),上传为 CNB Release 附件
+#   2. 从 GitHub 已发布 Release 拉取全部更新产物(Windows 安装器+签名、便携 zip、
+#      mac dmg/app.tar.gz+签名;Tauri v2 更新器直接用安装器本体,无 nsis.zip),
+#      上传为 CNB Release 附件(与 GitHub Release 附件对齐)
 # 用途:作为应用自动更新的国内下载源(客户端 endpoints 中 CNB 优先、GitHub 兜底)。
 # 注意:更新器端点是 updater 分支的 latest.json raw 固定链接,由 sync-cnb.yml 维护。
 $:
@@ -15,11 +16,23 @@ $:
             latest: true
 
         - name: 从 GitHub 拉取更新包
+          # 与 GitHub Release 附件对齐:Windows 安装器 + 签名 + 便携 zip + mac 产物(dmg/app.tar.gz + 签名);
           # 更新器产物是安装器本体(Tauri v2 NSIS 直接发 setup.exe,不打 nsis.zip);
-          # latest.json 里 windows-x86_64 键指 msi、-nsis 键指 setup.exe,两个都要
+          # latest.json 里 windows-x86_64 键指 msi、-nsis 键指 setup.exe,两个都要;
+          # latest.json 本体不在此同步(CNB 版由 sync-cnb.yml 写到 updater 分支 raw 链接)
           script: |
             VER="${CNB_BRANCH#v}"
-            for PKG in "Kimi.Code.Desktop_${VER}_x64-setup.exe" "Kimi.Code.Desktop_${VER}_x64_en-US.msi"; do
+            PKGS=(
+              "Kimi.Code.Desktop_${VER}_x64-setup.exe"
+              "Kimi.Code.Desktop_${VER}_x64-setup.exe.sig"
+              "Kimi.Code.Desktop_${VER}_x64_en-US.msi"
+              "Kimi.Code.Desktop_${VER}_x64_en-US.msi.sig"
+              "Kimi.Code.Desktop_${VER}_aarch64.dmg"
+              "Kimi.Code.Desktop_aarch64.app.tar.gz"
+              "Kimi.Code.Desktop_aarch64.app.tar.gz.sig"
+              "Kimi-Code-Desktop_${VER}_x64-portable.zip"
+            )
+            for PKG in "${PKGS[@]}"; do
               URL="https://github.com/Yann-Up/kimi-code-desktop/releases/download/${CNB_BRANCH}/${PKG}"
               for i in 1 2 3; do
                 curl -fSL --connect-timeout 20 -o "$PKG" "$URL" && break
@@ -27,11 +40,17 @@ $:
                 sleep 15
               done
             done
-            ls -la Kimi.Code.Desktop_*
+            ls -la Kimi*
 
         - name: 上传更新包为 Release 附件
           image: cnbcool/attachments:latest
           settings:
             attachments:
               - "./Kimi.Code.Desktop_*_x64-setup.exe"
+              - "./Kimi.Code.Desktop_*_x64-setup.exe.sig"
               - "./Kimi.Code.Desktop_*_x64_en-US.msi"
+              - "./Kimi.Code.Desktop_*_x64_en-US.msi.sig"
+              - "./Kimi.Code.Desktop_*_aarch64.dmg"
+              - "./Kimi.Code.Desktop_aarch64.app.tar.gz"
+              - "./Kimi.Code.Desktop_aarch64.app.tar.gz.sig"
+              - "./Kimi-Code-Desktop_*_x64-portable.zip"
