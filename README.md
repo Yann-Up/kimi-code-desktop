@@ -93,18 +93,6 @@ Renderer (React + zustand, src/)
   └── stores/ui.ts              UI state
 ```
 
-<details>
-<summary><b>Key implementation details (hard-earned lessons)</b></summary>
-
-- **Direct iframe embedding works**: on loopback the official server sends no CSP frame-ancestors / X-Frame-Options, so no reverse proxy is needed; after healthz passes the shell does a HEAD `/` preflight and shows an "open in system browser" guide instead of a blank iframe if framing is blocked. Note: with `--host 0.0.0.0` the official server does send `frame-ancestors 'self'` (verified on 0.36.1, even for loopback requests), which is mutually exclusive with embedding — so the shell offers no LAN-exposure option; if you need LAN access, run `kimi web --host 0.0.0.0` in a terminal and use a browser directly
-- **Token timing race**: the renderer fetches `web_ui_url` with retries — no white screen while the backend is still starting
-- **Stable port (origin is identity)**: the Web UI's "new browser" verification is stored in localStorage keyed by the iframe origin (`http://127.0.0.1:<port>`), so port drift re-triggers verification; the shell therefore starts from a fixed port (release 58666 / dev 58766) and reclaims stale instances on the preferred port before starting (orphans left by crashes/kills: graceful POST shutdown when a token is readable, with a registry-pid kill as fallback; if no token is available but the port is occupied and the registry heartbeat is fresh, kill by pid directly). Other kimi web instances the user runs on other ports are left alone. Before an app update is installed, all channel services are stopped first (the updater plugin kills the process during install without triggering a graceful ExitRequested shutdown)
-- **Crash self-healing**: when kimi web exits unexpectedly, the shell cleans up connection state and broadcasts `server:exited`, allowing an in-place restart
-- **macOS traffic lights**: the main window uses `decorations(false)` with a fully custom title bar on all platforms; on macOS the three lights are drawn by the frontend (the native Overlay lights are positioned by AppKit for a 28pt standard bar and don't center in a custom one), with unfocused-gray and native fullscreen on the green light
-- Token accounting: `usage.record` ≈ `step.end` (cross-validated within 1%); input / output / cache are tracked separately
-
-</details>
-
 ## Security notes
 
 - **The bearer token never leaves the machine**: REST/WS/iframe connect only to `127.0.0.1`; the token is held by the shell and logs are filtered on the keyword "token"
