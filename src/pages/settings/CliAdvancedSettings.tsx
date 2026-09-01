@@ -6,6 +6,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Edit3, RotateCw, Save, Undo2 } from 'lucide-react'
 import { Card, GroupLabel, Section, Empty } from '../../components/settings/common'
+import { TomlHighlight } from '../../components/ui/TomlHighlight'
 import { useT } from '../../i18n'
 
 export function CliAdvancedSettings() {
@@ -150,11 +151,20 @@ export function CliAdvancedSettings() {
                 spellCheck={false}
                 value={draft}
                 onChange={(e) => setDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  // Tab 插入两个空格而不是切焦点(配置文件编辑的基本体感)
+                  if (e.key !== 'Tab') return
+                  e.preventDefault()
+                  const el = e.currentTarget
+                  const s = el.selectionStart
+                  const next = draft.slice(0, s) + '  ' + draft.slice(el.selectionEnd)
+                  setDraft(next)
+                  requestAnimationFrame(() => el.setSelectionRange(s + 2, s + 2))
+                }}
               />
             ) : (
-              <pre className="min-h-40 w-full flex-1 overflow-auto rounded-lg border border-border bg-surface-secondary p-3 font-mono text-[12px] leading-relaxed text-text whitespace-pre-wrap">
-                {content ?? ''}
-              </pre>
+              // 查看态:TOML 语法高亮 + 行号,与编辑态(纯 textarea)区分开
+              <TomlHighlight code={content ?? ''} className="min-h-40 w-full flex-1" />
             )}
 
             {msg && (
