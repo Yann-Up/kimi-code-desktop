@@ -30,6 +30,10 @@ English · [中文](README.zh-CN.md) · [Download](https://github.com/Yann-Up/ki
   </tr>
 </table>
 
+<div align="center">
+  <img src="docs/pet-demo.gif" alt="Desktop pet demo: the pet switches to a running animation while the agent works" width="560" />
+  <p><sub>Desktop pet demo: when a session starts working, the pet switches from idle to a running animation</sub></p>
+</div>
 
 ## Features
 

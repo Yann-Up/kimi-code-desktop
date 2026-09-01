@@ -30,6 +30,10 @@
   </tr>
 </table>
 
+<div align="center">
+  <img src="docs/pet-demo.gif" alt="桌宠演示:会话进入工作时宠物切换为奔跑状态" width="560" />
+  <p><sub>桌宠演示:会话进入工作时,宠物从待机切换为奔跑状态</sub></p>
+</div>
 
 ## 功能
 
