@@ -21,12 +21,23 @@
 
 <table>
   <tr>
-    <td><img src="docs/kimiweb页面.png" alt="对话(官方 Web UI 内嵌)" /></td>
-    <td><img src="docs/统计.png" alt="用量统计" /></td>
+    <td><img src="docs/images/img.png" alt="对话（官方 Web UI 内嵌）" /></td>
+    <td><img src="docs/images/img_1.png" alt="终端工作区" /></td>
   </tr>
   <tr>
-    <td><img src="docs/设置.png" alt="设置" /></td>
-    <td><img src="docs/桌宠立绘设置.png" alt="桌宠与皮肤立绘" /></td>
+    <td><img src="docs/images/img_2.png" alt="用量统计概览" /></td>
+    <td><img src="docs/images/img_3.png" alt="API 调用明细" /></td>
+  </tr>
+</table>
+
+<table>
+  <tr>
+    <td><img src="docs/images/img_4.png" alt="常规设置" /></td>
+    <td><img src="docs/images/img_5.png" alt="桌宠与皮肤设置" /></td>
+  </tr>
+  <tr>
+    <td><img src="docs/images/img_6.png" alt="实验性功能" /></td>
+    <td><img src="docs/images/img_7.png" alt="高级配置编辑" /></td>
   </tr>
 </table>
 

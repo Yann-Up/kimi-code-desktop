@@ -21,12 +21,23 @@ English · [中文](README.zh-CN.md) · [Download](https://github.com/Yann-Up/ki
 
 <table>
   <tr>
-    <td><img src="docs/kimiweb页面.png" alt="Chat (official Web UI embedded)" /></td>
-    <td><img src="docs/统计.png" alt="Usage statistics" /></td>
+    <td><img src="docs/images/img.png" alt="Chat (official Web UI embedded)" /></td>
+    <td><img src="docs/images/img_1.png" alt="Terminal workspace" /></td>
   </tr>
   <tr>
-    <td><img src="docs/设置.png" alt="Settings" /></td>
-    <td><img src="docs/桌宠立绘设置.png" alt="Desktop pet & skin standee" /></td>
+    <td><img src="docs/images/img_2.png" alt="Usage statistics overview" /></td>
+    <td><img src="docs/images/img_3.png" alt="API call details" /></td>
+  </tr>
+</table>
+
+<table>
+  <tr>
+    <td><img src="docs/images/img_4.png" alt="General settings" /></td>
+    <td><img src="docs/images/img_5.png" alt="Desktop pet & skin settings" /></td>
+  </tr>
+  <tr>
+    <td><img src="docs/images/img_6.png" alt="Experimental features" /></td>
+    <td><img src="docs/images/img_7.png" alt="Advanced config editor" /></td>
   </tr>
 </table>
 
