@@ -30,7 +30,6 @@ English · [中文](README.zh-CN.md) · [Download](https://github.com/Yann-Up/ki
   </tr>
 </table>
 
-🐾 See the desktop pet in action → [demo video](docs/桌宠.mp4)
 
 ## Features
 
