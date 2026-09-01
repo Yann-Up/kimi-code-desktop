@@ -120,6 +120,29 @@ export interface AppUpdateProgress {
   total: number | null
 }
 
+/** 内嵌终端(TUI)打开参数:cols/rows 为初始 PTY 尺寸,cwd 省略时后端用用户主目录 */
+export interface TerminalOpenOpts {
+  cwd?: string
+  cols: number
+  rows: number
+}
+
+/** terminal:exit 事件载荷:PTY 子进程退出(kill 关闭也会触发,code 可能为 null) */
+export interface TerminalExitInfo {
+  sessionId: string
+  code: number | null
+}
+
+/** CLI 工作空间注册表项(local_workspaces 返回;按 lastOpenedAt 倒序,目录不存在的已过滤) */
+export interface WorkspaceInfo {
+  /** 项目根目录 */
+  root: string
+  /** 项目名(CLI 注册表维护) */
+  name: string
+  /** 最后打开时间(ISO8601) */
+  lastOpenedAt: string
+}
+
 /** 桌宠配置(实验性功能;设计见 docs/desktop-pet-design.md) */
 export interface PetConfig {
   enabled: boolean
@@ -361,6 +384,8 @@ export interface KimiApi {
   /** 保存 kimi web 启动参数;激活通道后端运行中会自动重启生效 */
   webServerSet(opts: WebServerOptions): Promise<WebServerOptions>
   localDrives(): Promise<any>
+  /** CLI 工作空间注册表(内嵌终端「选择项目」下拉;本机直读,不依赖服务运行) */
+  localWorkspaces(): Promise<WorkspaceInfo[]>
 
   // pet(桌宠,实验性)
   /** 桌宠配置(enabled 缺省关) */
@@ -426,6 +451,18 @@ export interface KimiApi {
   skinSetInChat(enabled: boolean): Promise<void>
   /** 皮肤配置变化(skin:config-changed;切换开关/皮肤后同步立绘显隐与形象) */
   onSkinConfigChanged(cb: (cfg: SkinConfig) => void): Unsubscribe
+
+  // terminal(内嵌终端 TUI,Workspace Grid;每窗格一个 PTY 会话)
+  /** 打开终端会话:返回 sessionId;输出经 onData 回调二进制投递(Channel 通道,不经事件) */
+  terminalOpen(opts: TerminalOpenOpts, onData: (data: Uint8Array) => void): Promise<string>
+  /** 向 PTY 写输入(键盘/粘贴) */
+  terminalWrite(sessionId: string, data: Uint8Array): Promise<void>
+  /** 调整 PTY 尺寸(窗格 fit 后调用) */
+  terminalResize(sessionId: string, cols: number, rows: number): Promise<void>
+  /** 关闭会话(kill 子进程;退出事件仍会从 wait 线程发出,前端按已关闭忽略) */
+  terminalClose(sessionId: string): Promise<void>
+  /** PTY 子进程退出(terminal:exit;含主动 close 触发的) */
+  onTerminalExit(cb: (info: TerminalExitInfo) => void): Unsubscribe
 }
 
 declare global {

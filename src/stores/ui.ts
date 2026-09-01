@@ -6,8 +6,8 @@ import type {
   ConnectionTargetConfig
 } from '../platform/kimi-api'
 
-/** 壳内视图:顶部导航的三个 tab(对话 / 统计 / 设置) */
-export type ShellView = 'chat' | 'stats' | 'settings'
+/** 壳内视图:顶部导航的四个 tab(对话 / 终端 / 统计 / 设置) */
+export type ShellView = 'chat' | 'terminal' | 'stats' | 'settings'
 
 /** 壳主题:跟随官方 web UI(chatPrefsBridge 上报);持久化 localStorage kimi.theme。
  *  system=跟随系统(与官方三态对齐;经 matchMedia 解析成实际明暗落地 data-theme) */
@@ -66,6 +66,10 @@ interface UiState {
   quotaRefreshSecs: number
   /** 设置页字体缩放(百分比,100=标准;持久化 localStorage,经 CSS zoom 生效) */
   settingsZoom: number
+  /** 内嵌终端字号(px,持久化 kimi.terminalFontSize,默认 13) */
+  terminalFontSize: number
+  /** 内嵌终端新窗格默认工作目录(持久化 kimi.terminalCwd;空=用户主目录) */
+  terminalCwd: string
   /** 壳主题(chatPrefsBridge 随官方 UI 上报写入;持久化 kimi.theme) */
   theme: ShellTheme
   /** 壳语言(chatPrefsBridge 随官方 UI 上报写入;持久化 kimi.locale) */
@@ -87,6 +91,8 @@ interface UiState {
   setSettingsSection: (s: string) => void
   setQuotaRefreshSecs: (secs: number) => void
   setSettingsZoom: (pct: number) => void
+  setTerminalFontSize: (px: number) => void
+  setTerminalCwd: (dir: string) => void
   setTheme: (t: ShellTheme) => void
   setLocale: (l: ShellLocale) => void
   setBridgeHealth: (h: UiState['bridgeHealth']) => void
@@ -144,6 +150,21 @@ export const useUi = create<UiState>((set) => ({
   setSettingsZoom: (pct) => {
     localStorage.setItem('kimi.settingsZoom', String(pct))
     set({ settingsZoom: pct })
+  },
+  terminalFontSize: (() => {
+    const raw = localStorage.getItem('kimi.terminalFontSize')
+    if (raw === null) return 13
+    const n = Number(raw)
+    return Number.isFinite(n) && n >= 9 && n <= 28 ? n : 13
+  })(),
+  setTerminalFontSize: (px) => {
+    localStorage.setItem('kimi.terminalFontSize', String(px))
+    set({ terminalFontSize: px })
+  },
+  terminalCwd: localStorage.getItem('kimi.terminalCwd') ?? '',
+  setTerminalCwd: (dir) => {
+    localStorage.setItem('kimi.terminalCwd', dir)
+    set({ terminalCwd: dir })
   },
   theme: loadTheme(),
   locale: loadLocale(),

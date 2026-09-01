@@ -1,6 +1,6 @@
 [package]
 name = "kimi-desktop-tauri"
-version = "0.5.6"
+version = "0.6.0"
 description = "Desktop client for Kimi Code CLI (kimi web backend) - Tauri shell"
 edition = "2021"
 rust-version = "1.77"
@@ -40,6 +40,8 @@ toml_edit = "0.22"
 toml = "0.8"
 # 宠物包导入(zip 解压);只启用纯 Rust 的 deflate 后端,避开 C 构建依赖
 zip = { version = "2.2", default-features = false, features = ["deflate"] }
+# 内嵌终端(Workspace Grid):本机 PTY 中运行 kimi CLI 交互 TUI,供前端 xterm.js 渲染
+portable-pty = "0.9"
 
 [profile.release]
 lto = true

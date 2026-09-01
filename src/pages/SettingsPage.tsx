@@ -13,6 +13,7 @@ import {
   Repeat,
   Settings2,
   SlidersHorizontal,
+  Terminal,
   User2,
   Wand2
 } from 'lucide-react'
@@ -21,6 +22,7 @@ import { useT } from '../i18n'
 import { GeneralSettings } from './settings/GeneralSettings'
 import { ChannelsSettings } from './settings/ChannelsSettings'
 import { DesktopExperimentalSettings } from './settings/DesktopExperimentalSettings'
+import { TerminalSettings } from './settings/TerminalSettings'
 import { CliGeneralSettings } from './settings/CliGeneralSettings'
 import { CliModelsSettings } from './settings/CliModelsSettings'
 import { CliThinkingSettings } from './settings/CliThinkingSettings'
@@ -48,6 +50,7 @@ function useGroups(t: ReturnType<typeof useT>): { label: string; items: SectionD
       items: [
         { id: 'general', label: t('settings.general'), icon: Settings2 },
         { id: 'channels', label: t('settings.channels'), icon: Network },
+        { id: 'terminal', label: t('settings.terminal.title'), icon: Terminal },
         { id: 'desktop-experimental', label: t('settings.experimental'), icon: PawPrint }
       ]
     },
@@ -91,6 +94,8 @@ export function SettingsPage() {
         return <ChannelsSettings />
       case 'desktop-experimental':
         return <DesktopExperimentalSettings />
+      case 'terminal':
+        return <TerminalSettings />
       case 'cli-general':
         return <CliGeneralSettings />
       case 'cli-models':

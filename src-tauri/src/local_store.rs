@@ -764,3 +764,54 @@ pub fn list_drives() -> Vec<String> {
     }
     out
 }
+
+/// 工作空间注册表项(local_workspaces 返回;与 <kimi_home>/workspaces.json 对应)
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceInfo {
+    /// 项目根目录(已校验存在,不存在的注册项被过滤)
+    pub root: String,
+    /// 项目名(CLI 注册表维护)
+    pub name: String,
+    /// 最后打开时间(ISO8601 字符串,倒序排序依据)
+    pub last_opened_at: String,
+}
+
+/// 读 CLI 维护的工作空间注册表(<kimi_home>/workspaces.json),供内嵌终端「选择项目」:
+/// 排除 deleted_workspace_ids 与目录已不存在的项,按 last_opened_at 倒序;
+/// 文件不存在/解析失败返回空表。固定本机直读(远端路径对本机 PTY 无意义),不依赖服务运行。
+pub async fn local_workspaces() -> Vec<WorkspaceInfo> {
+    let home = cli::kimi_home();
+    let Ok(content) = tokio::fs::read_to_string(home.join("workspaces.json")).await else {
+        return Vec::new();
+    };
+    let Ok(v) = serde_json::from_str::<Value>(&content) else {
+        return Vec::new();
+    };
+    let deleted: HashSet<&str> = v["deleted_workspace_ids"]
+        .as_array()
+        .map(|a| a.iter().filter_map(|x| x.as_str()).collect())
+        .unwrap_or_default();
+    let mut out: Vec<WorkspaceInfo> = v["workspaces"]
+        .as_object()
+        .map(|m| {
+            m.iter()
+                .filter(|(id, _)| !deleted.contains(id.as_str()))
+                .filter_map(|(_, w)| {
+                    let root = w["root"].as_str()?.to_string();
+                    // 目录已删除的项目对终端无意义(选了也 spawn 不了),直接过滤
+                    if root.is_empty() || !Path::new(&root).is_dir() {
+                        return None;
+                    }
+                    Some(WorkspaceInfo {
+                        root,
+                        name: w["name"].as_str().unwrap_or("").to_string(),
+                        last_opened_at: w["last_opened_at"].as_str().unwrap_or("").to_string(),
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    out.sort_by(|a, b| b.last_opened_at.cmp(&a.last_opened_at));
+    out
+}

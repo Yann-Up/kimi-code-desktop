@@ -2,7 +2,7 @@
  * platform/tauri: Tauri 壳下的 window.kimiApi 实现(契约见 ./kimi-api)。
  * 由 main.tsx 在渲染层启动时安装。
  */
-import { invoke } from '@tauri-apps/api/core'
+import { Channel, invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import type {
@@ -21,8 +21,10 @@ import type {
   ServerErrorInfo,
   ServerReadyInfo,
   SkinConfig,
+  TerminalExitInfo,
   TurnEndedInfo,
-  WebServerOptions
+  WebServerOptions,
+  WorkspaceInfo
 } from './kimi-api'
 
 type Unsubscribe = () => void
@@ -144,6 +146,7 @@ const api: KimiApi = {
   webServerGet: () => invoke<WebServerOptions>('web_server_get'),
   webServerSet: (opts) => invoke<WebServerOptions>('web_server_set', { port: opts.port }),
   localDrives: () => invoke('local_drives'),
+  localWorkspaces: () => invoke<WorkspaceInfo[]>('local_workspaces'),
 
   // pet
   petConfigGet: () => invoke<PetConfig>('pet_config_get'),
@@ -179,7 +182,20 @@ const api: KimiApi = {
   skinDirOpen: () => invoke('skin_dir_open'),
   skinSetOpacity: (opacity) => invoke('skin_set_opacity', { opacity }),
   skinSetInChat: (enabled) => invoke('skin_set_in_chat', { enabled }),
-  onSkinConfigChanged: (cb) => on<SkinConfig>('skin:config-changed', cb)
+  onSkinConfigChanged: (cb) => on<SkinConfig>('skin:config-changed', cb),
+
+  // terminal
+  terminalOpen: (opts, onData) => {
+    // 输出走 Channel 二进制直发(Vec<u8> → ArrayBuffer),免 JSON 序列化、不广播
+    const channel = new Channel<ArrayBuffer>()
+    channel.onmessage = (buf) => onData(new Uint8Array(buf))
+    return invoke<string>('terminal_open', { opts, onData: channel })
+  },
+  terminalWrite: (sessionId, data) => invoke('terminal_write', { sessionId, data: Array.from(data) }),
+  terminalResize: (sessionId, cols, rows) =>
+    invoke('terminal_resize', { sessionId, cols, rows }),
+  terminalClose: (sessionId) => invoke('terminal_close', { sessionId }),
+  onTerminalExit: (cb) => on<TerminalExitInfo>('terminal:exit', cb)
 }
 
 /** 安装到 window.kimiApi */

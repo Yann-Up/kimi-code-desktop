@@ -1,4 +1,4 @@
-import { ArrowDownToLine, BarChart3, Expand, Loader2, MessageSquare, Minus, Moon, RadioTower, Settings, Square, Sun, X } from 'lucide-react'
+import { ArrowDownToLine, BarChart3, Expand, Loader2, MessageSquare, Minus, Moon, RadioTower, Settings, Square, Sun, Terminal as TerminalIcon, X } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import logoUrl from '../assets/logo.png'
 import { useUi, resolveTheme, type ShellView } from '../stores/ui'
@@ -181,6 +181,13 @@ export function TitleBar() {
         >
           <MessageSquare size={16} />
           <Tip text={t('titlebar.navChat')} />
+        </button>
+        <button
+          className={`${ICON_BTN} ${view === 'terminal' ? 'bg-surface-tertiary text-text' : ''}`}
+          onClick={() => toggleView('terminal')}
+        >
+          <TerminalIcon size={16} />
+          <Tip text={t('titlebar.navTerminal')} />
         </button>
         <button
           className={`${ICON_BTN} ${view === 'stats' ? 'bg-surface-tertiary text-text' : ''}`}

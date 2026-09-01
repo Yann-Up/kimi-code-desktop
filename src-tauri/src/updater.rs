@@ -88,6 +88,12 @@ async fn download_and_install(app: AppHandle) -> Result<(), String> {
     // 立即终止本进程——不会触发 ExitRequested,优雅关停完全不执行。
     // 不先停服务的话 kimi web 变孤儿继续占住首选端口,新版启动时端口被迫顺延。
     crate::stop_all_backends(&app).await;
+    // 内嵌终端 PTY 会话同样要清:kimi TUI 是壳的子进程,install 直接 exit 不走 ExitRequested
+    app.state::<std::sync::Arc<crate::AppState>>()
+        .terminals
+        .lock()
+        .await
+        .kill_all();
     update
         .install(bytes)
         .map_err(|e| format!("安装更新失败: {e}"))?;

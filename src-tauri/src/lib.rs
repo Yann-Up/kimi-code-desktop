@@ -17,6 +17,7 @@ mod server;
 mod skin;
 mod ssh;
 mod target;
+mod terminal;
 mod updater;
 mod ws;
 
@@ -27,6 +28,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use serde_json::{json, Value};
+use tauri::ipc::Channel;
 use tauri::menu::{MenuBuilder, MenuItemBuilder, PredefinedMenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::webview::NewWindowResponse;
@@ -84,6 +86,8 @@ pub struct AppState {
     pub http: reqwest::Client,
     /// 退出清理标记:防止 ExitRequested 二次进入
     pub exit_cleaned: AtomicBool,
+    /// 内嵌终端(Workspace Grid)会话管理器:本机 PTY 中跑 kimi CLI 交互 TUI
+    pub terminals: Arc<tokio::sync::Mutex<terminal::TerminalManager>>,
 }
 
 impl AppState {
@@ -98,6 +102,7 @@ impl AppState {
                 .build()
                 .unwrap_or_else(|_| reqwest::Client::new()),
             exit_cleaned: AtomicBool::new(false),
+            terminals: Arc::new(tokio::sync::Mutex::new(terminal::TerminalManager::new())),
         }
     }
 
@@ -121,12 +126,19 @@ impl AppState {
         f(map.entry(channel.to_string()).or_default())
     }
 
-    /// 任一通道后端运行中(关窗拦截用;锁被占时保守按运行中处理)
+    /// 任一通道后端运行中或有存活终端会话(关窗拦截用;锁被占时保守按运行中处理)
     fn any_backend_running(&self) -> bool {
-        match self.backends.try_lock() {
+        let backend_running = match self.backends.try_lock() {
             Ok(map) => map
                 .values()
                 .any(|b| b.backend_running.load(Ordering::SeqCst)),
+            Err(_) => true,
+        };
+        if backend_running {
+            return true;
+        }
+        match self.terminals.try_lock() {
+            Ok(mut terminals) => terminals.has_sessions(),
             Err(_) => true,
         }
     }
@@ -1420,6 +1432,57 @@ fn local_drives() -> Vec<String> {
     local_store::list_drives()
 }
 
+/// CLI 工作空间注册表(内嵌终端「选择项目」下拉;本机直读,按 last_opened_at 倒序)
+#[tauri::command]
+async fn local_workspaces() -> Vec<local_store::WorkspaceInfo> {
+    local_store::local_workspaces().await
+}
+
+// ---------- 内嵌终端(Workspace Grid) ----------
+
+/// 打开终端会话:本机 PTY 中 spawn kimi CLI 交互 TUI,输出经 Channel 直发前端
+#[tauri::command]
+async fn terminal_open(
+    app: AppHandle,
+    state: State<'_, Arc<AppState>>,
+    opts: terminal::TerminalOpenOpts,
+    on_data: Channel<Vec<u8>>,
+) -> Result<String, String> {
+    state.terminals.lock().await.open(&app, opts, on_data)
+}
+
+/// 写入终端(前端键入原始字节)
+#[tauri::command]
+async fn terminal_write(
+    state: State<'_, Arc<AppState>>,
+    session_id: String,
+    data: Vec<u8>,
+) -> Result<(), String> {
+    state.terminals.lock().await.write(&session_id, &data)
+}
+
+/// 调整终端尺寸(前端 xterm.js fit 后同步)
+#[tauri::command]
+async fn terminal_resize(
+    state: State<'_, Arc<AppState>>,
+    session_id: String,
+    cols: u16,
+    rows: u16,
+) -> Result<(), String> {
+    state
+        .terminals
+        .lock()
+        .await
+        .resize(&session_id, cols, rows)
+}
+
+/// 关闭终端会话(移除并 kill,幂等)
+#[tauri::command]
+async fn terminal_close(state: State<'_, Arc<AppState>>, session_id: String) -> Result<(), String> {
+    state.terminals.lock().await.close(&session_id);
+    Ok(())
+}
+
 // ---------- 托盘 ----------
 
 /// 托盘图标:编译期内嵌 build/tray.png,不依赖 resource_dir/工作目录,dev 与打包均可用
@@ -1704,6 +1767,11 @@ pub fn run() {
             local_cli_config_parsed,
             remote_control_status,
             local_drives,
+            local_workspaces,
+            terminal_open,
+            terminal_write,
+            terminal_resize,
+            terminal_close,
         ])
         .setup(move |app| {
             // 旧版单目标配置 → 通道模型迁移(channels 为空且 connection 非本机时转成通道并设为 active)
@@ -1778,7 +1846,7 @@ pub fn run() {
                 win.on_window_event(move |e| {
                     if let tauri::WindowEvent::CloseRequested { api, .. } = e {
                         api.prevent_close();
-                        // payload: 是否有后端在跑(前端据此决定确认框的警告文案)
+                        // payload: 是否有后端或终端会话在跑(前端据此决定确认框的警告文案)
                         let _ = win2.emit("app:close-requested", st.any_backend_running());
                     }
                 });
@@ -1800,6 +1868,8 @@ pub fn run() {
                 let h = handle.clone();
                 tauri::async_runtime::spawn(async move {
                     stop_all_backends(&h).await;
+                    // 内嵌终端 PTY 会话一并清空(kimi TUI 是壳的子进程,不退则变孤儿)
+                    h.state::<Arc<AppState>>().terminals.lock().await.kill_all();
                     h.exit(0);
                 });
             }

@@ -26,6 +26,7 @@ import plugins from './messages/plugins'
 import stats from './messages/stats'
 import pet from './messages/pet'
 import app from './messages/app'
+import terminal from './messages/terminal'
 
 export type Messages = Record<string, string>
 
@@ -46,7 +47,8 @@ for (const m of [
   plugins,
   stats,
   pet,
-  app
+  app,
+  terminal
 ]) {
   Object.assign(dicts.zh, m.zh)
   Object.assign(dicts.en, m.en)

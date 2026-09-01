@@ -13,6 +13,7 @@ import { useChatPrefsBridge } from './chatPrefsBridge'
 import { newBridgeNonce } from './bridgeGuard'
 import { SettingsPage } from '../pages/SettingsPage'
 import { StatsPage } from '../pages/stats/StatsPage'
+import TerminalPage from '../pages/terminal/TerminalPage'
 import { useUi } from '../stores/ui'
 import { IS_WINDOWS } from '../platform/os'
 import { useT, t as tStatic } from '../i18n'
@@ -370,12 +371,18 @@ export function ShellHome() {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      {/* 导航已收进标题栏图标(TitleBar);对话区常驻挂载(切视图只隐藏),
-          避免重载官方 UI 丢失会话状态;SkinStandee 垫底(z-0),各视图内容 relative 在其上 */}
+      {/* 导航已收进标题栏图标(TitleBar);对话区/终端工作区常驻挂载(切视图只隐藏),
+          避免重载官方 UI 丢失会话状态 / 销毁 xterm 实例丢失终端缓冲;SkinStandee 垫底(z-0),
+          各视图内容 relative 在其上 */}
       <div className="relative flex min-h-0 flex-1 flex-col">
         <SkinStandee />
         <div className={`min-h-0 flex-1 flex-col ${view === 'chat' ? 'flex' : 'hidden'}`}>
           <WebFrame />
+        </div>
+        <div
+          className={`relative min-h-0 flex-1 flex-col ${view === 'terminal' ? 'flex' : 'hidden'}`}
+        >
+          <TerminalPage />
         </div>
         {view === 'stats' && (
           <div className="relative min-h-0 flex-1 overflow-y-auto">
