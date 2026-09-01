@@ -60,12 +60,9 @@ export function TitleBar() {
     return () => clearTimeout(timer)
   }, [updateFeedback])
 
-  /** 点击更新按钮 = 手动检查:已有结果直接开弹窗;查到新版写 store(出红点)并开弹窗 */
+  /** 点击更新按钮 = 每次都重新拉取最新结果(不读 store 缓存,否则发新版后仍显示旧版);
+   *  查到新版写 store(出红点)并开弹窗;命中的版本被用户忽略过则提示已忽略,无更新提示已是最新 */
   const clickUpdate = () => {
-    if (updateVisible) {
-      setUpdateOpen(true)
-      return
-    }
     if (updateChecking) return
     setUpdateChecking(true)
     setUpdateFeedback(null)
@@ -74,7 +71,8 @@ export function TitleBar() {
       .then((r) => {
         if (r) {
           useUi.getState().setAppUpdate(r)
-          setUpdateOpen(true)
+          if (r.version !== useUi.getState().appUpdateIgnored) setUpdateOpen(true)
+          else setUpdateFeedback(t('titlebar.updateIgnored', { version: r.version }))
         } else {
           setUpdateFeedback(t('titlebar.upToDate'))
         }
@@ -196,7 +194,7 @@ export function TitleBar() {
           <BarChart3 size={16} />
           <Tip text={t('titlebar.navStats')} />
         </button>
-        {/* 应用更新:常驻按钮,点击=检查更新;有新版本且未忽略时出红点并直接开「发现新版本」弹窗 */}
+        {/* 应用更新:常驻按钮,点击=实时重新检查(不读缓存);有新版本且未忽略时出红点,查到新版直接开「发现新版本」弹窗 */}
         <button className={ICON_BTN} onClick={clickUpdate}>
           {updateChecking ? (
             <Loader2 size={16} className="animate-spin" />
