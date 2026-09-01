@@ -11,6 +11,7 @@ import { useT } from '../../i18n'
 import { pushLocaleToFrames, pushThemeToFrames } from '../../components/chatPrefsBridge'
 import { Select } from '../../components/ui/Select'
 import { Segmented } from '../../components/ui/Segmented'
+import { Switch } from '../../components/ui/Switch'
 import { inputCls as uiInputCls } from '../../components/ui/Input'
 
 interface AppInfo {
@@ -199,6 +200,8 @@ export function GeneralSettings() {
   const [svcRunning, setSvcRunning] = useState<boolean | null>(null)
   const [svcBusy, setSvcBusy] = useState(false)
   const quotaRefreshSecs = useUi((s) => s.quotaRefreshSecs)
+  const autoStartService = useUi((s) => s.autoStartService)
+  const setAutoStartService = useUi((s) => s.setAutoStartService)
   const settingsZoom = useUi((s) => s.settingsZoom)
   const theme = useUi((s) => s.theme)
   const locale = useUi((s) => s.locale)
@@ -671,6 +674,16 @@ export function GeneralSettings() {
                 ? t('settings.general.svcStop')
                 : t('settings.general.svcStart')}
           </button>
+        </div>
+        {/* 启动自动拉起:默认开;这里的"停止服务"仅当次会话有效,不影响此偏好 */}
+        <div className="mt-3 flex items-center justify-between border-t border-border pt-3">
+          <div className="min-w-0">
+            <p className="text-[13px] font-[475]">{t('settings.general.autoStartTitle')}</p>
+            <p className="mt-0.5 text-[12px] text-text-tertiary">
+              {t('settings.general.autoStartDesc')}
+            </p>
+          </div>
+          <Switch checked={autoStartService} onChange={setAutoStartService} />
         </div>
       </Card>
 

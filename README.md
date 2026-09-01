@@ -135,7 +135,7 @@ One-time repo Secrets: `TAURI_SIGNING_PRIVATE_KEY` (contents of `~/.tauri/kimi-d
 
 ## Behavior notes
 
-- **Straight to the main page on launch**: kimi web is not auto-started; the chat page shows a placeholder (with a choice of where the service runs: local / WSL / SSH) and loads the official Web UI only after you click "Start Kimi Code service". If the CLI is missing locally, an install confirmation pops up first — nothing is downloaded silently. Start/stop entry points: the chat placeholder (start) and Settings → General (start/stop); stopping the service does not affect local pages like stats/settings
+- **Auto-start on launch**: opening the app automatically starts the Kimi Code service of the active channel (local / WSL / SSH) and loads the official Web UI. If the CLI is missing locally, an install confirmation pops up first — nothing is downloaded silently, and a "re-detect" button covers self-installed (npm/brew) setups. Auto-start can be disabled in Settings → General → Local Service; start/stop entries: the chat placeholder (start) and Settings → General (start/stop). Stopping the service lasts only for the current session and does not affect local pages like stats/settings
 - Known limitations: clicking a notification does not focus the main window (plugin limitation); notifications carry no icon
 
 ## Contributing

@@ -64,6 +64,8 @@ interface UiState {
   pendingSessionFocus: string | null
   /** 额度条自动刷新间隔(秒,0=关闭;持久化 localStorage,默认 60) */
   quotaRefreshSecs: number
+  /** 启动应用时自动拉起激活通道的 kimi web 服务(持久化 localStorage,默认开) */
+  autoStartService: boolean
   /** 设置页字体缩放(百分比,100=标准;持久化 localStorage,经 CSS zoom 生效) */
   settingsZoom: number
   /** 内嵌终端字号(px,持久化 kimi.terminalFontSize,默认 13) */
@@ -90,6 +92,7 @@ interface UiState {
   closeSettings: () => void
   setSettingsSection: (s: string) => void
   setQuotaRefreshSecs: (secs: number) => void
+  setAutoStartService: (v: boolean) => void
   setSettingsZoom: (pct: number) => void
   setTerminalFontSize: (px: number) => void
   setTerminalCwd: (dir: string) => void
@@ -140,6 +143,11 @@ export const useUi = create<UiState>((set) => ({
   setQuotaRefreshSecs: (secs) => {
     localStorage.setItem('kimi.quotaRefreshSecs', String(secs))
     set({ quotaRefreshSecs: secs })
+  },
+  autoStartService: localStorage.getItem('kimi.autoStartService') !== '0', // 默认开
+  setAutoStartService: (v) => {
+    localStorage.setItem('kimi.autoStartService', v ? '1' : '0')
+    set({ autoStartService: v })
   },
   settingsZoom: (() => {
     const raw = localStorage.getItem('kimi.settingsZoom')
