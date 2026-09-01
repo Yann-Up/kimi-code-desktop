@@ -1,28 +1,77 @@
+<div align="center">
+
+<img src="design/logo-final.png" width="96" alt="Kimi Code Desktop" />
+
 # Kimi Code Desktop
 
-[English](#english) | 中文
+**[Kimi Code CLI](https://github.com/moonshotai/kimi-code) 的桌面客户端——把官方 Web UI 装进原生窗口,再加用量统计、额度条、桌宠、托盘与自动更新。**
 
-基于 [Kimi Code CLI](https://github.com/moonshotai/kimi-code) 的桌面客户端。白底 + 蓝色主题(Kimi Web 风格),Tauri v2(Rust)+ React + TypeScript 实现。
+[![Release](https://img.shields.io/github/v/release/Yann-Up/kimi-code-desktop?display_name=tag&sort=semver)](https://github.com/Yann-Up/kimi-code-desktop/releases/latest)
+[![CI](https://github.com/Yann-Up/kimi-code-desktop/actions/workflows/ci.yml/badge.svg)](https://github.com/Yann-Up/kimi-code-desktop/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+![Platform](https://img.shields.io/badge/platform-Windows%20x64%20%7C%20macOS%20Apple%20Silicon-lightgrey)
 
-> 桌面壳而非 AI 运行时:对话界面直接内嵌官方 `kimi web` 的 Web UI(iframe),会话/模型/工具/Git 改动面板等能力全部来自官方界面,随 CLI 升级自动同步。
-> 未安装 CLI 时应用会在首次启动时自动下载安装;已安装则检测更新,有新版时询问后一键升级。
+中文 · [English](#english) · [下载 Download](https://github.com/Yann-Up/kimi-code-desktop/releases/latest)
+
+</div>
+
+> **桌面壳,而非 AI 运行时**:对话界面直接内嵌官方 `kimi web` 的 Web UI(iframe),会话、模型、工具、Git 改动面板等能力全部来自官方界面,随 CLI 升级自动同步——**CLI 升级即 UI 升级**。未安装 CLI 时首次启动自动下载安装;已安装则检测更新,询问后一键升级。
+
+## 截图
+
+<table>
+  <tr>
+    <td><img src="docs/kimiweb页面.png" alt="对话(官方 Web UI 内嵌)" /></td>
+    <td><img src="docs/统计.png" alt="用量统计" /></td>
+  </tr>
+  <tr>
+    <td><img src="docs/设置.png" alt="设置" /></td>
+    <td><img src="docs/桌宠立绘设置.png" alt="桌宠与皮肤立绘" /></td>
+  </tr>
+</table>
+
+🐾 桌宠动起来什么样 → [演示视频](docs/桌宠.mp4)
 
 ## 功能
 
 ### 对话(官方 Web UI 内嵌)
-- 对话页通过 iframe 直连本地 `kimi web` 服务(`http://127.0.0.1:<port>/#token=<token>`),token 由壳自动注入,无需登录
-- 会话列表、流式回复、工具调用、审批、Git 改动面板、模型/供应商设置等均由官方 UI 提供,**CLI 升级即 UI 升级**
-- 聊天中的外链点击一律转系统浏览器打开,webview 不导航离开应用
+
+- iframe 直连本地 `kimi web` 服务(`http://127.0.0.1:<port>/#token=<token>`),token 由壳自动注入,无需登录
+- 会话列表、流式回复、工具调用、审批、模型/供应商设置等均由官方 UI 提供
+- 聊天中的外链一律转系统浏览器打开,webview 不导航离开应用
 
 ### 壳自身提供的能力
-- **用量统计 tab**:时间范围、统计卡、GitHub 式活跃热力图、按天模型堆叠趋势、实时曲线(数据源为 wire.jsonl 的 usage.record,已与 step.end 交叉验证无重复计数)
-- **额度条**:Token/MCP 额度实时展示
-- **桌面通知**:窗口失焦时,任务完成 / 待审批 / 待回答会发桌面通知
-- **设置**:常规(数据目录自定义、CLI 来源选择、日志)/ CLI 配置(模型与供应商、通用行为[默认模型/权限模式/plan 模式等]、循环与后台、服务与图像、思考、身份、实验开关)/ MCP(可视化 + JSON 编辑,写盘自动备份)/ 技能 / 子智能体 / 命令 / 通道
-- **桌面集成**:系统托盘、单实例、无边框窗口自定义标题栏
+
+- **用量统计**:时间范围、统计卡、GitHub 式活跃热力图、按天模型堆叠趋势、实时曲线
+- **标题栏额度条**:各窗口额度(5 小时/1 周/月度)铺平直显 + 实时指标胶囊(TTFT / 输出速度)
+- **桌面通知**:窗口失焦时,任务完成 / 待审批 / 待回答发桌面通知
+- **桌面宠物**(实验性):透明置顶小窗,状态随会话事件变化,支持气泡提醒与自定义宠物包导入
+- **皮肤立绘**(实验性):设置/统计/主页透出立绘,支持自定义皮肤
+- **设置**:常规(数据目录、CLI 来源、日志)/ CLI 配置(模型与供应商、权限模式等)/ MCP(可视化 + JSON 编辑,写盘自动备份)/ 技能 / 子智能体 / 命令 / 通道 / 插件
+- **桌面集成**:系统托盘、单实例、全平台自绘标题栏(macOS 自绘交通灯)、亮暗双主题
 
 ### 远端后端
-除本机外,后端 `kimi web` 也可运行在 **WSL** 或 **SSH 主机** 上(应用内建进程内 SSH 客户端与端口转发,密码存系统凭据管理器,不落明文配置)。
+
+除本机外,后端 `kimi web` 也可运行在 **WSL** 或 **SSH 主机** 上:内建进程内 SSH 客户端与端口转发,host key 采用 TOFU 校验,密码只存系统凭据管理器,不落明文。
+
+### 自动更新
+
+内置自动更新(tauri-plugin-updater):启动静默检查,发现新版在标题栏出红点,确认后自动下载、安装并重启;更新包经 minisign 签名校验。国内用户走 CNB 镜像加速,GitHub Releases 兜底。
+
+## 下载
+
+从 [Releases](https://github.com/Yann-Up/kimi-code-desktop/releases/latest) 获取最新版:
+
+| 平台 | 文件 | 说明 |
+| --- | --- | --- |
+| Windows x64 | `*_x64-setup.exe` | NSIS 安装版(推荐) |
+| Windows x64 | `*_x64-portable.zip` | 免安装便携版 |
+| Windows x64 | `*_x64_en-US.msi` | MSI 安装包 |
+| macOS(Apple Silicon) | `*_aarch64.dmg` | 仅 M 系列芯片;**未签名未公证**,见下方说明 |
+
+> ⚠️ **macOS 首次打开会被 Gatekeeper 拦截**(未付费签名/公证),二选一:
+> 1. 系统设置 → 隐私与安全性 → 找到 "Kimi Code Desktop" → **仍要打开**
+> 2. 终端执行:`xattr -d com.apple.quarantine /Applications/Kimi\ Code\ Desktop.app`
 
 ## 架构
 
@@ -35,29 +84,34 @@ Tauri Rust 后端(src-tauri/)
   ├── WS 通知订阅器 → /api/v1/ws(壳内部订阅,不转发给渲染层)
   │     枚举会话订阅 turn.ended / work_changed → 失焦时发桌面通知
   ├── REST 客户端 → /api/v1/*(Bearer 认证,额度/统计等壳自身功能使用)
-  └── 本地数据   → ~/.kimi-code 直读(技能/子代理/mcp.json/usage 聚合/盘符)
+  └── 本地数据   → kimi_home 直读(技能/子代理/mcp.json/usage 聚合/盘符)
 渲染进程(React + zustand,src/)
-  ├── components/ShellHome.tsx  三 tab 壳:对话(iframe)/ 统计 / 设置
-  ├── components/QuotaStrip.tsx 额度条
+  ├── components/ShellHome.tsx  视图容器:对话(iframe)/ 统计 / 设置
+  ├── components/TitleBar.tsx   标题栏:额度条 + 导航 + 窗口控制
   ├── platform/kimi-api.ts      壳与渲染层之间的 API 契约(window.kimiApi)
   ├── platform/tauri.ts         契约的 Tauri 实现(invoke/事件监听)
   └── stores/ui.ts              界面状态
 ```
 
-### 关键实现细节(踩过的坑,供参考)
-- **iframe 直嵌可行**:loopback 下官方服务端不发 CSP frame-ancestors / X-Frame-Options,无需反代;壳在 healthz 通过后会 HEAD `/` 做一次预警检查,命中则显示"改用系统浏览器"引导页而非空白 iframe。注意 `--host 0.0.0.0` 时官方会下发 `frame-ancestors 'self'`(实测 0.36.1,loopback 请求也带),与内嵌互斥,故壳不提供局域网开放选项(已移除);需要局域网访问请自行在终端跑 `kimi web --host 0.0.0.0` 用浏览器直连
+<details>
+<summary><b>关键实现细节(踩过的坑,供参考)</b></summary>
+
+- **iframe 直嵌可行**:loopback 下官方服务端不发 CSP frame-ancestors / X-Frame-Options,无需反代;壳在 healthz 通过后会 HEAD `/` 做一次预警检查,命中则显示"改用系统浏览器"引导页而非空白 iframe。注意 `--host 0.0.0.0` 时官方会下发 `frame-ancestors 'self'`(实测 0.36.1,loopback 请求也带),与内嵌互斥,故壳不提供局域网开放选项;需要局域网访问请自行在终端跑 `kimi web --host 0.0.0.0` 用浏览器直连
 - **token 时序竞争**:前端拿 `web_ui_url` 带重试,后端未就绪时不白屏
-- **端口稳定(源即身份)**:web UI 的"新浏览器"验证状态按 iframe 源(`http://127.0.0.1:<port>`)存 localStorage,端口漂移就会重弹验证;故固定从 58666 起,且启动前先回收首选端口上的残留实例(应用崩溃/强杀留下的孤儿:token 可用时 POST shutdown + 注册表 pid 强杀兜底;token 不可用但端口被占且注册表心跳新鲜——CLI 每 15s 刷新 heartbeat_at——时按 pid 直接强杀)保证该端口可用;其他端口上用户另开的 kimi web 实例不动。应用更新安装前也会先停妥所有通道服务(updater 插件安装时强杀进程,不触发 ExitRequested 优雅关停)
+- **端口稳定(源即身份)**:web UI 的"新浏览器"验证状态按 iframe 源(`http://127.0.0.1:<port>`)存 localStorage,端口漂移就会重弹验证;故固定起始端口(release 58666 / dev 58766),且启动前先回收首选端口上的残留实例(应用崩溃/强杀留下的孤儿:token 可用时 POST shutdown + 注册表 pid 强杀兜底;token 不可用但端口被占且注册表心跳新鲜时按 pid 直接强杀)保证该端口可用;其他端口上用户另开的 kimi web 实例不动。应用更新安装前也会先停妥所有通道服务(updater 插件安装时强杀进程,不触发 ExitRequested 优雅关停)
 - **崩溃自愈**:kimi web 意外退出时壳会清理连接状态并广播 `server:exited`,可就地重启服务
+- **macOS 交通灯**:主窗全平台 `decorations(false)` 全自绘标题栏;mac 的三灯为前端自绘(原生 Overlay 灯位由 AppKit 按 28pt 标准栏定位,与自绘栏不对中),失焦置灰、绿灯进出原生全屏
 - token 统计口径:`usage.record` ≈ `step.end`(交叉验证差 1%),输入/输出/缓存分开记账
+
+</details>
 
 ## 安全说明
 
-- **Bearer token 不出本机**:REST/WS/iframe 只连 `127.0.0.1`,token 由壳持有,日志按 "token" 关键字过滤。
-- **SSH host key 采用 TOFU**(trust on first use):首次连接记录指纹到配置目录 `known_hosts`,之后指纹变更会拒绝连接并提示(防中间人攻击);SSH 密码只存系统凭据管理器。
-- **外链隔离**:聊天内容中的链接点击后一律由系统外部浏览器打开(仅放行 http/https),webview 不会导航离开应用。
-- **配置原子写**:`desktop-config.json` / `mcp.json` 均先写临时文件再替换,避免崩溃留下截断文件;mcp.json 另有 `.kimi-desktop-bak` 备份。
-- 首次启动时 CLI 自动安装使用官方安装脚本(`irm | iex` / `curl | sh`),与 Kimi Code 官方文档推荐方式一致。
+- **Bearer token 不出本机**:REST/WS/iframe 只连 `127.0.0.1`,token 由壳持有,日志按 "token" 关键字过滤
+- **SSH host key 采用 TOFU**:首次连接记录指纹到配置目录 `known_hosts`,指纹变更即拒绝连接;SSH 密码只存系统凭据管理器
+- **外链隔离**:聊天内容中的链接一律由系统浏览器打开(仅放行 http/https)
+- **配置原子写**:`desktop-config.json` / `mcp.json` 先写临时文件再替换;mcp.json 另有 `.kimi-desktop-bak` 备份
+- CLI 自动安装使用官方安装脚本(`irm | iex` / `curl | sh`),与官方文档推荐方式一致
 
 ## 开发
 
@@ -69,37 +123,29 @@ npm run typecheck      # 渲染层与 vite 配置的 TS 检查
 
 需要 Rust 工具链(cargo)。Windows 下使用系统 WebView2,安装包体积显著小于 Electron 方案。
 
-## 打包
-
 ```bash
-# 已开启 updater 产物(createUpdaterArtifacts),本地打包需指向签名私钥:
+# 打包(已开启 updater 产物,本地打包需指向签名私钥):
 export TAURI_SIGNING_PRIVATE_KEY_PATH=~/.tauri/kimi-desktop.key   # Windows: set 或 $env:
-npm run tauri:build    # 产出当前平台的安装包(产物在 src-tauri/target/release/bundle/)
+npm run tauri:build    # 产出当前平台的安装包(src-tauri/target/release/bundle/)
 ```
 
-目前在 Windows(NSIS 安装包)上验证;macOS / Linux 可按 Tauri 默认目标构建,尚未测试,欢迎反馈。
+### 发版(维护者)
 
-## 发布与自动更新
-
-应用内置自动更新(tauri-plugin-updater):启动时静默检查 GitHub Releases 上的最新版本,发现新版发系统通知并在「设置」tab 显示红点;也可在 设置 → 常规 → 应用更新 手动检查。更新包经 minisign 签名校验,确认后自动下载、安装并重启。
-
-维护者发版流程(tag 触发 `.github/workflows/release.yml`):
+tag 触发 `.github/workflows/release.yml`(Windows → macOS 串行构建 + 签名 + latest.json,产出草稿 Release),正式发布后 `sync-cnb.yml` 同步到 CNB 镜像:
 
 ```bash
 # 1. 三处版本号保持一致:src-tauri/tauri.conf.json、src-tauri/Cargo.toml、package.json
 # 2. 提交后打 tag 并推送
-git tag v0.3.5 && git push --tags
-# 3. workflow 构建 + 签名 + 生成 latest.json,产出草稿 Release;确认后在 Releases 页发布为正式版
+git tag v0.5.6 && git push --tags
+# 3. workflow 产出草稿 Release;确认后在 Releases 页发布为正式版
 ```
 
-需要一次性配置仓库 Secrets:`TAURI_SIGNING_PRIVATE_KEY`(开发机 `~/.tauri/kimi-desktop.key` 的文件内容;该私钥无密码、不入库,丢失则无法继续签发更新)。签名公钥内嵌于 `src-tauri/tauri.conf.json` 的 `plugins.updater.pubkey`。
+需要一次性配置仓库 Secrets:`TAURI_SIGNING_PRIVATE_KEY`(开发机 `~/.tauri/kimi-desktop.key` 的文件内容;该私钥无密码、不入库,丢失则无法继续签发更新)与 `CNB_TOKEN`(镜像同步)。签名公钥内嵌于 `src-tauri/tauri.conf.json` 的 `plugins.updater.pubkey`。
 
 ## 行为说明
 
-- **启动即进主页面**:启动应用后直接进入三 tab 主页面,不自动拉起 kimi web;对话页显示占位图(可选服务运行位置:本机/WSL/SSH,未配置过的远端目标会先进连接向导),点"启动 Kimi Code 服务"后才加载官方 Web UI。本机未安装 CLI 时会先弹安装确认,不静默下载。设置 → 常规 → 本地服务 与额度条的"停止服务"可随时停止/启动服务,停止后对话页回到占位图,统计/设置等本地页面不受影响
-- **数据目录自定义** 与 **CLI 来源选择**(见上方"设置"章节)
-
-已知限制:通知点击不聚焦主窗口(插件限制)、通知不带图标。
+- **启动即进主页面**:不自动拉起 kimi web;对话页显示占位图(可选服务运行位置:本机/WSL/SSH),点"启动 Kimi Code 服务"后才加载官方 Web UI。本机未安装 CLI 时先弹安装确认,不静默下载。服务启停入口:对话页占位图(启动)与 设置 → 常规(启停);停止后统计/设置等本地页面不受影响
+- 已知限制:通知点击不聚焦主窗口(插件限制)、通知不带图标
 
 ## 贡献
 
@@ -108,7 +154,7 @@ git tag v0.3.5 && git push --tags
 - `npm run typecheck` 通过
 - `cd src-tauri && cargo check` 通过
 
-提交 PR 即表示你同意以本项目的 MIT 许可证授权你的贡献。
+提交 PR 即表示你同意以本项目的 MIT 许可证授权你的贡献。觉得好用的话,欢迎点个 ⭐
 
 ## 商标声明
 
@@ -120,27 +166,40 @@ Copyright (C) 2025 Kimi Code Desktop contributors
 
 本项目以 [MIT License](LICENSE) 开源。要点(以许可证原文为准):
 
-- **可以自由使用、复制、修改、分发**,包括商业用途和闭源分发——MIT 不附加开源义务。
-- **唯一要求**:保留版权声明与许可证文本(副本或主要部分中均需包含)。
-- 本软件按"原样"提供,不附带任何担保。
+- **可以自由使用、复制、修改、分发**,包括商业用途和闭源分发——MIT 不附加开源义务
+- **唯一要求**:保留版权声明与许可证文本
+- 本软件按"原样"提供,不附带任何担保
 
-### 第三方组件
-
-运行时/构建依赖均为宽松许可证(MIT / Apache-2.0 / BSD / ISC,如 React、Tauri、zustand 等),与 MIT 兼容;`sharp`(Apache-2.0)仅用于设计期图标脚本,不进入运行时产物。Kimi Code CLI 本身由 Moonshot AI 按其自身条款分发,不属于本仓库的授权范围。
+第三方运行时/构建依赖均为宽松许可证(MIT / Apache-2.0 / BSD / ISC),与 MIT 兼容。Kimi Code CLI 本身由 Moonshot AI 按其自身条款分发,不属于本仓库的授权范围。
 
 ---
 
 ## English
 
-A desktop client for [Kimi Code CLI](https://github.com/moonshotai/kimi-code), built with Tauri v2 (Rust) + React + TypeScript.
+<div align="center">
 
-This is a **desktop shell, not an AI runtime**: the chat UI embeds the official `kimi web` Web UI directly via iframe (`http://127.0.0.1:<port>/#token=<token>`, token injected by the shell), so sessions, models, tools and the Git changes panel all come from the official UI and upgrade in lockstep with the CLI. The app auto-installs the CLI on first launch and offers in-app upgrades. The backend can run on the local machine, in WSL, or on a remote host over SSH (built-in SSH client with port forwarding; host keys are verified TOFU-style; passwords live in the OS credential manager).
+**A desktop client for [Kimi Code CLI](https://github.com/moonshotai/kimi-code) — the official Web UI in a native window, plus usage stats, a quota strip, a desktop pet, tray integration and self-update.**
 
-What the shell itself adds: a usage-statistics tab (heatmap / per-day model trends / realtime curves), a quota strip, desktop notifications when the window is unfocused (turn finished / pending approval / pending question), settings (general / CLI config / MCP / skills / sub-agents / commands / channels), system tray, single-instance, and self-update via signed GitHub Releases (Settings → General → App updates).
+</div>
+
+This is a **desktop shell, not an AI runtime**: the chat UI embeds the official `kimi web` Web UI directly via iframe (`http://127.0.0.1:<port>/#token=<token>`, token injected by the shell), so sessions, models, tools and the Git changes panel all come from the official UI and upgrade in lockstep with the CLI. The app auto-installs the CLI on first launch and offers in-app upgrades.
+
+**What the shell adds**
+
+- Usage statistics: heatmap, per-day model trends, realtime curves
+- Title-bar quota strip: per-window quotas (5h / weekly / monthly) + live metrics (TTFT / output speed)
+- Desktop notifications when unfocused (turn finished / pending approval / pending question)
+- Desktop pet & skin standee (experimental), plugin management
+- Settings: general / CLI config / MCP (visual + JSON, auto-backup) / skills / sub-agents / commands / channels
+- Tray, single-instance, self-drawn title bar (incl. macOS traffic lights), light & dark themes
+- Remote backends: run `kimi web` on WSL or over SSH (built-in SSH client with port forwarding, TOFU host keys, passwords in the OS credential manager)
+- Self-update from signed GitHub Releases (CNB mirror first for CN users)
+
+**Download** — [Releases](https://github.com/Yann-Up/kimi-code-desktop/releases/latest): Windows x64 (`setup.exe` / `msi` / portable zip) and macOS Apple Silicon (`aarch64.dmg`). The macOS build is unsigned: allow it in System Settings → Privacy & Security, or run `xattr -d com.apple.quarantine /Applications/Kimi\ Code\ Desktop.app`.
 
 ```bash
 npm install
-npm run tauri:dev     # dev
+npm run tauri:dev     # dev (vite + cargo)
 npm run tauri:build   # build installer for the current platform
 ```
 
