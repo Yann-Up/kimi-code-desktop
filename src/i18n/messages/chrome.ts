@@ -38,14 +38,6 @@ export default {
     'quota.walletTip': 'booster 钱包余额(总额 {total})',
     'quota.monthly': '月度',
     'quota.monthlyTip': '月度消费上限:已用 {used} / {limit}',
-    // 额度条:停止服务
-    'quota.stopService': '停止 Kimi Code 服务',
-    'quota.stopConfirmTitle': '停止 Kimi Code 服务?',
-    'quota.stopConfirmBody':
-      '停止服务将中断所有进行中的会话,对话页不可用;之后可随时在设置 → 常规重新启动。',
-    'quota.cancel': '取消',
-    'quota.stopping': '正在停止…',
-    'quota.stop': '停止服务',
     // 更新弹窗
     'update.title': '发现新版本',
     'update.publishedLine': '{version} 已发布,当前版本为 {current}。',
@@ -104,13 +96,6 @@ export default {
     'quota.walletTip': 'booster wallet balance (total {total})',
     'quota.monthly': 'Monthly',
     'quota.monthlyTip': 'Monthly spending limit: used {used} / {limit}',
-    'quota.stopService': 'Stop Kimi Code service',
-    'quota.stopConfirmTitle': 'Stop Kimi Code service?',
-    'quota.stopConfirmBody':
-      'Stopping the service will interrupt all sessions in progress and the chat page will become unavailable. You can restart it anytime in Settings → General.',
-    'quota.cancel': 'Cancel',
-    'quota.stopping': 'Stopping…',
-    'quota.stop': 'Stop Service',
     'update.title': 'New Version Available',
     'update.publishedLine': '{version} is now available; you are on {current}.',
     'update.publishedLineNoCurrent': '{version} is now available.',

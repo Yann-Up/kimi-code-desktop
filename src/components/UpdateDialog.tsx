@@ -100,9 +100,11 @@ export function UpdateDialog(props: { info: AppUpdateInfo; onClose: () => void }
         {installing && (
           <div className="mt-4">
             <div className="h-1.5 overflow-hidden rounded-full bg-fill">
+              {/* 无进度数据(检查中/刚起下载)时走不确定态脉冲,不用固定宽度占位——
+                  静态 40% 会在首个进度事件到达时跳回 2%,看着像"从中间回到 0" */}
               <div
-                className="h-full rounded-full bg-primary transition-all"
-                style={{ width: pct !== null ? `${pct}%` : '40%' }}
+                className={`h-full rounded-full bg-primary ${pct === null ? 'w-full animate-pulse' : 'transition-all'}`}
+                style={pct !== null ? { width: `${pct}%` } : undefined}
               />
             </div>
             <p className="mt-1.5 text-[12px] tabular-nums text-text-tertiary">

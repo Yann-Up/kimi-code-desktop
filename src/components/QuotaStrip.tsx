@@ -3,10 +3,11 @@
  * 数据:GET /api/v1/oauth/usage(kind=ok 时 summary/limits 各窗口额度);
  * 窗口驱动渲染(5 小时/1 周/月度,服务端返回什么显示什么)。
  * 每 N 秒轮询(设置页可配)+ 轮次结束(session:turn-ended)自动刷新。
- * 服务未运行时整条隐藏(对话页占位图会提示);停止服务按钮在条尾,带确认弹窗。
+ * 服务未运行时用量元素隐藏(对话页占位图提示启动);服务启停入口在
+ * 对话页占位图(启动)与 设置 → 常规(启停),标题栏不放开关。
  */
 import { useEffect, useState } from 'react'
-import { OctagonX, Zap } from 'lucide-react'
+import { Zap } from 'lucide-react'
 import { rest } from '../api'
 import { useUi } from '../stores/ui'
 import { useT } from '../i18n'
@@ -172,12 +173,10 @@ export function QuotaStrip() {
   const t = useT()
   const [windows, setWindows] = useState<QuotaWindow[]>([])
   const [wallet, setWallet] = useState<BoosterWallet | null>(null)
-  // 停止服务确认:停止会杀掉 iframe 内官方 UI 的所有进行中会话,统一弹确认
-  const [confirming, setConfirming] = useState(false)
-  // 停止服务进行中(stop_backend 要等 kimi web 优雅退出,需要数秒,期间给进度反馈)
-  const [stopping, setStopping] = useState(false)
-  // 服务运行状态:未运行时不显示"停止服务"按钮(与对话页占位图状态互斥)
+  // 服务运行状态:未运行时隐藏用量元素(与对话页占位图状态互斥)
   const [svcRunning, setSvcRunning] = useState(false)
+  // 额度立即重拉信号:server:ready 时 bump,额度 effect 立刻重拉,不等下一个轮询周期
+  const [quotaTick, setQuotaTick] = useState(0)
   // 自动刷新间隔(秒,0=关闭;设置页可配,轮次结束仍会立即刷新)
   const refreshSecs = useUi((s) => s.quotaRefreshSecs)
   // 额度条跟随激活通道:切换通道后重新探测并监听该通道事件
@@ -224,16 +223,6 @@ export function QuotaStrip() {
   // 超过则降透明度、输出速率归零;服务未运行/从未有过调用时隐藏
   const liveActive = live !== null && Date.now() - live.time < 5 * 60_000
 
-  // 停止服务确认框打开期间:Esc 取消(停止进行中除外,与按钮禁用一致)
-  useEffect(() => {
-    if (!confirming || stopping) return
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setConfirming(false)
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [confirming, stopping])
-
   useEffect(() => {
     window.kimiApi
       .appInfo(activeChannel)
@@ -243,6 +232,9 @@ export function QuotaStrip() {
       window.kimiApi.onServerReady((info) => {
         if (info.channel !== activeChannel) return
         setSvcRunning(true)
+        // 服务刚就绪立刻拉一次额度:否则要等下一个轮询周期(默认 60s)才出数据,
+        // 轮询关闭(0s)时甚至要到首个轮次结束——表现为"额度条不出现,刷新页面才有"
+        setQuotaTick((n) => n + 1)
       }),
       window.kimiApi.onServerStopped((info) => {
         if (info.channel !== activeChannel) return
@@ -268,6 +260,9 @@ export function QuotaStrip() {
       rest<QuotaData>('/api/v1/oauth/usage')
         .then((d) => {
           if (cancelled || !d || d.kind !== 'ok') return
+          // 请求成功即服务在跑:兜住 server:ready 事件丢失(启动时序竞态)时
+          // svcRunning 恒 false、整条额度条不出现的场景,首个成功周期自愈
+          setSvcRunning(true)
           const list = [d.summary, ...(Array.isArray(d.limits) ? d.limits : [])]
             .filter((w): w is QuotaWindow => !!w && typeof w === 'object')
             .sort((a, b) => windowRank(a) - windowRank(b))
@@ -286,7 +281,7 @@ export function QuotaStrip() {
       if (timer !== null) window.clearInterval(timer)
       offTurn()
     }
-  }, [refreshSecs, activeChannel])
+  }, [refreshSecs, activeChannel, quotaTick])
 
   const currency = wallet?.currency ?? 'USD'
   const monthlyPct =
@@ -296,7 +291,7 @@ export function QuotaStrip() {
 
   return (
     <div className="relative flex h-full items-center gap-4">
-      {/* 铺平直显:实时指标胶囊 + 各窗口迷你额度计 + 钱包 + 停止服务 */}
+      {/* 铺平直显:实时指标胶囊 + 各窗口迷你额度计 + 钱包 */}
       {svcRunning && (
         <>
           {live && <LiveMetricsBlock m={live} active={liveActive} />}
@@ -340,62 +335,7 @@ export function QuotaStrip() {
               </span>
             </div>
           )}
-          <button
-            className="no-drag flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-text-tertiary transition-colors hover:bg-danger-soft hover:text-danger"
-            title={t('quota.stopService')}
-            onClick={() => setConfirming(true)}
-          >
-            <OctagonX size={15} />
-          </button>
         </>
-      )}
-
-      {/* 停止服务确认:停服务会杀掉所有进行中的会话,统一弹确认;
-          取消:点遮罩 / Esc / 取消按钮(停止进行中除外) */}
-      {confirming && (
-        <div
-          className="fixed inset-0 z-[85] flex items-center justify-center bg-black/30"
-          onClick={() => !stopping && setConfirming(false)}
-        >
-          <div
-            className="w-[380px] rounded-xl bg-surface p-5 shadow-2xl"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <p className="text-[15px] font-semibold">{t('quota.stopConfirmTitle')}</p>
-            <p className="mt-2 text-[13px] text-text-secondary">
-              {t('quota.stopConfirmBody')}
-            </p>
-            <div className="mt-4 flex justify-end gap-2">
-              <button
-                className="rounded-lg border border-border bg-elevated px-4 py-2 text-[13px] text-text hover:bg-hover disabled:opacity-50"
-                disabled={stopping}
-                onClick={() => setConfirming(false)}
-              >
-                {t('quota.cancel')}
-              </button>
-              <button
-                className="flex items-center gap-2 rounded-lg bg-danger px-4 py-1.5 text-[13px] font-medium text-white hover:opacity-90 disabled:opacity-70"
-                disabled={stopping}
-                onClick={() => {
-                  setStopping(true)
-                  // stop_backend resolve 即服务端已停妥(server:stopped 随后更新各页面)
-                  void window.kimiApi
-                    .stopBackend(activeChannel)
-                    .catch(() => {})
-                    .finally(() => {
-                      setStopping(false)
-                      setConfirming(false)
-                    })
-                }}
-              >
-                {stopping && (
-                  <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/60 border-t-white" />
-                )}
-                {stopping ? t('quota.stopping') : t('quota.stop')}
-              </button>
-            </div>
-          </div>
-        </div>
       )}
     </div>
   )

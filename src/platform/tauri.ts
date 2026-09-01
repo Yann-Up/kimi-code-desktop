@@ -55,6 +55,7 @@ const api: KimiApi = {
     // 最小化=普通任务栏最小化;进托盘由关窗确认框的"进入托盘"(hide_main_to_tray)承担
     if (action === 'minimize') await win.minimize()
     else if (action === 'close') await win.close()
+    else if (action === 'fullscreen') await win.setFullscreen(!(await win.isFullscreen()))
     else if (await win.isMaximized()) await win.unmaximize()
     else await win.maximize()
   },
@@ -90,6 +91,15 @@ const api: KimiApi = {
   onServerReady: (cb) => on<ServerReadyInfo>('server:ready', cb),
   onServerError: (cb) => on<ServerErrorInfo>('server:error', cb),
   onCloseRequested: (cb) => on<boolean>('app:close-requested', (p) => cb(!!p)),
+  onWindowFocusChanged: (cb) => {
+    const win = getCurrentWindow()
+    // 注册即回放当前焦点态:挂载晚于最后一次焦点变化时初始值不致失真
+    void win.isFocused().then(cb).catch(() => {})
+    const pending = win.onFocusChanged((e) => cb(e.payload))
+    return () => {
+      void pending.then((un) => un())
+    }
+  },
   confirmClose: () => invoke('confirm_close'),
   hideToTray: () => invoke('hide_main_to_tray'),
   openExternal: (url) => invoke<void>('open_external', { url }),

@@ -1,4 +1,4 @@
-import { ArrowDownToLine, BarChart3, Loader2, MessageSquare, Minus, Moon, RadioTower, Settings, Square, Sun, X } from 'lucide-react'
+import { ArrowDownToLine, BarChart3, Expand, Loader2, MessageSquare, Minus, Moon, RadioTower, Settings, Square, Sun, X } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import logoUrl from '../assets/logo.png'
 import { useUi, resolveTheme, type ShellView } from '../stores/ui'
@@ -101,6 +101,14 @@ export function TitleBar() {
   /** 主题切换:按当前实际明暗翻转成显式 light/dark(持久化 + data-theme)并反推所有对话
    *  iframe(官方无刷新跟随;system 态下点按 = 钉到当前系统明暗的反态) */
   const effective = resolveTheme(theme)
+  // macOS 自绘交通灯失焦置灰(原生标志性行为:窗口切后台三灯变灰)
+  const [winFocused, setWinFocused] = useState(true)
+  useEffect(() => {
+    if (!IS_MAC) return
+    return window.kimiApi.onWindowFocusChanged(setWinFocused)
+  }, [])
+  // 失焦灰:亮暗主题不同色(对齐原生;主题无关固定色,非令牌)
+  const lightUnfocused = effective === 'dark' ? 'bg-[#55565a]' : 'bg-[#d6d6d6]'
   const toggleTheme = () => {
     const next = effective === 'dark' ? 'light' : 'dark'
     setTheme(next)
@@ -111,11 +119,35 @@ export function TitleBar() {
     <div
       data-tauri-drag-region
       className={`drag-region flex h-12 shrink-0 items-center justify-between border-b border-border-light bg-surface ${
-        // macOS 用 Overlay 标题栏(lib.rs):左上悬浮原生红黄绿交通灯,左侧留出 ~80px 避让
-        IS_MAC ? 'pl-[80px]' : 'pl-4'
+        // macOS 自绘交通灯在栏内左侧(decorations=false,lib.rs),12px 左边距对齐原生灯位
+        IS_MAC ? 'pl-3' : 'pl-4'
       }`}
     >
       <div className="flex min-w-0 items-center gap-2">
+        {/* macOS 自绘交通灯:关闭/最小化/全屏(绿灯对齐原生=进出全屏,非最大化)。
+            三色固定、不随主题变(原生灯暗色下同样三色);glyph 灯组 hover 同显(对齐原生) */}
+        {IS_MAC && (
+          <div className="no-drag group/lights mr-1 flex shrink-0 items-center gap-2">
+            <button
+              className={`flex h-3 w-3 items-center justify-center rounded-full transition-colors ${winFocused ? 'bg-[#ff5f57]' : lightUnfocused}`}
+              onClick={() => window.kimiApi.windowControl('close')}
+            >
+              <X size={8} strokeWidth={2.5} className="text-black/60 opacity-0 transition-opacity group-hover/lights:opacity-100" />
+            </button>
+            <button
+              className={`flex h-3 w-3 items-center justify-center rounded-full transition-colors ${winFocused ? 'bg-[#febc2e]' : lightUnfocused}`}
+              onClick={() => window.kimiApi.windowControl('minimize')}
+            >
+              <Minus size={8} strokeWidth={2.5} className="text-black/60 opacity-0 transition-opacity group-hover/lights:opacity-100" />
+            </button>
+            <button
+              className={`flex h-3 w-3 items-center justify-center rounded-full transition-colors ${winFocused ? 'bg-[#28c840]' : lightUnfocused}`}
+              onClick={() => window.kimiApi.windowControl('fullscreen')}
+            >
+              <Expand size={7} strokeWidth={2.5} className="text-black/60 opacity-0 transition-opacity group-hover/lights:opacity-100" />
+            </button>
+          </div>
+        )}
         <img src={logoUrl} alt="" className="h-5 w-5 rounded" draggable={false} />
         <span className="text-[13px] font-semibold">Kimi Code Desktop</span>
         {cliVersion && <span className="text-[11px] text-text-tertiary">CLI {cliVersion}</span>}
@@ -157,13 +189,6 @@ export function TitleBar() {
           <BarChart3 size={16} />
           <Tip text={t('titlebar.navStats')} />
         </button>
-        <button
-          className={`${ICON_BTN} ${view === 'settings' ? 'bg-surface-tertiary text-text' : ''}`}
-          onClick={() => toggleView('settings')}
-        >
-          <Settings size={16} />
-          <Tip text={t('titlebar.navSettings')} />
-        </button>
         {/* 应用更新:常驻按钮,点击=检查更新;有新版本且未忽略时出红点并直接开「发现新版本」弹窗 */}
         <button className={ICON_BTN} onClick={clickUpdate}>
           {updateChecking ? (
@@ -186,8 +211,17 @@ export function TitleBar() {
           {effective === 'dark' ? <Sun size={16} /> : <Moon size={16} />}
           <Tip text={effective === 'dark' ? t('titlebar.themeToLight') : t('titlebar.themeToDark')} />
         </button>
+        {/* 设置:图标导航最右(其后仅余 Windows 自绘窗口控制按钮) */}
+        <button
+          className={`${ICON_BTN} ${view === 'settings' ? 'bg-surface-tertiary text-text' : ''}`}
+          onClick={() => toggleView('settings')}
+        >
+          <Settings size={16} />
+          <Tip text={t('titlebar.navSettings')} />
+        </button>
 
-        {/* 窗口控制:仅 Windows 自绘;macOS 用原生交通灯(Overlay 样式),隐藏自绘按钮 */}
+        {/* 窗口控制:仅 Windows 在右侧自绘(最小化/最大化/关闭);
+            macOS 的自绘交通灯在栏内左侧,此处不再重复 */}
         {!IS_MAC && (
           <>
             <span className="mx-2 h-4 w-px shrink-0 bg-border" />

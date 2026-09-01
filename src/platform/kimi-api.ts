@@ -252,8 +252,8 @@ export interface KimiApi {
   // app
   /** 应用与指定通道(缺省=激活通道)服务信息;channel 省略时后端按激活通道解析 */
   appInfo(channel?: string): Promise<any>
-  /** 窗口控制:minimize 为最小化到托盘(任务栏不留按钮,托盘恢复) */
-  windowControl(action: 'minimize' | 'maximize' | 'close'): Promise<void>
+  /** 窗口控制:minimize=最小化;maximize=最大化/还原;fullscreen=进出原生全屏(mac 自绘绿灯用);close=关窗(走关窗确认流程) */
+  windowControl(action: 'minimize' | 'maximize' | 'close' | 'fullscreen'): Promise<void>
   cliUpgrade(): Promise<any>
   openLogs(): Promise<any>
   kimiHomeGet(): Promise<any>
@@ -308,6 +308,8 @@ export interface KimiApi {
   onServerError(cb: (info: ServerErrorInfo) => void): Unsubscribe
   /** 用户请求关窗(标题栏 X/Alt+F4 等)时触发,前端应弹"是否关闭进程"确认框;参数=是否有后端在跑 */
   onCloseRequested(cb: (backendRunning: boolean) => void): Unsubscribe
+  /** 主窗口焦点变化(注册即回放当前焦点态);macOS 自绘交通灯失焦置灰用 */
+  onWindowFocusChanged(cb: (focused: boolean) => void): Unsubscribe
   /** 系统浏览器打开 http/https 链接(iframe 被 frame-ancestors 拦截时的降级入口) */
   openExternal(url: string): Promise<void>
   /** 确认退出:真正关闭应用(后端会被优雅关停) */
