@@ -2592,7 +2592,7 @@ dependencies = [
 
 [[package]]
 name = "kimi-desktop-tauri"
-version = "0.6.1"
+version = "0.6.2"
 dependencies = [
  "base64 0.22.1",
  "chrono",
