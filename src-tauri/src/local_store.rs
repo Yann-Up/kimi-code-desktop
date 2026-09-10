@@ -84,19 +84,22 @@ pub async fn read_config_toml(channel: &str) -> Option<String> {
 
 /// 读 Remote Control 访问链接(kimi web --remote-control 启动后写 <kimi_home>/server/rc.json)。
 /// 返回 { url, localOrigin, deviceId, pid, startedAt };未启用/未运行/读取失败返回 Null。
-/// 设置页"实验性功能"的 RC 开关旁展示链接用(壳 stdout 被 drain 丢弃,用户看不到 CLI 打印的链接)。
+/// 设置页"远程协作"分区(RemoteControlSettings.tsx)的 RC 开关旁展示链接用(壳 stdout 被
+/// drain 丢弃,用户看不到 CLI 打印的链接)。CLI 写盘为 snake_case 键(local_origin/device_id/
+/// started_at,实测),url/pid 两种拼写同名;对 camelCase 做 or_else 兜底防旧格式。
 pub async fn read_remote_control_status(channel: &str) -> Value {
     let Some((t, home)) = target_and_home(channel).await else {
         return Value::Null;
     };
     let raw = safe_read_json(&t, &t.join(&home, "server/rc.json")).await;
     let Some(v) = raw else { return Value::Null };
+    let get = |snake: &str, camel: &str| v.get(snake).or_else(|| v.get(camel));
     json!({
         "url": v.get("url").and_then(|x| x.as_str()),
-        "localOrigin": v.get("localOrigin").and_then(|x| x.as_str()),
-        "deviceId": v.get("deviceId").and_then(|x| x.as_str()),
+        "localOrigin": get("local_origin", "localOrigin").and_then(|x| x.as_str()),
+        "deviceId": get("device_id", "deviceId").and_then(|x| x.as_str()),
         "pid": v.get("pid").and_then(|x| x.as_u64()),
-        "startedAt": v.get("startedAt").and_then(|x| x.as_i64()),
+        "startedAt": get("started_at", "startedAt").and_then(|x| x.as_i64()),
     })
 }
 
@@ -373,8 +376,14 @@ fn builtin_agents() -> Vec<AgentProfile> {
     // "agent" 是主 agent 默认类型,不是可委派的 subagent,不在此列出
     vec![
         b("plan", "Read-only implementation planning and architecture design."),
-        b("coder", "General software engineering agent with file-editing tools."),
-        b("explore", "Fast read-only codebase exploration agent."),
+        b(
+            "coder",
+            "General software engineering agent — the only subagent type with file-editing tools; use it for any delegated task that must modify code.",
+        ),
+        b(
+            "explore",
+            "Fast codebase exploration with prompt-enforced read-only behavior.",
+        ),
     ]
 }
 

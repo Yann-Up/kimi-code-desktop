@@ -1,6 +1,6 @@
 /**
  * 指令参考抽屉(终端视图右侧,推开式):新手向 TUI 斜杠命令与快捷键速查,
- * 减少查官方文档。内容按 CLI 0.39 官方文档精选静态内置(全量以 TUI 内 /help 为准);
+ * 减少查官方文档。内容按 CLI 0.42 官方文档精选静态内置(全量以 TUI 内 /help 为准);
  * 命令条目点击插入当前活动终端(不带回车,可编辑后自行提交);快捷键仅展示。
  */
 import { PanelRightClose } from 'lucide-react'
@@ -22,6 +22,8 @@ const COMMON: CmdItem[] = [
   { cmd: '/sessions', descKey: 'terminal.cmd.sessions', insert: '/sessions' },
   { cmd: '/compact', descKey: 'terminal.cmd.compact', insert: '/compact' },
   { cmd: '/web', descKey: 'terminal.cmd.web', insert: '/web' },
+  { cmd: '/btw', descKey: 'terminal.cmd.btw', insert: '/btw' },
+  { cmd: '/tasks', descKey: 'terminal.cmd.tasks', insert: '/tasks' },
   { cmd: '/usage', descKey: 'terminal.cmd.usage', insert: '/usage' },
   { cmd: '/exit', descKey: 'terminal.cmd.exit', insert: '/exit' }
 ]
@@ -29,6 +31,7 @@ const COMMON: CmdItem[] = [
 const MODES: CmdItem[] = [
   { cmd: '/plan', descKey: 'terminal.cmd.plan', insert: '/plan' },
   { cmd: '/yolo', descKey: 'terminal.cmd.yolo', insert: '/yolo' },
+  { cmd: '/auto', descKey: 'terminal.cmd.auto', insert: '/auto' },
   { cmd: '/undo', descKey: 'terminal.cmd.undo', insert: '/undo' },
   { cmd: '/editor', descKey: 'terminal.cmd.editor', insert: '/editor' },
   { cmd: '/theme', descKey: 'terminal.cmd.theme', insert: '/theme' },

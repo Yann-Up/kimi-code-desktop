@@ -367,11 +367,15 @@ export interface KimiApi {
   localUsageToday(channel?: string): Promise<any>
   /** API 调用明细分页(step.end 口径,按时间倒序,page 从 1 开始) */
   localApiCalls(page: number, pageSize: number, channel?: string): Promise<ApiCallsResult>
-  /** 实验性功能开关(env 名 → 开关;返回有效值含默认:二级模型默认开) */
+  /** 实验性功能/运行时开关(env 名 → 开关;返回有效值含 CLI 默认,清单对齐 CLI 0.42 注册表) */
   experimentalGet(): Promise<Record<string, boolean>>
   /** 保存实验性开关;激活通道后端运行中会自动重启使环境变量生效 */
   experimentalSet(flags: Record<string, boolean>): Promise<void>
-  /** Remote Control 访问链接(实验性):读 kimi web --remote-control 写的 rc.json;未运行返回 null */
+  /** Remote Control 开关(desktop-config.json 的 remote_control 字段,缺省关) */
+  remoteControlGet(): Promise<boolean>
+  /** 保存 Remote Control 开关;激活通道后端运行中会自动重启(--remote-control 是启动参数) */
+  remoteControlSet(enabled: boolean): Promise<void>
+  /** Remote Control 访问链接:读 kimi web --remote-control 写的 rc.json;未运行返回 null */
   remoteControlStatus(channel?: string): Promise<{
     url?: string
     localOrigin?: string

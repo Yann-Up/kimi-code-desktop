@@ -92,7 +92,9 @@ export default {
     // 子智能体模型池
     'settings.cliModels.secLabel': '子智能体模型池(secondary_model)',
     'settings.cliModels.secDesc':
-      '实验功能(需 KIMI_CODE_EXPERIMENTAL_SECONDARY_MODEL=1 或 KIMI_CODE_EXPERIMENTAL_FLAG=1 启用):池内每个模型配一句描述(可留空),主 agent 派生子任务时按描述挑选;保留字 "primary" 始终可选(绑定调用方模型)',
+      '池内每个模型配一句描述(可留空),主 agent 派生子任务时按描述挑选;保留字 "primary" 始终可选(绑定调用方模型);需要不同思考档位的候选时,先在上方 models 区用「创建变体」注册对应档位的别名(如 kimi-code/k3-max),再加入池中',
+    'settings.cliModels.cloneVariantTitle':
+      '创建变体:复制该模型配置为新别名(常用于注册不同思考档位的变体,如 k3-max;默认档位写入 overrides,不被托管刷新覆盖)',
     'settings.cliModels.warnNoDefault':
       '已配置 models 表但缺少 default_model,会话启动会报错;请点池中某个模型的星标设为默认',
     'settings.cliModels.warnDefaultNotInPoolSuffix':
@@ -100,7 +102,6 @@ export default {
     'settings.cliModels.warnForceConflict':
       'force 与 models 表不能同时使用,会话启动会报错;请清空模型池或关闭 force',
     'settings.cliModels.legacyKeys': '存在非规范键:',
-    'settings.cliModels.legacyEffortPart': '、default_effort = "{effort}"',
     'settings.cliModels.legacySuffix': '(不在官方 secondary_model 字段中)',
     'settings.cliModels.legacyDesc':
       '官方格式为 default_model + 可选 models 表;迁移会把该模型写为 default_model(即单条目隐式池)并清除非规范键',
@@ -227,7 +228,9 @@ export default {
     'settings.cliModels.effortHint.max': 'Max: most thorough reasoning, slowest',
     'settings.cliModels.secLabel': 'Subagent Model Pool (secondary_model)',
     'settings.cliModels.secDesc':
-      'Experimental feature (requires KIMI_CODE_EXPERIMENTAL_SECONDARY_MODEL=1 or KIMI_CODE_EXPERIMENTAL_FLAG=1): each model in the pool gets a one-line description (optional); the main agent picks by description when spawning subtasks; the reserved word "primary" is always available (bound to the caller\'s model)',
+      'Each model in the pool gets a one-line description (optional); the main agent picks by description when spawning subtasks; the reserved word "primary" is always available (bound to the caller\'s model); to offer candidates at different thinking efforts, first register a variant alias in the models section above via "Clone as Variant" (e.g. kimi-code/k3-max), then add it to the pool',
+    'settings.cliModels.cloneVariantTitle':
+      'Clone as variant: copy this model into a new alias (commonly used to register a variant with a different thinking effort, e.g. k3-max; the default effort is written to overrides so managed refreshes cannot rewrite it)',
     'settings.cliModels.warnNoDefault':
       'A models table is configured but default_model is missing; session startup will fail — click the star on a pooled model to set it as default',
     'settings.cliModels.warnDefaultNotInPoolSuffix':
@@ -235,7 +238,6 @@ export default {
     'settings.cliModels.warnForceConflict':
       'force and the models table cannot be used together; session startup will fail — clear the pool or disable force',
     'settings.cliModels.legacyKeys': 'Non-standard keys found:',
-    'settings.cliModels.legacyEffortPart': ', default_effort = "{effort}"',
     'settings.cliModels.legacySuffix': ' (not part of the official secondary_model fields)',
     'settings.cliModels.legacyDesc':
       'The official format is default_model plus an optional models table; migration writes this model as default_model (an implicit single-entry pool) and removes the non-standard keys',

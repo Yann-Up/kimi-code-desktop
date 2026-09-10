@@ -136,59 +136,69 @@ pub fn invalidate_remote_caches() {
     REMOTE_KIMI_BIN.write().unwrap().clear();
 }
 
-/// 实验性开关登记表:(env, CLI 默认是否开启, 未显式设置时桌面端是否按开启处理)
-/// 注入规则:有效值 ≠ CLI 默认时才注入对应 env —— 显式关闭 CLI 默认开启的项(如 search_worker)
-/// 会注入 "0";未设置且桌面端不干预时不注入,由 CLI 自身默认生效
-/// (flag 清单与本机 CLI 0.39.0 的 FlagResolver 注册表一致;新增实验特性时在此追加。
-/// remote_control 特殊:env 只解锁能力,真正生效靠启动 kimi web 时附加 --remote-control
-/// (见 web_command / server.rs SSH 启动串),且会把 Web UI 经官方中继暴露到公网,前端开关文案需明示风险)
-const EXPERIMENTAL_FLAG_TABLE: &[(&str, bool, bool)] = &[
-    ("KIMI_CODE_EXPERIMENTAL_FLAG", false, false),
-    // 二级模型:桌面端历来默认开启(保持既有行为)
-    ("KIMI_CODE_EXPERIMENTAL_SECONDARY_MODEL", false, true),
-    ("KIMI_CODE_EXPERIMENTAL_TOOL_SELECT", false, false),
-    ("KIMI_CODE_EXPERIMENTAL_AUTO_SESSION_TITLE", false, false),
-    // 搜索索引 worker 线程:CLI 默认开启
-    ("KIMI_CODE_EXPERIMENTAL_SEARCH_WORKER", true, false),
-    // 以下为 CLI 0.39.0 注册表新增
-    ("KIMI_CODE_EXPERIMENTAL_SUBAGENT_FORK", false, false),
-    ("KIMI_CODE_EXPERIMENTAL_TOWER", false, false),
-    ("KIMI_CODE_EXPERIMENTAL_REMOTE_CONTROL", false, false),
-    // WaitFor 工具 / minidb 读模型:CLI 默认开启
-    ("KIMI_CODE_EXPERIMENTAL_WAIT_FOR", true, false),
-    ("KIMI_CODE_EXPERIMENTAL_PERSISTENCE_MINIDB_READMODEL", true, false),
+/// 0.42 起被 CLI 移除的 Remote Control 实验 env(RC 改为常驻解锁;
+/// 仅用于启动时把旧配置迁移到 desktop-config.json 的 remote_control 字段,不再注入)
+pub const RC_LEGACY_ENV: &str = "KIMI_CODE_EXPERIMENTAL_REMOTE_CONTROL";
+
+/// 实验性开关登记表:(env, CLI 默认是否开启)
+/// 注入规则:有效值 ≠ CLI 默认时才注入对应 env —— 显式关闭 CLI 默认开启的项(如 wait_for)
+/// 会注入 "0";未设置时不注入,由 CLI 自身默认生效
+/// (flag 清单与本机 CLI 0.42.0 的 FlagResolver 注册表一致;新增实验特性时在此追加。
+/// 0.42 已移除:SECONDARY_MODEL[模型池常驻]、REMOTE_CONTROL[RC 常驻解锁])
+const EXPERIMENTAL_FLAG_TABLE: &[(&str, bool)] = &[
+    ("KIMI_CODE_EXPERIMENTAL_FLAG", false),
+    ("KIMI_CODE_EXPERIMENTAL_TOOL_SELECT", false),
+    ("KIMI_CODE_EXPERIMENTAL_AUTO_SESSION_TITLE", false),
+    ("KIMI_CODE_EXPERIMENTAL_SUBAGENT_FORK", false),
+    ("KIMI_CODE_EXPERIMENTAL_TOWER", false),
+    // 0.42.0 新增:主代理/子代理进度消息的 Updates 面板
+    ("KIMI_CODE_EXPERIMENTAL_NOTIFY_USER", false),
+    // WaitFor 工具:CLI 默认开启
+    ("KIMI_CODE_EXPERIMENTAL_WAIT_FOR", true),
 ];
 
-/// Remote Control 是否启用(跟随实验性开关有效值);
-/// 启用时启动 kimi web 需附加 --remote-control(env 只解锁该 flag,不直接生效)
-pub fn remote_control_enabled() -> bool {
-    experimental_effective()
-        .into_iter()
-        .any(|(env, on)| env == "KIMI_CODE_EXPERIMENTAL_REMOTE_CONTROL" && on)
+/// 运行时开关登记表(非实验项):(env, CLI 默认是否开启)
+/// 0.42 起 search worker / minidb 读模型常驻,关闭通道从实验 flag 改为这两个普通 env
+/// (对应 config.toml 的 [database] search/base 配置节)
+const RUNTIME_SWITCH_TABLE: &[(&str, bool)] = &[
+    ("KIMI_CODE_SEARCH_WORKER", true),
+    ("KIMI_CODE_PERSISTENCE_MINIDB_READMODEL", true),
+];
+
+fn switch_table() -> impl Iterator<Item = &'static (&'static str, bool)> {
+    EXPERIMENTAL_FLAG_TABLE.iter().chain(RUNTIME_SWITCH_TABLE)
 }
 
-/// 各实验性开关的有效值(用户显式设置 > 桌面端默认 > CLI 默认)
+/// 仍为有效开关的 env 名(启动加载时清理 desktop-config.json 里已从 CLI 注册表移除的 key)
+pub fn known_switch_env(env: &str) -> bool {
+    switch_table().any(|(e, _)| *e == env)
+}
+
+/// Remote Control 是否启用(桌面端独立配置,见 cli::set_remote_control);
+/// 启用时启动 kimi web 需附加 --remote-control
+/// (会把 Web UI 经官方中继暴露到公网,前端开关文案需明示风险)
+pub fn remote_control_enabled() -> bool {
+    crate::cli::remote_control_enabled()
+}
+
+/// 各开关的有效值(用户显式设置 > CLI 默认)
 pub fn experimental_effective() -> Vec<(String, bool)> {
     let flags = crate::cli::experimental_flags();
-    EXPERIMENTAL_FLAG_TABLE
-        .iter()
-        .map(|(env, cli_default, desktop_on)| {
-            let on = flags
-                .get(*env)
-                .copied()
-                .unwrap_or(*desktop_on || *cli_default);
+    switch_table()
+        .map(|(env, cli_default)| {
+            let on = flags.get(*env).copied().unwrap_or(*cli_default);
             (env.to_string(), on)
         })
         .collect()
 }
 
-/// 实验性功能开关 → 启动 kimi web 时注入的环境变量。
+/// 功能开关 → 启动 kimi web 时注入的环境变量。
 /// 只注入有效值与 CLI 默认不一致的项(开 → "1",关 → "0"),其余由 CLI 默认生效
 pub fn experimental_envs() -> Vec<(String, String)> {
     experimental_effective()
         .into_iter()
-        .zip(EXPERIMENTAL_FLAG_TABLE.iter())
-        .filter(|((_, on), (_, cli_default, _))| on != cli_default)
+        .zip(switch_table())
+        .filter(|((_, on), (_, cli_default))| on != cli_default)
         .map(|((env, on), _)| (env, if on { "1".to_string() } else { "0".to_string() }))
         .collect()
 }
@@ -1020,7 +1030,7 @@ impl ConnectionTarget {
                 if !rc.is_empty() {
                     cmd.arg("--remote-control");
                 }
-                // 实验性功能开关(设置页可配;二级模型默认开)
+                // 实验性功能/运行时开关(设置页可配)
                 for (k, v) in experimental_envs() {
                     cmd.env(k, v);
                 }
@@ -1407,41 +1417,30 @@ mod tests {
 
     #[test]
     fn experimental_envs_injection_rules() {
-        // 未设置任何开关:仅二级模型(桌面默认开 ≠ CLI 默认关)注入 "1"
+        // 未设置任何开关:全部按 CLI 默认生效,不注入任何 env
         crate::cli::set_experimental_flags(HashMap::new());
-        assert_eq!(
-            experimental_envs(),
-            vec![(
-                "KIMI_CODE_EXPERIMENTAL_SECONDARY_MODEL".to_string(),
-                "1".to_string()
-            )]
-        );
+        assert_eq!(experimental_envs(), Vec::<(String, String)>::new());
         // 显式关闭 CLI 默认开启的 search_worker → 注入 "0";显式打开 tool_select → 注入 "1"
         crate::cli::set_experimental_flags(HashMap::from([
-            ("KIMI_CODE_EXPERIMENTAL_SEARCH_WORKER".to_string(), false),
+            ("KIMI_CODE_SEARCH_WORKER".to_string(), false),
             ("KIMI_CODE_EXPERIMENTAL_TOOL_SELECT".to_string(), true),
         ]));
         let envs: HashMap<String, String> = experimental_envs().into_iter().collect();
         assert_eq!(
-            envs.get("KIMI_CODE_EXPERIMENTAL_SEARCH_WORKER").map(String::as_str),
+            envs.get("KIMI_CODE_SEARCH_WORKER").map(String::as_str),
             Some("0")
         );
         assert_eq!(
             envs.get("KIMI_CODE_EXPERIMENTAL_TOOL_SELECT").map(String::as_str),
             Some("1")
         );
-        // 二级模型未设置仍按桌面默认注入 "1"
-        assert_eq!(
-            envs.get("KIMI_CODE_EXPERIMENTAL_SECONDARY_MODEL").map(String::as_str),
-            Some("1")
-        );
         // 显式打开与 CLI 默认一致的项不注入
         crate::cli::set_experimental_flags(HashMap::from([(
-            "KIMI_CODE_EXPERIMENTAL_SEARCH_WORKER".to_string(),
+            "KIMI_CODE_SEARCH_WORKER".to_string(),
             true,
         )]));
         let envs: HashMap<String, String> = experimental_envs().into_iter().collect();
-        assert!(!envs.contains_key("KIMI_CODE_EXPERIMENTAL_SEARCH_WORKER"));
+        assert!(!envs.contains_key("KIMI_CODE_SEARCH_WORKER"));
         crate::cli::set_experimental_flags(HashMap::new()); // 复位,避免影响其他用例
     }
 

@@ -5,7 +5,7 @@
  * 密钥以密码形式回显(默认掩码,可点眼睛查看明文),清空 = 保持不变;其他可选项留空 = 删除该键(null 合并语义)。
  */
 import { useCallback, useEffect, useState } from 'react'
-import { Bot, Boxes, ChevronDown, ChevronRight, Cpu, Eye, EyeOff, Pencil, Plus, Star, Trash2 } from 'lucide-react'
+import { Bot, Boxes, ChevronDown, ChevronRight, Copy, Cpu, Eye, EyeOff, Pencil, Plus, Star, Trash2 } from 'lucide-react'
 import { Card, Empty, GroupLabel, Section } from '../../components/settings/common'
 import { Select as UiSelect } from '../../components/ui/Select'
 import { inputCls as uiInputCls } from '../../components/ui/Input'
@@ -150,7 +150,8 @@ interface ModelDraft {
   default_effort: string
 }
 
-/** 子智能体模型池条目草稿:alias 引用 models 中的模型别名,description 是主 agent 的挑选依据 */
+/** 子智能体模型池条目草稿:alias 引用 models 中的模型别名,description 是主 agent 的挑选依据;
+ *  不同思考档位的候选通过在 models 区注册变体别名实现(编辑表单的「创建变体」按钮),池只选别名 */
 interface SecModelDraft {
   alias: string
   description: string
@@ -217,9 +218,8 @@ function ModelsForm({ config, reload }: { config: Rec; reload: (silent?: boolean
   const secModels = asRec(secModel.models)
   const secDefault = strOf(secModel.default_model)
   const secForce = secModel.force === true
-  // 非规范键(model / default_effort 不在官方 secondary_model 字段中),提示用户迁移
+  // 非规范键(model 不在官方 secondary_model 字段中),提示用户迁移
   const secLegacyModel = strOf(secModel.model)
-  const secLegacyEffort = strOf(secModel.default_effort)
 
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
@@ -318,7 +318,25 @@ function ModelsForm({ config, reload }: { config: Rec; reload: (silent?: boolean
       max_context_size: numOf(m.max_context_size),
       capabilities: listOf(m.capabilities),
       support_efforts: listOf(m.support_efforts),
-      default_effort: strOf(m.default_effort)
+      default_effort: strOf(asRec(m.overrides).default_effort) || strOf(m.default_effort)
+    })
+    setConfirmDel('')
+  }
+
+  /** 创建变体:把该模型的配置拷进新增表单(变体不继承原条目,需全量拷贝;
+   *  常用于注册不同思考档位的别名,如 kimi-code/k3 → kimi-code/k3-max,改默认档位后入池) */
+  const cloneModelAsVariant = (alias: string) => {
+    const m = asRec(models[alias])
+    setEditModel('__add__')
+    setModelDraft({
+      alias: `${alias}-`,
+      provider: strOf(m.provider),
+      model: strOf(m.model),
+      display_name: strOf(m.display_name),
+      max_context_size: numOf(m.max_context_size),
+      capabilities: listOf(m.capabilities),
+      support_efforts: listOf(m.support_efforts),
+      default_effort: strOf(asRec(m.overrides).default_effort) || strOf(m.default_effort)
     })
     setConfirmDel('')
   }
@@ -343,7 +361,10 @@ function ModelsForm({ config, reload }: { config: Rec; reload: (silent?: boolean
       display_name: d.display_name.trim() ? d.display_name.trim() : null,
       capabilities: d.capabilities,
       support_efforts: d.support_efforts,
-      default_effort: d.default_effort ? d.default_effort : null
+      // 默认档位固定写进 [models.<alias>.overrides](官方推荐:managed/开放平台刷新可能改写
+      // 顶层字段,overrides 优先级更高且不被刷新覆盖),同时清掉顶层同名字段避免两处漂移
+      overrides: { default_effort: d.default_effort ? d.default_effort : null },
+      default_effort: null
     }
     if (await apply({ models: { [alias]: body } }, t('settings.cliModels.modelSaved', { alias }))) {
       setEditModel(null)
@@ -373,6 +394,12 @@ function ModelsForm({ config, reload }: { config: Rec; reload: (silent?: boolean
     setConfirmDel('')
   }
 
+  /** 模型条目的有效默认档位:overrides 优先(运行时消费者同样按此读取) */
+  const effectiveEffort = (mv: unknown): string => {
+    const m = asRec(mv)
+    return strOf(asRec(m.overrides).default_effort) || strOf(m.default_effort)
+  }
+
   const saveSecModel = async () => {
     const d = secDraft
     if (!d) return
@@ -393,7 +420,6 @@ function ModelsForm({ config, reload }: { config: Rec; reload: (silent?: boolean
     if (secForce) sec.force = null
     // 顺带清掉非规范键
     if (secLegacyModel) sec.model = null
-    if (secLegacyEffort) sec.default_effort = null
     if (await apply({ secondary_model: sec }, t('settings.cliModels.secAdded', { alias }))) {
       setEditSecModel(null)
       setSecDraft(null)
@@ -432,12 +458,12 @@ function ModelsForm({ config, reload }: { config: Rec; reload: (silent?: boolean
     )
   }
 
-  /** 非规范键迁移:default_model 单写即为合法的单条目隐式池 */
+  /** 非规范键迁移:default_model 单写即为合法的单条目隐式池(default_effort 是合法字段,保留) */
   const migrateLegacy = async () => {
     if (!models[secLegacyModel])
       return setError(t('settings.cliModels.errMigrateNotConfigured', { alias: secLegacyModel }))
     await apply(
-      { secondary_model: { default_model: secLegacyModel, model: null, default_effort: null } },
+      { secondary_model: { default_model: secLegacyModel, model: null } },
       t('settings.cliModels.migrated')
     )
   }
@@ -481,6 +507,13 @@ function ModelsForm({ config, reload }: { config: Rec; reload: (silent?: boolean
               <Pencil size={13} />
             </button>
             <button
+              className="rounded-lg border border-border p-1.5 text-text-tertiary hover:bg-fill hover:text-text"
+              title={t('settings.cliModels.cloneVariantTitle')}
+              onClick={() => cloneModelAsVariant(alias)}
+            >
+              <Copy size={13} />
+            </button>
+            <button
               className={`rounded-lg border p-1.5 transition-colors ${
                 confirmDel === `m:${alias}`
                   ? 'border-danger bg-danger-soft text-danger'
@@ -501,8 +534,8 @@ function ModelsForm({ config, reload }: { config: Rec; reload: (silent?: boolean
           <p className="mt-1 truncate font-mono text-[11.5px] text-text-tertiary">
             {strOf(m.model) || '?'} · {t('settings.cliModels.ctx', { size: fmtCtx(m.max_context_size) })}
             {listOf(m.support_efforts).length > 0 && ` · efforts: ${listOf(m.support_efforts).join('/')}`}
-            {strOf(m.default_effort) &&
-              t('settings.cliModels.defaultEffort', { effort: strOf(m.default_effort) })}
+            {effectiveEffort(m) &&
+              t('settings.cliModels.defaultEffort', { effort: effectiveEffort(m) })}
           </p>
         )}
         {editing && (
@@ -761,11 +794,6 @@ function ModelsForm({ config, reload }: { config: Rec; reload: (silent?: boolean
               <p className="text-[12.5px] text-warning">
                 {t('settings.cliModels.legacyKeys')}
                 <span className="font-mono">model = "{secLegacyModel}"</span>
-                {secLegacyEffort && (
-                  <span className="font-mono">
-                    {t('settings.cliModels.legacyEffortPart', { effort: secLegacyEffort })}
-                  </span>
-                )}
                 {t('settings.cliModels.legacySuffix')}
               </p>
               <p className="mt-1 text-[12px] text-text-tertiary">{t('settings.cliModels.legacyDesc')}</p>
@@ -869,6 +897,9 @@ function ModelsForm({ config, reload }: { config: Rec; reload: (silent?: boolean
               {!editing && (
                 <p className="mt-1 text-[12px] text-text-tertiary">
                   {strOf(desc) || t('settings.cliModels.noDesc')}
+                  {effectiveEffort(models[alias]) && (
+                    <span className="font-mono"> · effort: {effectiveEffort(models[alias])}</span>
+                  )}
                 </p>
               )}
               {editing && (

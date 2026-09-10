@@ -1,7 +1,7 @@
 //! cli-manager: Kimi Code CLI 的自检测、自动安装与升级。
 //! - 未安装:首次启动时执行官方安装脚本自动下载
 //! - 已安装:对比 npm registry 最新版,有新版本时交给 UI 询问用户;
-//!   确认后按来源升级(home=`kimi upgrade`,path/custom/env=`npm update -g`)
+//!   确认后按来源升级(home=native staged 自更新 __update_download,path/custom/env=`npm update -g`)
 //! - 本机双候选:数据目录/bin 与 PATH 同时存在 kimi 时按 --version 选较新的生效
 
 use std::collections::HashMap;
@@ -130,6 +130,19 @@ pub fn set_experimental_flags(flags: HashMap<String, bool>) {
 
 pub fn experimental_flags() -> HashMap<String, bool> {
     EXPERIMENTAL_FLAGS.read().unwrap().clone()
+}
+
+/// Remote Control 开关(desktop-config.json 的 remote_control 字段;
+/// 0.42 起 CLI 常驻解锁、不再需要实验 env,开启即启动 kimi web 时附加 --remote-control)
+static REMOTE_CONTROL: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// 设置 Remote Control 开关(启动加载与设置页 remote_control_set 用)
+pub fn set_remote_control(on: bool) {
+    REMOTE_CONTROL.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn remote_control_enabled() -> bool {
+    REMOTE_CONTROL.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 /// 用户 home 目录(优先 USERPROFILE,避免引入 dirs 依赖)
@@ -563,26 +576,37 @@ pub async fn install_cli() -> Result<(), String> {
     }
 }
 
-/// kimi upgrade(升级后需要重启 kimi web 服务才生效)
-pub async fn upgrade_cli() -> Result<String, String> {
+/// 官方脚本(native)安装的非交互升级(升级后需要重启 kimi web 服务才生效)。
+/// 不能用 `kimi upgrade`:它是交互式命令(CLI 0.37+ 源码 cli/sub/upgrade.ts),
+/// 非 TTY 下只打印手动升级命令就以退出码 0 返回,不执行任何升级。
+/// 这里直接调其 staged 自更新子命令:下载 + 清单 sha256 校验后暂存到 exe 旁,
+/// 下次任意 kimi 进程启动时 rename 替换(运行中的 kimi web 不阻塞,Windows 允许重命名
+/// 运行中的 exe);--manual 标记为用户主动升级,使替换不受 KIMI_CODE_NO_AUTO_UPDATE /
+/// [upgrade].auto_install=false 关闭的影响。0.37 前的旧版无此子命令,失败时回退官方安装脚本。
+pub async fn upgrade_cli(latest: &str) -> Result<String, String> {
     // kill_on_drop:超时(timeout 返回)后子进程随之被杀,不留后台残留
     let out = tokio::time::timeout(
         Duration::from_secs(600),
         hidden_command(&kimi_bin())
-            .arg("upgrade")
+            .args(["__update_download", latest, "--manual"])
             .kill_on_drop(true)
             .output(),
     )
     .await
-    .map_err(|_| "kimi upgrade 超时(600s)".to_string())?
-    .map_err(|e| format!("kimi upgrade 执行失败: {e}"))?;
+    .map_err(|_| "CLI 更新下载超时(600s)".to_string())?
+    .map_err(|e| format!("CLI 更新下载执行失败: {e}"))?;
     if !out.status.success() {
-        return Err(format!("kimi upgrade 退出码 {:?}", out.status.code()));
+        // 旧版 CLI 无 __update_download 子命令(0.37 引入):回退重跑官方安装脚本,
+        // 同样装到数据目录/bin,且用同样的 rename 机制处理运行中的 exe
+        install_cli().await.map_err(|e| format!("升级失败: {e}"))?;
+        return Ok("installed via official install script".to_string());
     }
     let mut s = String::from_utf8_lossy(&out.stdout).into_owned();
     s.push_str(&String::from_utf8_lossy(&out.stderr));
-    // (stdout + stderr).slice(0, 500),注意按字符截断避免切断 UTF-8
-    Ok(s.chars().take(500).collect())
+    // 保留 (stdout + stderr) 的末 500 字符:慢网时滚动进度行会把末尾的结果摘要
+    // (下载完成/校验通过等)挤出前 500 字符窗口;按字符边界截,不切断 UTF-8
+    let skip = s.chars().count().saturating_sub(500);
+    Ok(s.chars().skip(skip).collect())
 }
 
 /// npm 全局安装的快捷升级:npm update -g @moonshot-ai/kimi-code

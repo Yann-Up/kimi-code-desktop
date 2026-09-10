@@ -6,8 +6,9 @@
 //!   web UI 按源存 localStorage 的"新浏览器"验证才不会每次启动重弹
 //! - 选择空闲端口,按连接目标启动 `kimi web --no-open --port <p>`
 //!   (Local/WSL 为本地子进程;SSH 为 russh exec_keepalive + 进程内端口转发)
-//! - 读取 token:先解析启动 banner(CLI 0.29.2+ 只在 banner 打印 Token 行),
-//!   超时回退 server.token 文件读取(本机读文件,WSL/SSH 经各自通道 cat,兼容旧 CLI)
+//! - 读取 token:banner 优先解析启动输出里的 Token 行,超时回退读 server.token 文件
+//!   (本机读文件,WSL/SSH 经各自通道 cat)。CLI 0.42 起 server.token 必然持久化落盘(0600)
+//!   且跨重启复用,banner 优先 + 文件兜底是长期双通道,不只是兼容旧 CLI
 //! - 轮询 /api/v1/healthz 直到就绪(三种目标下都连 127.0.0.1:<本地端口>)
 //! - 优雅关停(POST /api/v1/shutdown → 等待退出 → 强杀/断连兜底)
 

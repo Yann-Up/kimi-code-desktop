@@ -10,6 +10,7 @@ import {
   Network,
   PawPrint,
   Puzzle,
+  Radio,
   Repeat,
   Settings2,
   SlidersHorizontal,
@@ -21,6 +22,7 @@ import { useUi } from '../stores/ui'
 import { useT } from '../i18n'
 import { GeneralSettings } from './settings/GeneralSettings'
 import { ChannelsSettings } from './settings/ChannelsSettings'
+import { RemoteControlSettings } from './settings/RemoteControlSettings'
 import { DesktopExperimentalSettings } from './settings/DesktopExperimentalSettings'
 import { TerminalSettings } from './settings/TerminalSettings'
 import { CliGeneralSettings } from './settings/CliGeneralSettings'
@@ -62,6 +64,7 @@ function useGroups(t: ReturnType<typeof useT>): { label: string; items: SectionD
         { id: 'cli-thinking', label: t('settings.cliThinking'), icon: Brain },
         { id: 'cli-loop', label: t('settings.cliLoop'), icon: Repeat },
         { id: 'cli-services', label: t('settings.cliServices'), icon: Globe },
+        { id: 'remote-collab', label: t('settings.remoteCollab'), icon: Radio },
         { id: 'cli-identity', label: t('settings.cliIdentity'), icon: User2 },
         { id: 'cli-experimental', label: t('settings.experimental'), icon: FlaskConical },
         { id: 'cli-advanced', label: t('settings.cliAdvanced'), icon: FileCode2 }
@@ -92,6 +95,8 @@ export function SettingsPage() {
         return <GeneralSettings />
       case 'channels':
         return <ChannelsSettings />
+      case 'remote-collab':
+        return <RemoteControlSettings />
       case 'desktop-experimental':
         return <DesktopExperimentalSettings />
       case 'terminal':

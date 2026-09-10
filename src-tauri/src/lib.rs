@@ -322,25 +322,33 @@ async fn cli_upgrade(app: AppHandle, state: State<'_, Arc<AppState>>) -> Result<
         return cli_upgrade_remote(&app, &state, &conn_target).await;
     }
     // 按 CLI 安装来源自动选择升级通道:
-    // home(官方 irm/install.ps1 脚本装到数据目录/bin)走 `kimi upgrade` 自更新;
+    // home(官方 irm/install.ps1 脚本装到数据目录/bin)走 native staged 自更新;
     // path/custom/env(npm 全局或自定义路径)走 `npm update -g`
     let source = cli::kimi_bin_source();
     let before = cli::detect_installed().await;
     match source {
         "home" => {
-            let _out = cli::upgrade_cli().await?;
+            let latest = cli::fetch_latest_version(&state.http)
+                .await
+                .ok_or_else(|| "无法获取最新版本信息,请检查网络后重试".to_string())?;
+            if let Some(cur) = &before {
+                if !cli::is_newer(&latest, cur) {
+                    return Err(format!("已是最新版本(v{latest}),无需升级"));
+                }
+            }
+            let _out = cli::upgrade_cli(&latest).await?;
         }
         _ => {
             let _out = cli::npm_upgrade().await?;
         }
     }
     let version = cli::detect_installed().await;
-    // 升级前后版本一致:自更新渠道暂未发布该版本(irm 渠道可能落后于 npm registry),
-    // 或交互式升级被取消 / 当前 CLI 并非 npm 全局安装——如实报错,误报成功会导致
-    // 下次启动重复提示同一更新
+    // 升级前后版本一致:npm 渠道可能暂未发布该版本,或当前 CLI 并非 npm 全局安装——
+    // 如实报错,误报成功会导致下次启动重复提示同一更新。
+    // (home 渠道的 staged 替换在版本探测进程的启动时执行,正常走到这里已是新版本)
     if version.is_some() && version == before {
         return Err(if source == "home" {
-            "CLI 自更新渠道暂未发布新版本(或升级被取消),请稍后再试".to_string()
+            "更新已下载但新版本尚未生效,请重启应用后再试".to_string()
         } else {
             "升级后版本未变化;若 CLI 非 npm 全局安装(如 scoop/手动放置),请用对应方式手动升级".to_string()
         });
@@ -1421,10 +1429,41 @@ async fn local_cli_config_parsed(channel: Option<String>) -> Result<Option<Value
     local_store::read_config_toml_parsed(&channel.unwrap_or_else(cli::active_channel)).await
 }
 
-/// Remote Control 访问链接(实验性):读 kimi web --remote-control 写的 rc.json;未运行返回 null
+/// Remote Control 访问链接:读 kimi web --remote-control 写的 rc.json;未运行返回 null
 #[tauri::command]
 async fn remote_control_status(channel: Option<String>) -> Result<Value, String> {
     Ok(local_store::read_remote_control_status(&channel.unwrap_or_else(cli::active_channel)).await)
+}
+
+/// Remote Control 开关读取
+#[tauri::command]
+fn remote_control_get(app: AppHandle) -> bool {
+    config::load(&app).remote_control.unwrap_or(false)
+}
+
+/// Remote Control 开关保存:持久化并更新运行时;
+/// 激活通道后端运行中则自动重启(--remote-control 是进程启动参数,需重启生效)
+#[tauri::command]
+async fn remote_control_set(
+    app: AppHandle,
+    state: State<'_, Arc<AppState>>,
+    enabled: bool,
+) -> Result<(), String> {
+    let mut cfg = config::load(&app);
+    cfg.remote_control = Some(enabled);
+    config::save(&app, &cfg)?;
+    cli::set_remote_control(enabled);
+    let channel = cli::active_channel();
+    let running = {
+        let map = state.backends.lock().await;
+        map.get(&channel)
+            .map(|bs| bs.backend_running.load(Ordering::SeqCst))
+            .unwrap_or(false)
+    };
+    if running {
+        restart_backend(&app, &state).await?;
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -1766,6 +1805,8 @@ pub fn run() {
             local_cli_config_merge,
             local_cli_config_parsed,
             remote_control_status,
+            remote_control_get,
+            remote_control_set,
             local_drives,
             local_workspaces,
             terminal_open,
@@ -1775,7 +1816,7 @@ pub fn run() {
         ])
         .setup(move |app| {
             // 旧版单目标配置 → 通道模型迁移(channels 为空且 connection 非本机时转成通道并设为 active)
-            let cfg = config::migrate(app.handle());
+            let mut cfg = config::migrate(app.handle());
             // 加载用户自定义配置(数据目录/CLI 二进制,必须先于 bootstrap 启动服务)
             if let Some(home) = cfg.kimi_home.as_deref() {
                 if !home.trim().is_empty() {
@@ -1790,8 +1831,28 @@ pub fn run() {
             // 通道映射(含本机):active 决定连接目标路由;远端 CLI 覆盖随激活通道走
             cli::refresh_channels(&cfg.extra_channels(), cfg.active());
             apply_active_remote_bin(&cfg);
-            // 实验性功能开关加载(启动 kimi web 时经 experimental_envs 注入为环境变量)
-            cli::set_experimental_flags(cfg.experimental.clone().unwrap_or_default());
+            // 实验性功能/运行时开关加载(启动 kimi web 时经 experimental_envs 注入为环境变量):
+            // 0.42 起 RC 实验 env 被 CLI 移除(常驻解锁),迁移为独立配置 remote_control;
+            // 同时清理已从 CLI 注册表移除的旧 key(0.42 移除 SECONDARY_MODEL 等)
+            let mut exp = cfg.experimental.clone().unwrap_or_default();
+            let mut cfg_dirty = false;
+            if let Some(rc) = exp.remove(target::RC_LEGACY_ENV) {
+                if cfg.remote_control.is_none() {
+                    cfg.remote_control = Some(rc);
+                }
+                cfg_dirty = true;
+            }
+            let before = exp.len();
+            exp.retain(|k, _| target::known_switch_env(k));
+            if exp.len() != before {
+                cfg_dirty = true;
+            }
+            if cfg_dirty {
+                cfg.experimental = Some(exp.clone());
+                let _ = config::save(app.handle(), &cfg);
+            }
+            cli::set_experimental_flags(exp);
+            cli::set_remote_control(cfg.remote_control.unwrap_or(false));
             // kimi web 启动参数(端口/--host/--allowed-host)加载
             server::set_web_options(cfg.web_options());
             // 用量缓存后台预热:统计页首开直接命中缓存,避免冷扫描卡顿

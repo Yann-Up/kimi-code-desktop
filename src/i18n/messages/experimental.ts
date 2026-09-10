@@ -6,7 +6,7 @@ export default {
     'settings.exp.title': '实验性功能',
     // CLI 实验性功能页
     'settings.cliExp.desc':
-      '官方 CLI 的实验性特性开关(部分特性 CLI 默认开启,可在此关闭);经环境变量在启动服务时注入,切换后需重启服务生效(运行中会自动重启)',
+      '官方 CLI 的实验性特性与运行时开关(部分特性 CLI 默认开启,可在此关闭);经环境变量在启动服务时注入,切换后需重启服务生效(运行中会自动重启)',
     'settings.cliExp.groupToggles': '功能开关',
     'settings.cliExp.loading': '加载中…',
     'settings.cliExp.savedOk': '已保存;服务运行中时已自动重启,未启动则下次启动生效',
@@ -19,9 +19,6 @@ export default {
     'settings.cliExp.f.master.label': '实验性功能总开关',
     'settings.cliExp.f.master.desc':
       '启用当前 CLI 版本注册的全部实验性功能;风险最高,建议只开下面的单项',
-    'settings.cliExp.f.secondaryModel.label': '二级模型(子代理)',
-    'settings.cliExp.f.secondaryModel.desc':
-      '开启后新派生的子代理(Agent / AgentSwarm)默认绑定二级模型,而不是继承主代理模型;桌面端此前一直默认开启',
     'settings.cliExp.f.toolSelect.label': '渐进式工具披露(tool-select)',
     'settings.cliExp.f.toolSelect.desc':
       'MCP 等工具 schema 不再塞进顶层 tools[],模型经 select_tools 按需加载;缩小系统提示词、提升 prompt 缓存命中(需模型支持动态加载工具)',
@@ -36,24 +33,34 @@ export default {
       'Agent / AgentSwarm 派生子代理时携带调用方的上下文快照,而不是全新空白上下文',
     'settings.cliExp.f.tower.label': 'tower 模式',
     'settings.cliExp.f.tower.desc':
-      '协调多个 agent 围绕同一目标协作(tower mode)。注意:CLI 0.39.0 的 Web UI 尚无 /tower 入口,开启后目前只能在终端 TUI 里用(KIMI_CODE_EXPERIMENTAL_TOWER=1 kimi,然后 /tower on)',
+      '协调多个 agent 围绕同一目标协作(tower mode);开启后经 /tower 命令使用(TUI 与 Web UI 均有入口)',
+    'settings.cliExp.f.notifyUser.label': 'Updates 进度面板(notify-user)',
+    'settings.cliExp.f.notifyUser.desc':
+      '在 Updates 面板中分页展示主代理与子代理的实时进度消息(0.42 新增,实验性)',
     'settings.cliExp.f.waitFor.label': 'WaitFor 工具',
     'settings.cliExp.f.waitFor.desc':
       '模型可在当前轮内等待后台任务完成(WaitFor);CLI 默认开启,可在此关闭',
     'settings.cliExp.f.minidbRead.label': 'minidb 读模型',
     'settings.cliExp.f.minidbRead.desc':
       '会话索引与 wire 回放改用 minidb 派生的只读查询存储;CLI 默认开启,可在此关闭',
-    'settings.cliExp.f.remoteControl.label': '远程控制(Remote Control)',
-    'settings.cliExp.f.remoteControl.desc':
-      '把本机 Web UI 经官方中继(code-rc.kimi.com)暴露到公网链接,可从手机/其他电脑操作本机 agent;开启后启动服务自动附加 --remote-control。需 CLI ≥ 0.39.0 且已登录 Kimi 账号(未登录会启动失败);持有链接的人等同于拥有本机操作权限,请勿分享;全机同一时间只允许一个 RC 实例',
-    // Remote Control 访问链接面板
-    'settings.cliExp.rcWaiting':
-      '等待 Remote Control 就绪…服务重启并向中继注册后此处显示访问链接;若长时间无链接,请确认 CLI ≥ 0.39.0 且已登录 Kimi 账号',
-    'settings.cliExp.rcCopied': '已复制',
-    'settings.cliExp.rcCopy': '复制链接',
-    'settings.cliExp.rcRefresh': '刷新',
-    'settings.cliExp.rcNote':
+    // 远程协作页(Remote Control,0.42 起 CLI 常驻解锁,独立于实验性功能)
+    'settings.rc.title': '远程协作',
+    'settings.rc.desc':
+      '把本机 Web UI 经官方中继暴露到公网链接,从手机或其他电脑远程操作本机 agent;切换开关后服务自动重启生效',
+    'settings.rc.toggle.label': '远程控制(Remote Control)',
+    'settings.rc.toggle.desc':
+      '开启后启动服务自动附加 --remote-control,经官方中继(code-rc.kimi.com)生成公网访问链接。需已登录 Kimi 账号(未登录会启动失败);持有链接的人等同于拥有本机操作权限,请勿分享;全机同一时间只允许一个 RC 实例',
+    'settings.rc.waiting':
+      '等待 Remote Control 就绪…服务重启并向中继注册后此处显示访问链接;若长时间无链接,请确认已登录 Kimi 账号',
+    'settings.rc.copied': '已复制',
+    'settings.rc.copy': '复制链接',
+    'settings.rc.refresh': '刷新',
+    'settings.rc.note':
       '手机扫码或在其他电脑浏览器打开链接,登录 Kimi 账号后即可远程操作本机 agent;链接含完整操作权限,请勿分享',
+    'settings.rc.savedOk': '已保存;服务运行中时已自动重启,未启动则下次启动生效',
+    'settings.rc.saving': '保存中…服务正在重启,期间开关暂不可操作',
+    'settings.rc.saveTimeout': '保存超时;已重新同步服务侧状态,若开关未生效请重试',
+    'settings.rc.saveFailed': '保存失败:{error}',
     // 桌面实验性功能页
     'settings.deskExp.desc':
       '桌面端自身的实验性特性,可能不稳定,后续版本可能调整或移除;如遇异常关闭对应开关即可',
@@ -99,7 +106,7 @@ export default {
   en: {
     'settings.exp.title': 'Experimental Features',
     'settings.cliExp.desc':
-      'Toggles for the official CLI experimental features (some are enabled by default in the CLI and can be disabled here); injected as environment variables when the service starts, a restart is required to apply (auto-restarts while running)',
+      'Toggles for the official CLI experimental features and runtime switches (some are enabled by default in the CLI and can be disabled here); injected as environment variables when the service starts, a restart is required to apply (auto-restarts while running)',
     'settings.cliExp.groupToggles': 'Feature Toggles',
     'settings.cliExp.loading': 'Loading…',
     'settings.cliExp.savedOk':
@@ -114,9 +121,6 @@ export default {
     'settings.cliExp.f.master.label': 'Master Experimental Switch',
     'settings.cliExp.f.master.desc':
       'Enables all experimental features registered in the current CLI version; highest risk — enabling individual items below is recommended',
-    'settings.cliExp.f.secondaryModel.label': 'Secondary Model (Subagents)',
-    'settings.cliExp.f.secondaryModel.desc':
-      'New subagents (Agent / AgentSwarm) bind to the secondary model by default instead of inheriting the main agent model; the desktop app previously kept this on',
     'settings.cliExp.f.toolSelect.label': 'Progressive Tool Disclosure (tool-select)',
     'settings.cliExp.f.toolSelect.desc':
       'Tool schemas such as MCP are no longer packed into the top-level tools[]; the model loads them on demand via select_tools, shrinking the system prompt and improving prompt-cache hits (requires a model that supports dynamic tool loading)',
@@ -131,23 +135,36 @@ export default {
       "Agent / AgentSwarm fork subagents with the caller's context snapshot instead of a fresh blank context",
     'settings.cliExp.f.tower.label': 'tower mode',
     'settings.cliExp.f.tower.desc':
-      'Coordinates multiple agents collaborating around the same goal (tower mode). Note: the CLI 0.39.0 Web UI has no /tower entry yet; once enabled it can only be used in the terminal TUI for now (KIMI_CODE_EXPERIMENTAL_TOWER=1 kimi, then /tower on)',
+      'Coordinates multiple agents collaborating around the same goal (tower mode); once enabled, use it via the /tower command (available in both the TUI and the Web UI)',
+    'settings.cliExp.f.notifyUser.label': 'Updates Progress Panel (notify-user)',
+    'settings.cliExp.f.notifyUser.desc':
+      'Shows paginated live progress updates from the main agent and subagents in the Updates panel (new in 0.42, experimental)',
     'settings.cliExp.f.waitFor.label': 'WaitFor Tool',
     'settings.cliExp.f.waitFor.desc':
       'The model can wait for background tasks to finish within the current turn (WaitFor); enabled by default in the CLI, can be disabled here',
     'settings.cliExp.f.minidbRead.label': 'minidb Read Model',
     'settings.cliExp.f.minidbRead.desc':
       'Session index and wire replay switch to a minidb-derived read-only query store; enabled by default in the CLI, can be disabled here',
-    'settings.cliExp.f.remoteControl.label': 'Remote Control',
-    'settings.cliExp.f.remoteControl.desc':
-      'Exposes the local Web UI to a public link via the official relay (code-rc.kimi.com), so you can operate the local agent from a phone or another computer; when enabled, the service starts with --remote-control automatically. Requires CLI ≥ 0.39.0 and a signed-in Kimi account (startup fails otherwise); anyone holding the link has full control of this machine — do not share it; only one RC instance is allowed per machine at a time',
-    'settings.cliExp.rcWaiting':
-      'Waiting for Remote Control… the access link appears here after the service restarts and registers with the relay; if no link shows up for a long time, make sure CLI ≥ 0.39.0 and a Kimi account is signed in',
-    'settings.cliExp.rcCopied': 'Copied',
-    'settings.cliExp.rcCopy': 'Copy Link',
-    'settings.cliExp.rcRefresh': 'Refresh',
-    'settings.cliExp.rcNote':
+    'settings.rc.title': 'Remote Collaboration',
+    'settings.rc.desc':
+      'Expose the local Web UI to a public link via the official relay, so you can operate the local agent from a phone or another computer; the service restarts automatically when the toggle changes',
+    'settings.rc.toggle.label': 'Remote Control',
+    'settings.rc.toggle.desc':
+      'When enabled, the service starts with --remote-control automatically and creates a public access link via the official relay (code-rc.kimi.com). Requires a signed-in Kimi account (startup fails otherwise); anyone holding the link has full control of this machine — do not share it; only one RC instance is allowed per machine at a time',
+    'settings.rc.waiting':
+      'Waiting for Remote Control… the access link appears here after the service restarts and registers with the relay; if no link shows up for a long time, make sure a Kimi account is signed in',
+    'settings.rc.copied': 'Copied',
+    'settings.rc.copy': 'Copy Link',
+    'settings.rc.refresh': 'Refresh',
+    'settings.rc.note':
       'Scan the QR code with a phone or open the link in a browser on another computer, then sign in to your Kimi account to operate the local agent remotely; the link grants full control — do not share it',
+    'settings.rc.savedOk':
+      'Saved. If the service was running it has been restarted automatically; otherwise it takes effect on next start',
+    'settings.rc.saving':
+      'Saving… the service is restarting and the toggle is temporarily unavailable',
+    'settings.rc.saveTimeout':
+      'Save timed out; state has been re-synced from the service — retry if the toggle did not apply',
+    'settings.rc.saveFailed': 'Save failed: {error}',
     'settings.deskExp.desc':
       'Experimental features of the desktop shell itself; may be unstable and may change or be removed in future versions — just turn off the toggle if something goes wrong',
     'settings.deskExp.pet': 'Desktop Pet',

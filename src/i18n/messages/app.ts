@@ -20,7 +20,7 @@ export default {
     // CLI 新版本提示框
     'app.update.title': '发现 Kimi Code CLI 新版本',
     'app.update.versions': '当前 {current} → 最新 {latest}',
-    'app.update.viaHome': '更新通过 `kimi upgrade` 完成,更新后服务会自动重启',
+    'app.update.viaHome': '更新经官方自更新渠道下载校验后自动安装,更新后服务会自动重启',
     'app.update.viaNpm':
       '当前为 npm 安装,更新通过 `npm update -g @moonshot-ai/kimi-code` 完成,更新后服务会自动重启',
     'app.update.target': '更新对象:{bin}',
@@ -54,7 +54,7 @@ export default {
     'app.upgrade.doneNoVersion': 'Update applied; if the service is running, it takes effect after a restart',
     'app.update.title': 'New Kimi Code CLI version available',
     'app.update.versions': 'Current {current} → Latest {latest}',
-    'app.update.viaHome': 'Updated via `kimi upgrade`; the service restarts automatically after the update',
+    'app.update.viaHome': 'Downloaded and verified via the official self-update channel, then installed automatically; the service restarts after the update',
     'app.update.viaNpm':
       'Installed via npm; updated via `npm update -g @moonshot-ai/kimi-code`. The service restarts automatically after the update',
     'app.update.target': 'Update target: {bin}',

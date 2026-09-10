@@ -28,9 +28,13 @@ pub struct DesktopConfig {
     pub active_channel: Option<String>,
     /// 首次启动向导是否已完成(默认 false:进入向导)
     pub setup_done: Option<bool>,
-    /// 实验性功能开关:env 名 → 是否开启(启动 kimi web 时注入为环境变量;
-    /// 缺 key 按各项默认 —— KIMI_CODE_EXPERIMENTAL_SECONDARY_MODEL 默认开,其余默认关)
+    /// 实验性功能/运行时开关:env 名 → 是否开启(启动 kimi web 时注入为环境变量;
+    /// 缺 key 按 CLI 默认,有效清单见 target.rs 的 EXPERIMENTAL_FLAG_TABLE / RUNTIME_SWITCH_TABLE)
     pub experimental: Option<std::collections::HashMap<String, bool>>,
+    /// Remote Control 开关(缺省关):开启后启动 kimi web 附加 --remote-control,
+    /// 经官方中继把 Web UI 暴露到公网(0.42 起 CLI 常驻解锁,0.42 前为 experimental 里的
+    /// KIMI_CODE_EXPERIMENTAL_REMOTE_CONTROL,启动时自动迁移到本字段)
+    pub remote_control: Option<bool>,
     /// kimi web 首选端口(None = 默认 server::START_PORT,release 58666 / dev 58766;被占时仍 +1 顺延)
     pub web_port: Option<u16>,
     /// 桌宠悬浮窗开关(实验性,缺省关;见 pet.rs)

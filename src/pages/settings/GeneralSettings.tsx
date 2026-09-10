@@ -38,7 +38,7 @@ interface KimiCliInfo {
 
 /**
  * CLI 程序卡片:本机与远端(WSL/SSH)共用同一结构,差异通过参数注入——
- * 说明文案、升级按钮(本机「npm 升级」仅非官方安装可见 / 远端「升级 CLI」)、
+ * 说明文案、升级按钮(本机按来源分「升级 CLI」官方脚本安装/「npm 升级」其余,远端「升级 CLI」)、
  * 恢复默认与保存的目标函数(本机 kimiCliSet / 远端 remoteBinSet)、编辑输入占位符。
  */
 function CliSourceCard(props: {
@@ -572,8 +572,13 @@ export function GeneralSettings() {
             checking={cliChecking}
             onCheck={checkCliUpdate}
             upgrade={{
-              visible: !!cliInfo && cliInfo.source !== 'home',
-              label: t('settings.general.npmUpgrade'),
+              // 后端 cli_upgrade 按来源自动选通道(home=kimi upgrade,其余=npm update -g),
+              // 两种来源都可一键升级,仅按钮文案不同
+              visible: !!cliInfo,
+              label:
+                cliInfo?.source === 'home'
+                  ? t('settings.general.upgradeCli')
+                  : t('settings.general.npmUpgrade'),
               busyLabel: t('settings.general.upgrading'),
               busy: npmUpgrading,
               onUpgrade: () => {
