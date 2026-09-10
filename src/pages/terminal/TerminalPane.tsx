@@ -10,6 +10,7 @@ import { Terminal as XTerm, type ITheme } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { WebLinksAddon } from '@xterm/addon-web-links'
 import '@xterm/xterm/css/xterm.css'
+import './terminal.css'
 import { GripVertical, Loader2, Maximize2, Minimize2, RotateCw, SplitSquareHorizontal, SplitSquareVertical, SquareTerminal, TriangleAlert, X } from 'lucide-react'
 import { useT } from '../../i18n'
 import { useUi } from '../../stores/ui'
@@ -177,7 +178,28 @@ export default function TerminalPane({
     termRef.current = term
 
     const encoder = new TextEncoder()
+    // IME 组合兜底:composition 期间拦截 onData 的中间态逐键发送——
+    // xterm 的 isComposing 判定在部分 WebView2 环境失效时,拼音中间态会进 TUI
+    // 输入缓冲,超长后触发 TUI 输入框视口左滚(画面整体前推);拦截后由上屏提交驱动
+    let composing = false
+    host.addEventListener('compositionstart', () => {
+      composing = true
+      // 组合定位:CompositionHelper 已把光标坐标写进 textarea inline style(被 terminal.css
+      // 的 !important 屏内规则压住);rAF 后读回并用 inline !important 重新应用(同级后设赢),
+      // 让 IME 候选框跟随光标而不是钉在窗格左上角
+      requestAnimationFrame(() => {
+        const ta = term.textarea
+        if (!ta) return
+        const { left, top } = ta.style
+        if (left) ta.style.setProperty('left', left, 'important')
+        if (top) ta.style.setProperty('top', top, 'important')
+      })
+    })
+    host.addEventListener('compositionend', () => {
+      composing = false
+    })
     const d1 = term.onData((data) => {
+      if (composing) return // 组合中间态不发送(拼音/假名上屏前不进 TUI)
       const sid = sessionRef.current
       if (sid) void window.kimiApi.terminalWrite(sid, encoder.encode(data))
     })

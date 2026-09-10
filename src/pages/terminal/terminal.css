@@ -1,0 +1,14 @@
+/*
+ * xterm 的 hidden textarea 默认挪到屏外(left: -9999em,且其 JS 会 inline 重置该值):
+ * WebView2 的 IME 对光标在屏外的 textarea 会走降级路径——不启用 composition、逐键发送
+ * (拼音中间态直接进 TUI)、候选框贴到容器边缘。这里用 !important 把默认位置钉在屏内,
+ * 保证 composition 能启用;组合开始后的光标定位由 TerminalPane 在 compositionstart 时
+ * 用 inline !important 接管(同级后设赢本规则)。
+ */
+.xterm .xterm-helper-textarea {
+  left: 0 !important;
+  top: 0 !important;
+  width: 1px !important;
+  height: 1em !important;
+  opacity: 0.01 !important;
+}
