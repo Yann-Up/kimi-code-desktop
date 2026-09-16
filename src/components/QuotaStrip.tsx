@@ -1,6 +1,7 @@
 /**
  * QuotaStrip: 标题栏铺平式用量直显(壳的特色:用户一眼看到当前用量,不藏进弹层)。
- * 数据:GET /api/v1/oauth/usage(kind=ok 时 summary/limits 各窗口额度);
+ * 数据:GET /api/v1/oauth/usage;0.43+ 新结构 quota.usages{limit5h,limit7d,monthTotal}
+ * (usedRatio 0~1 + resetAt,extra_usage 已移除),≤0.42 旧结构 summary/limits/extra_usage。
  * 窗口驱动渲染(5 小时/1 周/月度,服务端返回什么显示什么)。
  * 每 N 秒轮询(设置页可配)+ 轮次结束(session:turn-ended)自动刷新。
  * 服务未运行时用量元素隐藏(对话页占位图提示启动);服务启停入口在
@@ -17,6 +18,8 @@ interface QuotaWindow {
   used?: number
   limit?: number
   reset_at?: string
+  /** 固定标签的 i18n 键(优先级高于 window.duration/unit 拼接,如 monthTotal→「月度」防「1 月」误读) */
+  labelKey?: string
 }
 
 /** booster 钱包(有总额度/月度消费上限的账号才有,无则为 null) */
@@ -31,9 +34,44 @@ interface BoosterWallet {
 
 interface QuotaData {
   kind?: string
+  // 0.43+ 新结构:quota.usages.{limit5h,limit7d,monthTotal,monthCode}
+  quota?: { usages?: Record<string, { usedRatio?: number; resetAt?: string } | undefined> }
+  // ≤0.42 旧结构
   summary?: QuotaWindow
   limits?: QuotaWindow[]
   extra_usage?: BoosterWallet | null
+}
+
+/** 0.43+ 窗口键 → 展示标签参数(limit7d 沿用旧版「1 周」叫法;monthTotal 用固定标签「月度」,
+ *  「1 月」会被误读成 January);monthCode 是官方设置页月度堆叠条的细分,标题栏只取 monthTotal */
+const RATIO_WINDOWS: Array<{ key: string; duration: number; unit: string; labelKey?: string }> = [
+  { key: 'limit5h', duration: 5, unit: 'hour' },
+  { key: 'limit7d', duration: 1, unit: 'week' },
+  { key: 'monthTotal', duration: 1, unit: 'month', labelKey: 'quota.monthly' }
+]
+
+/** 统一两种返回形态为 QuotaWindow 显示模型(0.43+ 折成 limit=100 的百分比计,QuotaMeter 不分叉) */
+function parseWindows(d: QuotaData): QuotaWindow[] {
+  const usages = d.quota?.usages
+  if (usages && typeof usages === 'object') {
+    return RATIO_WINDOWS.flatMap(({ key, duration, unit, labelKey }) => {
+      const e = usages[key]
+      return e && typeof e.usedRatio === 'number'
+        ? [
+            {
+              window: { duration, unit },
+              used: Math.round(e.usedRatio * 1000) / 10,
+              limit: 100,
+              reset_at: e.resetAt,
+              labelKey
+            }
+          ]
+        : []
+    })
+  }
+  return [d.summary, ...(Array.isArray(d.limits) ? d.limits : [])]
+    .filter((w): w is QuotaWindow => !!w && typeof w === 'object')
+    .sort((a, b) => windowRank(a) - windowRank(b))
 }
 
 /** 分 → "12.34 USD" */
@@ -52,8 +90,9 @@ const UNIT_KEYS: Record<string, string> = {
   month: 'quota.unitMonth'
 }
 
-/** {duration:5,unit:"hour"} → "5 小时";{duration:1,unit:"week"} → "1 周" */
+/** {duration:5,unit:"hour"} → "5 小时";labelKey 固定标签优先({labelKey:"quota.monthly"} → "月度") */
 function windowLabel(w: QuotaWindow, t: TFn): string {
+  if (w.labelKey) return t(w.labelKey)
   const d = w.window?.duration ?? 0
   const u = w.window?.unit ?? ''
   const unit = UNIT_KEYS[u] ? t(UNIT_KEYS[u]) : u
@@ -263,10 +302,7 @@ export function QuotaStrip() {
           // 请求成功即服务在跑:兜住 server:ready 事件丢失(启动时序竞态)时
           // svcRunning 恒 false、整条额度条不出现的场景,首个成功周期自愈
           setSvcRunning(true)
-          const list = [d.summary, ...(Array.isArray(d.limits) ? d.limits : [])]
-            .filter((w): w is QuotaWindow => !!w && typeof w === 'object')
-            .sort((a, b) => windowRank(a) - windowRank(b))
-          setWindows(list)
+          setWindows(parseWindows(d))
           setWallet(d.extra_usage ?? null)
         })
         .catch(() => {})
