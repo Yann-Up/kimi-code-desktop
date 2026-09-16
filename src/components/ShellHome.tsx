@@ -352,6 +352,9 @@ function WebFrame() {
         src={src}
         name={nonceFor(ch)}
         title="Kimi Code"
+        // clipboard-write 默认 allowlist 仅 'self',跨源 iframe(127.0.0.1)需壳侧显式委托,
+        // 否则官方 web UI 代码块的复制按钮 navigator.clipboard.writeText 会被 Permissions-Policy 拒绝
+        allow="clipboard-write"
         className="min-h-0 w-full flex-1 border-0 bg-surface"
       />
     )
