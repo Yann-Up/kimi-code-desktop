@@ -103,6 +103,15 @@ export interface ServerErrorInfo {
   error: string
 }
 
+/** server:launch 事件载荷:启动终端展示用的实际执行命令(spawn 成功后广播;无 token) */
+export interface ServerLaunchInfo {
+  channel: string
+  /** 完整命令行(不含 env 前缀) */
+  line: string
+  /** 注入的环境变量 [key, value](本机含 KIMI_CODE_HOME;其余为实验/运行时开关) */
+  env: [string, string][]
+}
+
 /** session:turn-ended 事件载荷 */
 export interface TurnEndedInfo {
   session_id: string
@@ -328,6 +337,8 @@ export interface KimiApi {
   onCliUpdateAvailable(cb: (info: { current: string; latest: string; source: string; bin: string }) => void): Unsubscribe
   onCliUpgraded(cb: (info: { version: string | null; restartOk: boolean }) => void): Unsubscribe
   onServerReady(cb: (info: ServerReadyInfo) => void): Unsubscribe
+  /** kimi web 实际 spawn 成功时触发,载荷为启动终端展示用的命令行与注入 env */
+  onServerLaunch(cb: (info: ServerLaunchInfo) => void): Unsubscribe
   onServerError(cb: (info: ServerErrorInfo) => void): Unsubscribe
   /** 用户请求关窗(标题栏 X/Alt+F4 等)时触发,前端应弹"是否关闭进程"确认框;参数=是否有后端在跑 */
   onCloseRequested(cb: (backendRunning: boolean) => void): Unsubscribe
@@ -383,6 +394,9 @@ export interface KimiApi {
     pid?: number
     startedAt?: number
   } | null>
+  /** RC 冲突定向恢复:按 pid 结束占住 Remote Control 单例的旧实例(只杀 kimi/node 进程),
+   *  成功后需重新 startBackend;SSH 远端/非 kimi 进程会返回错误 */
+  rcKillHolder(pid: number, channel?: string): Promise<void>
   /** 读 kimi web 启动参数(端口 / 局域网开放 / allowed-host) */
   webServerGet(): Promise<WebServerOptions>
   /** 保存 kimi web 启动参数;激活通道后端运行中会自动重启生效 */

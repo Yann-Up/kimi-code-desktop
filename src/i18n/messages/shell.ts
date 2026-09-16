@@ -8,10 +8,12 @@ export default {
     'shell.offline.title': 'Kimi Code 服务未启动',
     'shell.offline.desc': '启动后此处将加载官方 Web UI 对话界面;统计、设置等本地页面现在即可使用',
     'shell.offline.start': '启动 Kimi Code 服务',
-    // 启动中(含首次自动安装 CLI)
+    // 启动中(启动终端打字展示实际命令;含首次自动安装 CLI)
     'shell.starting.installingCli': '未检测到 Kimi Code CLI,正在自动下载安装最新版…',
-    'shell.starting.starting': '正在启动 Kimi Code 服务…',
     'shell.starting.installHint': '首次安装需要几分钟,请保持网络畅通',
+    'shell.starting.preparing': '准备启动…',
+    'shell.starting.comment': '启动 kimi web 服务 · {channel}',
+    'shell.starting.waiting': '等待服务就绪…',
     // iframe 加载失败
     'shell.frameError.title': '无法加载对话界面',
     'shell.frameError.retry': '重试',
@@ -40,8 +42,10 @@ export default {
       'Once started, the official Web UI chat will load here; stats, settings and other local pages are available now',
     'shell.offline.start': 'Start Kimi Code Service',
     'shell.starting.installingCli': 'Kimi Code CLI not detected, downloading and installing the latest version…',
-    'shell.starting.starting': 'Starting Kimi Code service…',
     'shell.starting.installHint': 'The first install takes a few minutes, please stay online',
+    'shell.starting.preparing': 'Preparing launch…',
+    'shell.starting.comment': 'Starting kimi web · {channel}',
+    'shell.starting.waiting': 'Waiting for the service…',
     'shell.frameError.title': 'Failed to load the chat UI',
     'shell.frameError.retry': 'Retry',
     'shell.frameBlocked.title': 'The official server has blocked iframe embedding',

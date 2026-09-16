@@ -10,9 +10,12 @@
 //!   (本机读文件,WSL/SSH 经各自通道 cat)。CLI 0.42 起 server.token 必然持久化落盘(0600)
 //!   且跨重启复用,banner 优先 + 文件兜底是长期双通道,不只是兼容旧 CLI
 //! - 轮询 /api/v1/healthz 直到就绪(三种目标下都连 127.0.0.1:<本地端口>)
+//! - RC 单例预检(--remote-control 开启的本机/WSL):CLI 的 RC 锁(<kimi_home>/server/rc.json,
+//!   按 pid 活性判定)与实例注册表是两套账本,注册表回收覆盖不到的 RC 持有者(孤儿/条目被
+//!   清理)会让新实例必被 CLI 拒启、重试永远失败;预检对残留锁强杀、健康实例直接收养
 //! - 优雅关停(POST /api/v1/shutdown → 等待退出 → 强杀/断连兜底)
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::io::{AsyncBufReadExt, BufReader};
@@ -142,6 +145,87 @@ pub(crate) fn parse_banner_token(line: &str) -> Option<String> {
     None
 }
 
+/// RC 冲突结构化错误标记:前端解析它渲染"结束旧实例并重试"定向操作。
+/// 格式 `RC_CONFLICT|pid=<pid>|origin=<origin>`,只含这两个字段(可出现在整串中部,
+/// 前端按 indexOf 定位,因为 App/ShellHome 会给它加"后端服务意外退出:"等前缀)
+pub(crate) const RC_CONFLICT_MARK: &str = "RC_CONFLICT|";
+
+fn rc_conflict_error(pid: u32, origin: &str) -> String {
+    format!("{RC_CONFLICT_MARK}pid={pid}|origin={origin}")
+}
+
+/// 从 stderr 尾部解析 CLI 的 RC 单例拒绝:
+/// "Remote Control is already running on this machine (pid 63024, http://127.0.0.1:58666, since ...)"
+pub(crate) fn parse_rc_conflict(text: &str) -> Option<(u32, String)> {
+    let anchor = text.find("Remote Control is already running")?;
+    let rest = &text[anchor..];
+    let pid_pos = rest.find("pid ")? + "pid ".len();
+    let digits: String = rest[pid_pos..]
+        .chars()
+        .take_while(|c| c.is_ascii_digit())
+        .collect();
+    let pid: u32 = digits.parse().ok()?;
+    let origin = match rest[pid_pos..].find("http") {
+        Some(p) => {
+            let s = &rest[pid_pos + p..];
+            let end = s.find([',', ' ', ')', '\n']).unwrap_or(s.len());
+            s[..end].to_string()
+        }
+        None => String::new(),
+    };
+    Some((pid, origin))
+}
+
+/// 强杀前的身份核验(rc.json 的 pid 由 CLI 自己写入,但 pid 可能被系统复用):
+/// 进程名(basename)必须是 kimi/kimi.exe;node/node.exe(npm 安装形态)还需命令行含
+/// "kimi" 佐证,防误杀无关 node 进程;其余一律不杀。macOS 的 ps -o comm= 给全路径,故取 basename
+pub(crate) fn rc_killable(process_name: &str, cmdline: Option<&str>) -> bool {
+    let base = process_name
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or(process_name)
+        .to_lowercase();
+    if base == "kimi" || base == "kimi.exe" {
+        return true;
+    }
+    if base == "node" || base == "node.exe" {
+        return cmdline
+            .map(|c| c.to_lowercase().contains("kimi"))
+            .unwrap_or(false);
+    }
+    false
+}
+
+/// 按 pid 强杀 RC 持有者并等退净(最多 3s;CLI 按 pid 活性判锁,不等则随即重启仍会撞锁)。
+/// 调用前必须先过 rc_killable 核验;返回是否已退净
+pub(crate) async fn kill_rc_holder_and_wait(target: &ConnectionTarget, pid: u32, name: &str) -> bool {
+    eprintln!("[kimi-web] 回收 RC 持有者 pid={pid} ({name})");
+    target.kill_pid(pid).await;
+    let deadline = Instant::now() + Duration::from_secs(3);
+    while Instant::now() < deadline {
+        if target.process_name_if_alive(pid).await.is_none() {
+            return true;
+        }
+        tokio::time::sleep(Duration::from_millis(300)).await;
+    }
+    target.process_name_if_alive(pid).await.is_none()
+}
+
+/// 从 stderr 尾部缓冲解析 RC 冲突签名;stderr drain 是独立任务,进程刚死时最后几行
+/// 可能还没进缓冲,首次未命中做短暂重试(3×100ms),避免偶发丢签名退回笼统错误
+async fn rc_conflict_from_tail(tail: &Arc<std::sync::Mutex<String>>) -> Option<(u32, String)> {
+    for attempt in 0..4 {
+        if attempt > 0 {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        let text = tail.lock().map(|t| t.trim().to_string()).unwrap_or_default();
+        if let Some(hit) = parse_rc_conflict(&text) {
+            return Some(hit);
+        }
+    }
+    None
+}
+
 #[derive(Clone)]
 pub struct ServerInfo {
     pub port: u16,
@@ -234,6 +318,124 @@ async fn reclaim_stale_instances(http: &reqwest::Client, target: &ConnectionTarg
     }
 }
 
+/// RC 单例预检结果
+enum RcPreCheck {
+    /// 无锁/锁已死/僵尸已清理:走正常 spawn
+    Clear,
+    /// 已有健康 RC 实例在跑:直接收养,不再 spawn
+    Adopt { port: u16, token: String },
+    /// 锁活着但无法接管(凭据不符/状态异常/非回环 origin):结构化冲突错误,前端定向处理
+    Conflict(String),
+}
+
+/// RC 单例预检(--remote-control 开启时调用,三种目标通用):
+/// CLI 的 RC 锁(<kimi_home>/server/rc.json,按 pid 活性判定)与实例注册表是两套账本,
+/// reclaim_stale_instances 覆盖不到未登记的 RC 持有者(孤儿/注册表条目被清理/用户另开),
+/// 不预检则新实例必被 CLI 拒启(exit 1),重试永远失败。
+/// 处置矩阵:pid 已死 → Clear(CLI 启动时会覆盖残留 rc.json);
+/// 健康(healthz 凭 server.token 认证通过)→ Adopt(仅本机/WSL;SSH 无前向转发探不了 HTTP,
+/// 活锁一律 Conflict,前端按钮可远程强杀);
+/// 进程在但端口不可达 → 区分半死与"还在启动"(started_at < 20s 时给足启动窗口多次重探),
+/// 半死才强杀;端口可达但凭据不符/状态异常 → Conflict(可能正被他人使用,不擅自杀)。
+async fn rc_precheck(http: &reqwest::Client, target: &ConnectionTarget) -> RcPreCheck {
+    let Ok(home) = target.kimi_home_str().await else {
+        return RcPreCheck::Clear;
+    };
+    let Ok(raw) = target
+        .read_text(&target.join(&home, "server/rc.json"))
+        .await
+    else {
+        return RcPreCheck::Clear;
+    };
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(&raw) else {
+        return RcPreCheck::Clear;
+    };
+    let Some(pid) = v.get("pid").and_then(|x| x.as_u64()).map(|x| x as u32) else {
+        return RcPreCheck::Clear;
+    };
+    let origin = v
+        .get("local_origin")
+        .or_else(|| v.get("localOrigin"))
+        .and_then(|x| x.as_str())
+        .unwrap_or_default()
+        .trim_end_matches('/')
+        .to_string();
+    // 防御:rc.json 不应指向壳自身(仅本机目标有意义,SSH 远端是独立 pid 空间)
+    if target.is_local() && pid == std::process::id() {
+        return RcPreCheck::Conflict(rc_conflict_error(pid, &origin));
+    }
+    // pid 已死:rc.json 是残留,直接启动
+    let Some(name) = target.process_name_if_alive(pid).await else {
+        return RcPreCheck::Clear;
+    };
+    // SSH 远端:没有前向转发探不了 HTTP 活,活锁一律交冲突处理
+    if matches!(target, ConnectionTarget::Ssh { .. }) {
+        return RcPreCheck::Conflict(rc_conflict_error(pid, &origin));
+    }
+    // 只认回环 origin:非回环(--host 0.0.0.0 等)下"不可达"判定不可靠,不误杀
+    if !origin.contains("127.0.0.1") && !origin.contains("localhost") && !origin.contains("[::1]")
+    {
+        return RcPreCheck::Conflict(rc_conflict_error(pid, &origin));
+    }
+    let Some(port) = origin.rsplit(':').next().and_then(|s| s.parse::<u16>().ok()) else {
+        // origin 缺失/异常:不干预,spawn 后若被 CLI 拒启,由 stderr 冲突标记路径兜底
+        return RcPreCheck::Clear;
+    };
+    // 读不到凭据的活实例:无法验证也无法接管,不擅自杀
+    let Ok(Some(token)) = target.read_token_once().await else {
+        return RcPreCheck::Conflict(rc_conflict_error(pid, &origin));
+    };
+    // 探活并区分"半死"与"还在启动":刚写 rc.json 的实例(started_at < 20s)给足启动窗口,
+    // 避免把用户刚在终端拉起的健康实例当僵尸误杀
+    let started_at = v
+        .get("started_at")
+        .or_else(|| v.get("startedAt"))
+        .and_then(|x| x.as_i64())
+        .unwrap_or(0);
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0);
+    let young = started_at > 0 && now_ms.saturating_sub(started_at) < 20_000;
+    let (tries, gap) = if young {
+        (15, Duration::from_millis(1000))
+    } else {
+        (3, Duration::from_millis(500))
+    };
+    for attempt in 0..tries {
+        if attempt > 0 {
+            tokio::time::sleep(gap).await;
+        }
+        match http
+            .get(format!("{origin}/api/v1/healthz"))
+            .bearer_auth(&token)
+            .timeout(Duration::from_millis(1500))
+            .send()
+            .await
+        {
+            Ok(res) if res.status().is_success() => return RcPreCheck::Adopt { port, token },
+            // 服务可达但凭据不符/状态异常:可能正被他人使用,交用户决断
+            Ok(_) => return RcPreCheck::Conflict(rc_conflict_error(pid, &origin)),
+            Err(_) => {}
+        }
+    }
+    // 连续不可达的半死僵尸(进程在、服务没了):身份核验后强杀(node 形态需命令行佐证)
+    let cmdline = if rc_killable(&name, None) {
+        None
+    } else {
+        target.process_cmdline(pid).await
+    };
+    if !rc_killable(&name, cmdline.as_deref()) {
+        return RcPreCheck::Conflict(rc_conflict_error(pid, &origin));
+    }
+    if kill_rc_holder_and_wait(target, pid, &name).await {
+        RcPreCheck::Clear
+    } else {
+        // 杀不掉:交前端(按钮再走一遍核验+强杀)
+        RcPreCheck::Conflict(rc_conflict_error(pid, &origin))
+    }
+}
+
 /// 从 from 起连续试 50 个端口,返回第一个可绑定的(保真实现,不用端口 0)
 fn free_port(from: u16) -> Result<u16, String> {
     for p in from..from + 50 {
@@ -265,20 +467,37 @@ async fn kill_child_tree(child: &mut Child) {
     let _ = child.kill().await;
 }
 
-/// 启动失败/超时清理:Process 强杀;Ssh 关通道使远端收 HUP
+/// 启动失败/超时清理:Process 强杀;Ssh 关通道使远端收 HUP;Adopted 不动(非本进程子进程)
 async fn kill_handle(handle: ServiceHandle) {
     match handle {
         ServiceHandle::Process(child) => {
             kill_child_tree(&mut *child.lock().await).await;
         }
         ServiceHandle::Ssh(proc) => proc.shutdown().await,
+        ServiceHandle::Adopted => {}
     }
 }
 
-/// 服务句柄:本地子进程(Local/WSL)或远端常驻进程(SSH,russh pty 通道)
+/// 服务句柄:本地子进程(Local/WSL)、远端常驻进程(SSH,russh pty 通道)
+/// 或收养的已有 RC 实例(Adopted:只 POST shutdown 优雅关停,绝不强杀)
 pub enum ServiceHandle {
     Process(Arc<tokio::sync::Mutex<Child>>),
     Ssh(SshProcess),
+    Adopted,
+}
+
+/// 退出探针(服务就绪后监控任务的存活判定):Process 用 try_wait,Ssh 探测通道活性
+/// (远端关闭/断连时翻 false),Http 用于收养的 RC 实例(非本进程子进程,
+/// 以 healthz 连续失败判定)
+#[derive(Clone)]
+enum ExitProbe {
+    Process(Arc<tokio::sync::Mutex<Child>>),
+    Ssh(Arc<AtomicBool>),
+    Http {
+        url: String,
+        token: String,
+        misses: Arc<AtomicU32>,
+    },
 }
 
 pub struct ServerManager {
@@ -307,6 +526,7 @@ impl ServerManager {
 
     /// 启动 kimi web:target 指定通道的连接目标(channel 为通道 id,用于意外退出回调与错误上报)。
     /// 启动流程本身(banner token / healthz)与单通道时代完全一致,仅按通道隔离实例。
+    /// RC 开启时先做单例预检(rc_precheck):健康旧实例直接收养,半死僵尸强杀后重新 spawn
     pub async fn start(
         shared: &SharedServer,
         http: &reqwest::Client,
@@ -323,6 +543,38 @@ impl ServerManager {
         mgr.stopping = Arc::new(AtomicBool::new(false));
         // 连接目标决定启动/读 token/检测 CLI 的方式;REST/WS 永远连 127.0.0.1:port
         let cli_version = target.detect_cli().await?;
+
+        // RC 单例预检(--remote-control 开启时;三种目标通用,SSH 只分死/活、无收养):
+        // 注册表回收覆盖不到的 RC 持有者会让新实例必被 CLI 拒启、重试永远失败;
+        // 健康持有者直接收养(不再 spawn),收尾与 spawn 分支共用 finalize_start
+        if crate::target::remote_control_enabled() {
+            match rc_precheck(http, target).await {
+                RcPreCheck::Clear => {}
+                RcPreCheck::Conflict(msg) => return Err(msg),
+                RcPreCheck::Adopt { port, token } => {
+                    eprintln!("[kimi-web] 收养已在运行的 RC 实例 port={port}");
+                    mgr.proc = Some(ServiceHandle::Adopted);
+                    let probe = ExitProbe::Http {
+                        url: format!("http://127.0.0.1:{port}"),
+                        token: token.clone(),
+                        misses: Arc::new(AtomicU32::new(0)),
+                    };
+                    return Self::finalize_start(
+                        shared,
+                        &mut mgr,
+                        http,
+                        app,
+                        channel,
+                        probe,
+                        token,
+                        port,
+                        cli_version,
+                    )
+                    .await;
+                }
+            }
+        }
+
         // 启动参数(设置页可配):首选端口
         let opts = web_options();
         // 回收首选端口上的残留实例(崩溃/强杀留下的孤儿),把首选端口还回来,
@@ -330,13 +582,6 @@ impl ServerManager {
         // 其他端口上的 kimi web 实例不动(可能是用户另开的 CLI)
         reclaim_stale_instances(http, target, opts.port).await;
         let port = free_port(opts.port)?;
-
-        // 退出探针:Process 用 try_wait,Ssh 探测通道活性(远端关闭/断连时翻 false)
-        #[derive(Clone)]
-        enum ExitProbe {
-            Process(Arc<tokio::sync::Mutex<Child>>),
-            Ssh(Arc<AtomicBool>),
-        }
 
         // stderr 尾部缓冲:启动失败时随错误返回,帮助定位(仅本机/WSL 子进程写入)
         let stderr_tail = Arc::new(std::sync::Mutex::new(String::new()));
@@ -436,55 +681,9 @@ impl ServerManager {
             }
         };
 
-        // 退出监控:非主动停止的意外退出记录日志、清空 info,
-        // 并回调 lib.rs 清该通道 AppState + 广播 server:exited(否则崩溃后卡死在假"运行中"状态)
-        {
-            let stopping = mgr.stopping.clone();
-            let weak = Arc::downgrade(shared);
-            let monitor_probe = probe.clone();
-            let app = app.clone();
-            let channel = channel.to_string();
-            tokio::spawn(async move {
-                loop {
-                    tokio::time::sleep(Duration::from_millis(500)).await;
-                    // 主动停止(stop/启动失败的 kill 兜底)时直接退出:
-                    // SSH 目标下 alive 只在 drain 任务自然结束时翻转,而 shutdown/Drop
-                    // 会 abort drain,标志永不翻转,不检查 stopping 监控任务会永久空转
-                    if stopping.load(Ordering::SeqCst) {
-                        break;
-                    }
-                    let exited = match &monitor_probe {
-                        ExitProbe::Process(child) => match child.lock().await.try_wait() {
-                            Ok(Some(status)) => Some(format!("code = {:?}", status.code())),
-                            Ok(None) => None,
-                            Err(_) => Some("wait 失败".to_string()),
-                        },
-                        ExitProbe::Ssh(alive) => {
-                            if alive.load(Ordering::SeqCst) {
-                                None
-                            } else {
-                                Some("远端进程已退出或连接断开".to_string())
-                            }
-                        }
-                    };
-                    if let Some(detail) = exited {
-                        if !stopping.load(Ordering::SeqCst) {
-                            eprintln!("[kimi-web] exited unexpectedly, {detail}");
-                            if let Some(m) = weak.upgrade() {
-                                m.lock().await.info = None;
-                            }
-                            crate::handle_unexpected_exit(&app, &channel, &detail).await;
-                        }
-                        break;
-                    }
-                }
-            });
-        }
-
+        // spawn 之后的所有错误返回路径都要先杀子进程,否则 kimi web 泄漏成孤儿进程
+        // (退出监控在服务就绪后才启动,见 finalize_start;清理路径的 stopping 置位纯防御)
         mgr.proc = Some(handle);
-
-        // spawn 之后的所有错误返回路径都要先杀子进程,否则 kimi web 泄漏成孤儿进程;
-        // 杀前置 stopping=true,让退出监控把这次退出视为主动停止、不重复清理/通知
         // 先等启动 banner 打印 token(CLI 0.29.2+ 只打印、不写 server.token);
         // 超时回退旧 CLI 的 server.token 文件轮询(target.rs read_token,兼容旧版本)
         // 两条途径都失败时,照旧杀子进程清理,避免 kimi web 泄漏成孤儿进程
@@ -504,6 +703,11 @@ impl ServerManager {
                     if let Some(handle) = mgr.proc.take() {
                         kill_handle(handle).await;
                     }
+                    // RC 单例拒绝(stderr 有签名):换结构化冲突错误,
+                    // 前端据此出"结束旧实例并重试",不再是笼统的重试
+                    if let Some((pid, origin)) = rc_conflict_from_tail(&stderr_tail).await {
+                        return Err(rc_conflict_error(pid, &origin));
+                    }
                     return Err(e);
                 }
             },
@@ -517,16 +721,21 @@ impl ServerManager {
             let early_exit: Option<String> = match &probe {
                 ExitProbe::Process(child) => match child.lock().await.try_wait() {
                     Ok(Some(status)) => {
-                        let tail = stderr_tail
-                            .lock()
-                            .map(|t| t.trim().to_string())
-                            .unwrap_or_default();
-                        let mut msg =
-                            format!("kimi web 启动后即退出(code = {:?})", status.code());
-                        if !tail.is_empty() {
-                            msg.push_str(&format!(",stderr 尾部: {tail}"));
+                        // RC 单例拒绝:换结构化冲突错误(同上)
+                        if let Some((pid, origin)) = rc_conflict_from_tail(&stderr_tail).await {
+                            Some(rc_conflict_error(pid, &origin))
+                        } else {
+                            let tail = stderr_tail
+                                .lock()
+                                .map(|t| t.trim().to_string())
+                                .unwrap_or_default();
+                            let mut msg =
+                                format!("kimi web 启动后即退出(code = {:?})", status.code());
+                            if !tail.is_empty() {
+                                msg.push_str(&format!(",stderr 尾部: {tail}"));
+                            }
+                            Some(msg)
                         }
-                        Some(msg)
                     }
                     _ => None,
                 },
@@ -537,6 +746,8 @@ impl ServerManager {
                         Some("kimi web 远端进程启动后即退出或连接断开".to_string())
                     }
                 }
+                // spawn 路径不会产生 Http 探针(仅收养分支),此处仅为穷尽匹配
+                ExitProbe::Http { .. } => None,
             };
             if let Some(msg) = early_exit {
                 mgr.stopping.store(true, Ordering::SeqCst);
@@ -565,6 +776,90 @@ impl ServerManager {
             tokio::time::sleep(Duration::from_millis(400)).await;
         }
 
+        Self::finalize_start(shared, &mut mgr, http, app, channel, probe, token, port, cli_version)
+            .await
+    }
+
+    /// start 的收尾(spawn 与收养两条路径共用):启动退出监控 → frame 拒绝头预警 →
+    /// meta 拉取 → 落 ServerInfo。退出监控只在服务就绪后启动:启动期失败由 spawn 路径的
+    /// 早退探针覆盖并直接返回(带 stderr 尾部),监控若与启动并发竞报,会先广播一条
+    /// 只有 exit code 的劣质消息,把可读原因盖掉
+    #[allow(clippy::too_many_arguments)]
+    async fn finalize_start(
+        shared: &SharedServer,
+        mgr: &mut ServerManager,
+        http: &reqwest::Client,
+        app: &AppHandle,
+        channel: &str,
+        probe: ExitProbe,
+        token: String,
+        port: u16,
+        cli_version: String,
+    ) -> Result<ServerInfo, String> {
+        // 退出监控:非主动停止的意外退出记录日志、清空 info,
+        // 并回调 lib.rs 清该通道 AppState + 广播 server:exited(否则崩溃后卡死在假"运行中"状态)
+        {
+            let stopping = mgr.stopping.clone();
+            let weak = Arc::downgrade(shared);
+            let app = app.clone();
+            let channel = channel.to_string();
+            let http = http.clone();
+            tokio::spawn(async move {
+                loop {
+                    tokio::time::sleep(Duration::from_millis(500)).await;
+                    // 主动停止(stop/重启)时直接退出:
+                    // SSH 目标下 alive 只在 drain 任务自然结束时翻转,而 shutdown/Drop
+                    // 会 abort drain,标志永不翻转,不检查 stopping 监控任务会永久空转
+                    if stopping.load(Ordering::SeqCst) {
+                        break;
+                    }
+                    let exited: Option<String> = match &probe {
+                        ExitProbe::Process(child) => match child.lock().await.try_wait() {
+                            Ok(Some(status)) => Some(format!("code = {:?}", status.code())),
+                            Ok(None) => None,
+                            Err(_) => Some("wait 失败".to_string()),
+                        },
+                        ExitProbe::Ssh(alive) => {
+                            if alive.load(Ordering::SeqCst) {
+                                None
+                            } else {
+                                Some("远端进程已退出或连接断开".to_string())
+                            }
+                        }
+                        ExitProbe::Http { url, token, misses } => match http
+                            .get(format!("{url}/api/v1/healthz"))
+                            .bearer_auth(token)
+                            .timeout(Duration::from_secs(1))
+                            .send()
+                            .await
+                        {
+                            Ok(res) if res.status().is_success() => {
+                                misses.store(0, Ordering::SeqCst);
+                                None
+                            }
+                            // 连续 10 次(约 5s)不可达才判退出,过滤瞬时抖动
+                            _ if misses.fetch_add(1, Ordering::SeqCst) + 1 >= 10 => {
+                                Some("收养的 RC 实例健康检查连续失败".to_string())
+                            }
+                            _ => None,
+                        },
+                    };
+                    if let Some(detail) = exited {
+                        if !stopping.load(Ordering::SeqCst) {
+                            eprintln!("[kimi-web] exited unexpectedly, {detail}");
+                            if let Some(m) = weak.upgrade() {
+                                m.lock().await.info = None;
+                            }
+                            crate::handle_unexpected_exit(&app, &channel, &detail).await;
+                        }
+                        break;
+                    }
+                }
+            });
+        }
+
+        let base_url = format!("http://127.0.0.1:{port}");
+
         // 保险:官方若下发 frame 拒绝头(如 --host 0.0.0.0 模式实测会带 frame-ancestors 'self',
         // 故壳不提供局域网开放选项),iframe 内嵌即被浏览器拦截。
         // 一次性 HEAD / 检查响应头,命中则标记 frame_blocked 交给前端引导(不阻断启动)
@@ -572,6 +867,8 @@ impl ServerManager {
         if let Ok(res) = http
             .head(format!("{base_url}/"))
             .bearer_auth(&token)
+            // 收养的实例可能半死:per-request 超时,不靠 client 全局 30s 兜底
+            .timeout(Duration::from_secs(5))
             .send()
             .await
         {
@@ -594,6 +891,7 @@ impl ServerManager {
         if let Ok(res) = http
             .get(format!("{base_url}/api/v1/meta"))
             .bearer_auth(&token)
+            .timeout(Duration::from_secs(5))
             .send()
             .await
         {
@@ -616,7 +914,7 @@ impl ServerManager {
         Ok(info)
     }
 
-    /// 优雅关停:POST /api/v1/shutdown → 等 5s → 强杀/断连兜底
+    /// 优雅关停:POST /api/v1/shutdown → 等 5s → 强杀/断连兜底(收养实例只等退净、不强杀)
     pub async fn stop(shared: &SharedServer, http: &reqwest::Client) {
         let mut mgr = shared.lock().await;
         mgr.stopping.store(true, Ordering::SeqCst);
@@ -624,7 +922,7 @@ impl ServerManager {
         let Some(handle) = mgr.proc.take() else {
             return;
         };
-        if let Some(info) = info {
+        if let Some(info) = &info {
             let _ = http
                 .post(format!("{}/api/v1/shutdown", info.base_url))
                 .bearer_auth(&info.token)
@@ -641,6 +939,27 @@ impl ServerManager {
             ServiceHandle::Ssh(proc) => {
                 // 关闭 pty 通道,远端进程收 SIGHUP;转发监听一并停止
                 proc.shutdown().await;
+            }
+            ServiceHandle::Adopted => {
+                // 收养的 RC 实例不是本进程子进程:POST shutdown(上面已发)后等它退净
+                // (最多 5s,防 restart 场景 start 又把将死实例收养回来),但不强杀
+                if let Some(info) = &info {
+                    let deadline = Instant::now() + Duration::from_secs(5);
+                    while Instant::now() < deadline {
+                        let up = http
+                            .get(format!("{}/api/v1/healthz", info.base_url))
+                            .bearer_auth(&info.token)
+                            .timeout(Duration::from_millis(500))
+                            .send()
+                            .await
+                            .map(|r| r.status().is_success())
+                            .unwrap_or(false);
+                        if !up {
+                            break;
+                        }
+                        tokio::time::sleep(Duration::from_millis(300)).await;
+                    }
+                }
             }
         }
         mgr.info = None;

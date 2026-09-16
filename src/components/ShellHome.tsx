@@ -8,6 +8,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Eye, EyeOff, TriangleAlert } from 'lucide-react'
 import { SkinStandee } from './SkinStandee'
+import { BootTerminal } from './BootTerminal'
 import { useChatSkinBridge } from './chatSkinBridge'
 import { useChatPrefsBridge } from './chatPrefsBridge'
 import { newBridgeNonce } from './bridgeGuard'
@@ -16,7 +17,10 @@ import { StatsPage } from '../pages/stats/StatsPage'
 import TerminalPage from '../pages/terminal/TerminalPage'
 import { useUi } from '../stores/ui'
 import { IS_WINDOWS } from '../platform/os'
+import type { ServerLaunchInfo } from '../platform/kimi-api'
 import { useT, t as tStatic } from '../i18n'
+import { parseRcConflict } from './rcConflict'
+import { RcConflictAction } from './RcConflictAction'
 import logoUrl from '../assets/logo.png'
 
 /** 对话区状态:checking=探测服务中 off=未启动(占位页) starting=启动中 on=已加载 iframe error=加载失败 */
@@ -33,6 +37,10 @@ function WebFrame() {
   const [errors, setErrors] = useState<Record<string, string | undefined>>({})
   // 服务端下发 frame-ancestors/X-Frame-Options → iframe 会被浏览器拦截,改显示引导页
   const [frameBlocked, setFrameBlocked] = useState<Record<string, boolean>>({})
+  // 启动终端:实际执行命令(server:launch);readyMap=server:ready 已到,
+  // starting 态下等 BootTerminal 动画收尾(onFinish)才切 on
+  const [launch, setLaunch] = useState<Record<string, ServerLaunchInfo | undefined>>({})
+  const [readyMap, setReadyMap] = useState<Record<string, boolean>>({})
   const [installing, setInstalling] = useState(false)
   // 本机缺 CLI 时的安装确认(避免未经同意下载安装;仅 local 通道生效)
   const [installConfirm, setInstallConfirm] = useState(false)
@@ -73,13 +81,20 @@ function WebFrame() {
   // 服务事件:按事件里的 channel 只更新对应通道的 iframe(就绪只重建该通道,其余不受影响)
   useEffect(() => {
     const offs = [
-      // 服务就绪(含重启带新 token):该通道进 on 并清 src,由 src 拉取 effect 重建 iframe
+      // 服务就绪(含重启带新 token):清 src 由拉取 effect 重建 iframe;
+      // starting 态(启动终端在播)先把就绪记入 readyMap,等 BootTerminal 动画收尾
+      // (onFinish)再切 on;其余场景(设置页触发的重启、RC 收养)无动画门控直接切
       window.kimiApi.onServerReady((info) => {
         setInstalling(false)
-        setStates((s) => ({ ...s, [info.channel]: 'on' }))
+        setReadyMap((m) => ({ ...m, [info.channel]: true }))
+        setStates((s) => (s[info.channel] === 'starting' ? s : { ...s, [info.channel]: 'on' }))
         setSrcs((s) => ({ ...s, [info.channel]: undefined }))
         setErrors((e) => ({ ...e, [info.channel]: undefined }))
         setFrameBlocked((m) => ({ ...m, [info.channel]: info.frameBlocked ?? false }))
+      }),
+      // 实际 spawn 成功:启动终端打字展示该命令行
+      window.kimiApi.onServerLaunch((info) => {
+        setLaunch((m) => ({ ...m, [info.channel]: info }))
       }),
       // 手动停止:该通道回占位页
       window.kimiApi.onServerStopped((info) => {
@@ -88,6 +103,17 @@ function WebFrame() {
         setStates((s) => ({ ...s, [info.channel]: 'off' }))
         setErrors((e) => ({ ...e, [info.channel]: undefined }))
         setFrameBlocked((m) => ({ ...m, [info.channel]: false }))
+        setLaunch((m) => ({ ...m, [info.channel]: undefined }))
+        setReadyMap((m) => ({ ...m, [info.channel]: false }))
+      }),
+      // 启动失败(start_backend 把 bootstrap 异步 spawn 出去后立即返回,失败只经此事件广播,
+      // doStart 的 catch 永不触发):该通道回占位页并展示原因(RC 单例冲突据此出定向操作)
+      window.kimiApi.onServerError((info) => {
+        setInstalling(false)
+        setStates((s) => ({ ...s, [info.channel]: 'off' }))
+        setErrors((e) => ({ ...e, [info.channel]: info.error }))
+        setLaunch((m) => ({ ...m, [info.channel]: undefined }))
+        setReadyMap((m) => ({ ...m, [info.channel]: false }))
       }),
       // 意外退出:该通道回占位页并提示原因
       window.kimiApi.onServerExited((info) => {
@@ -96,6 +122,8 @@ function WebFrame() {
         setStates((s) => ({ ...s, [info.channel]: 'off' }))
         setErrors((e) => ({ ...e, [info.channel]: tStatic('shell.serverExited', { detail: info.detail }) }))
         setFrameBlocked((m) => ({ ...m, [info.channel]: false }))
+        setLaunch((m) => ({ ...m, [info.channel]: undefined }))
+        setReadyMap((m) => ({ ...m, [info.channel]: false }))
       }),
       window.kimiApi.onCliInstalling(() => setInstalling(true))
     ]
@@ -179,10 +207,18 @@ function WebFrame() {
 
   const doStart = (ch: string) => {
     setStates((s) => ({ ...s, [ch]: 'starting' }))
+    // 新一轮启动:清掉上一轮的启动终端内容/就绪标记,等新的 server:launch
+    setLaunch((m) => ({ ...m, [ch]: undefined }))
+    setReadyMap((m) => ({ ...m, [ch]: false }))
     window.kimiApi.startBackend(ch).catch((e) => {
       setErrors((err) => ({ ...err, [ch]: e instanceof Error ? e.message : String(e) }))
       setStates((s) => ({ ...s, [ch]: 'off' }))
     })
+  }
+
+  /** 启动终端动画收尾(server:ready 已到):切 iframe;仅当仍在 starting 防停止竞态误切 */
+  const finishBoot = (ch: string) => {
+    setStates((s) => (s[ch] === 'starting' ? { ...s, [ch]: 'on' } : s))
   }
 
   // 启动自动拉起:通道列表就绪后对激活通道自动 startChannel(每次启动只做一次,
@@ -210,6 +246,8 @@ function WebFrame() {
   /* 占位页:该通道服务未启动(跟随激活通道显示) */
   const renderPlaceholder = (ch: string) => {
     const error = errors[ch]
+    // RC 单例冲突(RC_CONFLICT|...):出定向操作"结束旧实例并重试",笼统启动按钮对它无效
+    const rcConflict = parseRcConflict(error)
     return (
       <div className="flex flex-1 items-center justify-center">
         <div className="flex flex-col items-center">
@@ -219,41 +257,53 @@ function WebFrame() {
             {t('shell.offline.desc')}
           </p>
 
-          {error && (
-            <p className="mt-3 max-w-[360px] rounded-lg bg-danger-soft px-3 py-2 text-center text-[12px] text-danger">
-              {error}
-            </p>
+          {rcConflict ? (
+            <>
+              <p className="mt-3 max-w-[360px] rounded-lg bg-danger-soft px-3 py-2 text-center text-[12px] text-danger">
+                {t(rcConflict.origin ? 'rc.conflict.desc' : 'rc.conflict.descNoOrigin', {
+                  pid: rcConflict.pid,
+                  origin: rcConflict.origin
+                })}
+              </p>
+              <div className="mt-4">
+                <RcConflictAction conflict={rcConflict} channel={ch} onRestart={() => startChannel(ch)} />
+              </div>
+            </>
+          ) : (
+            <>
+              {error && (
+                <p className="mt-3 max-w-[360px] rounded-lg bg-danger-soft px-3 py-2 text-center text-[12px] text-danger">
+                  {error}
+                </p>
+              )}
+              <button
+                className="mt-5 rounded-lg bg-primary px-6 py-2 text-[14px] font-medium text-white hover:bg-primary-hover"
+                onClick={() => startChannel(ch)}
+              >
+                {t('shell.offline.start')}
+              </button>
+            </>
           )}
-          <button
-            className="mt-5 rounded-lg bg-primary px-6 py-2 text-[14px] font-medium text-white hover:bg-primary-hover"
-            onClick={() => startChannel(ch)}
-          >
-            {t('shell.offline.start')}
-          </button>
         </div>
       </div>
     )
   }
 
-  /* 启动中(含首次自动安装 CLI) */
-  const renderStarting = () => (
-    <div className="flex flex-1 items-center justify-center">
-      <div className="flex flex-col items-center">
-        <div className="h-8 w-8 animate-spin rounded-full border-2 border-primary border-t-transparent" />
-        <p className="mt-4 text-sm text-text-secondary">
-          {installing ? t('shell.starting.installingCli') : t('shell.starting.starting')}
-        </p>
-        {installing && (
-          <p className="mt-2 text-xs text-text-tertiary">{t('shell.starting.installHint')}</p>
-        )}
-      </div>
-    </div>
+  /* 启动中(含首次自动安装 CLI):启动终端打字展示实际执行命令,就绪后由 onFinish 切 iframe */
+  const renderStarting = (ch: string, label: string) => (
+    <BootTerminal
+      launch={launch[ch]}
+      installing={installing}
+      ready={!!readyMap[ch]}
+      channelLabel={label}
+      onFinish={() => finishBoot(ch)}
+    />
   )
 
   /** 渲染单通道内容(占位 / 启动中 / 错误 / iframe),只有激活通道可见 */
-  const renderChannel = (ch: string, st: FrameState) => {
+  const renderChannel = (ch: string, st: FrameState, label: string) => {
     if (st === 'off') return renderPlaceholder(ch)
-    if (st === 'starting' || st === 'checking') return renderStarting()
+    if (st === 'starting' || st === 'checking') return renderStarting(ch, label)
     if (st === 'error') {
       return (
         <div className="flex flex-1 flex-col items-center justify-center gap-3">
@@ -323,7 +373,7 @@ function WebFrame() {
             key={c.id}
             className={`absolute inset-0 flex min-h-0 flex-col ${active ? '' : 'hidden'}`}
           >
-            {renderChannel(c.id, st)}
+            {renderChannel(c.id, st, c.label)}
           </div>
         )
       })}

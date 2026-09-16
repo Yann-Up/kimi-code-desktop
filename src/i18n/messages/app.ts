@@ -37,7 +37,14 @@ export default {
     'app.close.descIdle': '可以退出程序,或进入托盘保持后台驻留(托盘图标可随时唤回)。',
     'app.close.cancel': '取消',
     'app.close.toTray': '进入托盘',
-    'app.close.exit': '退出程序'
+    'app.close.exit': '退出程序',
+    // Remote Control 单例冲突(RC_CONFLICT 结构化错误,见 server.rs 预检与 stderr 解析)
+    'rc.conflict.desc':
+      '另一个 Remote Control 服务已在运行(pid {pid},{origin}),当前通道无法直接接管;本机同一时间只允许一个,结束旧实例后即可启动',
+    'rc.conflict.descNoOrigin':
+      '另一个 Remote Control 服务已在运行(pid {pid}),当前通道无法直接接管;本机同一时间只允许一个,结束旧实例后即可启动',
+    'rc.conflict.killRetry': '结束旧实例(pid {pid})并重试',
+    'rc.conflict.killing': '正在结束旧实例…'
   } as Record<string, string>,
   en: {
     'app.serverExited': 'Backend service exited unexpectedly: {detail}',
@@ -72,6 +79,12 @@ export default {
       'You can quit the app, or minimize to the tray to keep it resident (the tray icon brings it back anytime).',
     'app.close.cancel': 'Cancel',
     'app.close.toTray': 'Minimize to Tray',
-    'app.close.exit': 'Quit'
+    'app.close.exit': 'Quit',
+    'rc.conflict.desc':
+      'Another Remote Control service is already running (pid {pid}, {origin}) and cannot be taken over; only one is allowed per machine — stop the old instance and retry',
+    'rc.conflict.descNoOrigin':
+      'Another Remote Control service is already running (pid {pid}) and cannot be taken over; only one is allowed per machine — stop the old instance and retry',
+    'rc.conflict.killRetry': 'Stop old instance (pid {pid}) & retry',
+    'rc.conflict.killing': 'Stopping old instance…'
   } as Record<string, string>
 }

@@ -19,6 +19,7 @@ import type {
   PetMinionsPayload,
   PetState,
   ServerErrorInfo,
+  ServerLaunchInfo,
   ServerReadyInfo,
   SkinConfig,
   TerminalExitInfo,
@@ -91,6 +92,7 @@ const api: KimiApi = {
   onCliUpdateAvailable: (cb) => on('cli:update-available', cb),
   onCliUpgraded: (cb) => on('cli:upgraded', cb),
   onServerReady: (cb) => on<ServerReadyInfo>('server:ready', cb),
+  onServerLaunch: (cb) => on<ServerLaunchInfo>('server:launch', cb),
   onServerError: (cb) => on<ServerErrorInfo>('server:error', cb),
   onCloseRequested: (cb) => on<boolean>('app:close-requested', (p) => cb(!!p)),
   onWindowFocusChanged: (cb) => {
@@ -145,6 +147,7 @@ const api: KimiApi = {
       'remote_control_status',
       { channel }
     ),
+  rcKillHolder: (pid, channel) => invoke('rc_kill_holder', { pid, channel }),
   webServerGet: () => invoke<WebServerOptions>('web_server_get'),
   webServerSet: (opts) => invoke<WebServerOptions>('web_server_set', { port: opts.port }),
   localDrives: () => invoke('local_drives'),

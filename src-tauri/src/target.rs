@@ -1139,7 +1139,141 @@ impl ConnectionTarget {
                 )
                 .await;
             }
-            ConnectionTarget::Ssh { .. } => {}
+            ConnectionTarget::Ssh { .. } => {
+                let _ = self
+                    .run_shell(
+                        &format!("kill -9 {pid} 2>/dev/null || true"),
+                        Duration::from_secs(10),
+                    )
+                    .await;
+            }
+        }
+    }
+
+    /// 探测目标环境内 pid 是否存活,存活则返回进程镜像名(强杀前的身份核验用:
+    /// 只杀 kimi/node 进程,防 pid 被系统复用后误杀无辜)。进程不存在/探测失败返回 None
+    /// (SSH 经共享连接 exec ps,连接不可用时同样返回 None,调用方按"已死/不干预"处理)
+    pub(crate) async fn process_name_if_alive(&self, pid: u32) -> Option<String> {
+        match self {
+            ConnectionTarget::Local => {
+                #[cfg(windows)]
+                {
+                    // CSV 输出与系统显示语言无关;/FI 已按 pid 过滤,返回的引号行即该进程
+                    // (无匹配时是一行无引号的 INFO 提示,被 starts_with('"') 滤掉)
+                    let out = hidden_command("tasklist")
+                        .args(["/FI", &format!("PID eq {pid}"), "/FO", "CSV", "/NH"])
+                        .kill_on_drop(true)
+                        .output()
+                        .await
+                        .ok()?;
+                    let stdout = String::from_utf8_lossy(&out.stdout);
+                    let line = stdout.lines().find(|l| l.starts_with('"'))?;
+                    let name = line[1..].split('"').next()?.to_string();
+                    if name.is_empty() { None } else { Some(name) }
+                }
+                #[cfg(not(windows))]
+                {
+                    let out = hidden_command("ps")
+                        .args(["-p", &pid.to_string(), "-o", "comm="])
+                        .kill_on_drop(true)
+                        .output()
+                        .await
+                        .ok()?;
+                    if !out.status.success() {
+                        return None;
+                    }
+                    let name = String::from_utf8_lossy(&out.stdout).trim().to_string();
+                    if name.is_empty() { None } else { Some(name) }
+                }
+            }
+            ConnectionTarget::Wsl { distro } => {
+                let out = tokio::time::timeout(
+                    Duration::from_secs(10),
+                    Self::wsl_shell_command(distro, &format!("ps -p {pid} -o comm= 2>/dev/null || true"))
+                        .kill_on_drop(true)
+                        .output(),
+                )
+                .await
+                .ok()?
+                .ok()?;
+                let name = String::from_utf8_lossy(&out.stdout).trim().to_string();
+                if name.is_empty() { None } else { Some(name) }
+            }
+            ConnectionTarget::Ssh { .. } => {
+                let out = self
+                    .run_shell(
+                        &format!("ps -p {pid} -o comm= 2>/dev/null || true"),
+                        Duration::from_secs(10),
+                    )
+                    .await
+                    .ok()?;
+                let name = out.stdout.trim().to_string();
+                if name.is_empty() { None } else { Some(name) }
+            }
+        }
+    }
+
+    /// 取进程命令行(RC 强杀核验的佐证,仅 node 形态进程需要;失败/进程不存在返回 None):
+    /// Windows 走 PowerShell CIM(tasklist 不带命令行),WSL/SSH 走 ps -o args=
+    pub(crate) async fn process_cmdline(&self, pid: u32) -> Option<String> {
+        match self {
+            ConnectionTarget::Local => {
+                #[cfg(windows)]
+                {
+                    let out = hidden_command("powershell")
+                        .args([
+                            "-NoProfile",
+                            "-Command",
+                            &format!(
+                                "(Get-CimInstance Win32_Process -Filter 'ProcessId={pid}').CommandLine"
+                            ),
+                        ])
+                        .kill_on_drop(true)
+                        .output()
+                        .await
+                        .ok()?;
+                    let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
+                    if s.is_empty() { None } else { Some(s) }
+                }
+                #[cfg(not(windows))]
+                {
+                    let out = hidden_command("ps")
+                        .args(["-p", &pid.to_string(), "-o", "args="])
+                        .kill_on_drop(true)
+                        .output()
+                        .await
+                        .ok()?;
+                    if !out.status.success() {
+                        return None;
+                    }
+                    let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
+                    if s.is_empty() { None } else { Some(s) }
+                }
+            }
+            ConnectionTarget::Wsl { distro } => {
+                let out = tokio::time::timeout(
+                    Duration::from_secs(10),
+                    Self::wsl_shell_command(distro, &format!("ps -p {pid} -o args= 2>/dev/null || true"))
+                        .kill_on_drop(true)
+                        .output(),
+                )
+                .await
+                .ok()?
+                .ok()?;
+                let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
+                if s.is_empty() { None } else { Some(s) }
+            }
+            ConnectionTarget::Ssh { .. } => {
+                let out = self
+                    .run_shell(
+                        &format!("ps -p {pid} -o args= 2>/dev/null || true"),
+                        Duration::from_secs(10),
+                    )
+                    .await
+                    .ok()?;
+                let s = out.stdout.trim().to_string();
+                if s.is_empty() { None } else { Some(s) }
+            }
         }
     }
 

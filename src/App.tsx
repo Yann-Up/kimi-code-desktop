@@ -4,6 +4,8 @@ import { ShellHome } from './components/ShellHome'
 import { OnboardingPage } from './pages/OnboardingPage'
 import { useUi } from './stores/ui'
 import { useT, t as tStatic } from './i18n'
+import { parseRcConflict } from './components/rcConflict'
+import { RcConflictAction } from './components/RcConflictAction'
 
 export default function App() {
   const t = useT()
@@ -11,6 +13,8 @@ export default function App() {
   // (首次启动不再强制全屏向导;连接目标在对话页占位图上选择,或从设置页重进向导)
   const [phase, setPhase] = useState<'starting' | 'ready' | 'error'>('starting')
   const [serverError, setServerError] = useState<string | null>(null)
+  // 启动失败归属的通道:RC 冲突的"结束旧实例"按它解析连接目标(杀时激活通道可能已切换)
+  const [serverErrorCh, setServerErrorCh] = useState<string>('local')
   const [installing, setInstalling] = useState(false)
   const [updateInfo, setUpdateInfo] = useState<{ current: string; latest: string; source: string; bin: string } | null>(null)
   const [upgrading, setUpgrading] = useState(false)
@@ -31,15 +35,20 @@ export default function App() {
       }),
       window.kimiApi.onServerError((info) => {
         if (info.channel !== useUi.getState().activeChannel) return
+        // 已在主页面(ready)时不整页翻错:ShellHome 按通道自行呈现(占位页含 RC 冲突
+        // 定向操作),避免卸载常驻 iframe、连累其他健康通道的会话现场
+        setPhase((p) => (p === 'ready' ? p : 'error'))
         setServerError(info.error)
-        setPhase('error')
+        setServerErrorCh(info.channel)
       }),
-      // 手动停止服务(设置页)不离开主页面:对话 iframe 自行进入未运行态,统计/设置本地可读
+      // 手动停止服务(设置页)不离开主页面:对话 iframe 自行进入未运行态,统计/设置本地可读;
+      // 意外退出同理:ready 时交给 ShellHome 按通道呈现,仅启动期(未 ready)翻整页错误
       window.kimiApi.onServerExited((info) => {
         useUi.getState().setChannelRunning(info.channel, false)
         if (info.channel !== useUi.getState().activeChannel) return
+        setPhase((p) => (p === 'ready' ? p : 'error'))
         setServerError(tStatic('app.serverExited', { detail: info.detail }))
-        setPhase('error')
+        setServerErrorCh(info.channel)
       }),
       window.kimiApi.onServerStopped((info) => {
         useUi.getState().setChannelRunning(info.channel, false)
@@ -130,6 +139,10 @@ export default function App() {
       })
   }
 
+  // RC 单例冲突:结构化错误(RC_CONFLICT|...)出定向操作"结束旧实例并重试",
+  // 不再落到笼统的"请确认已安装 CLI"提示
+  const rcConflict = parseRcConflict(serverError)
+
   return (
     <div className="flex h-full flex-col">
       <TitleBar />
@@ -137,18 +150,32 @@ export default function App() {
         <div className="flex flex-1 items-center justify-center">
           <div className="max-w-md rounded-xl border border-danger-soft bg-danger-soft p-6 text-center">
             <p className="mb-2 text-base font-semibold text-danger">{t('app.error.title')}</p>
-            <p className="text-sm text-text-secondary">{serverError}</p>
-            <p className="mt-3 text-xs text-text-tertiary">
-              {t('app.error.hint')}
-            </p>
-            <div className="mt-4 flex justify-center">
-              <button
-                className="rounded-lg bg-primary px-4 py-1.5 text-[13px] font-medium text-white hover:bg-primary-hover"
-                onClick={startBackend}
-              >
-                {t('app.error.retry')}
-              </button>
-            </div>
+            {rcConflict ? (
+              <>
+                <p className="text-sm text-text-secondary">
+                  {t(rcConflict.origin ? 'rc.conflict.desc' : 'rc.conflict.descNoOrigin', {
+                    pid: rcConflict.pid,
+                    origin: rcConflict.origin
+                  })}
+                </p>
+                <div className="mt-4 flex justify-center">
+                  <RcConflictAction conflict={rcConflict} channel={serverErrorCh} onRestart={startBackend} />
+                </div>
+              </>
+            ) : (
+              <>
+                <p className="text-sm text-text-secondary">{serverError}</p>
+                <p className="mt-3 text-xs text-text-tertiary">{t('app.error.hint')}</p>
+                <div className="mt-4 flex justify-center">
+                  <button
+                    className="rounded-lg bg-primary px-4 py-1.5 text-[13px] font-medium text-white hover:bg-primary-hover"
+                    onClick={startBackend}
+                  >
+                    {t('app.error.retry')}
+                  </button>
+                </div>
+              </>
+            )}
           </div>
         </div>
       ) : phase === 'ready' ? (

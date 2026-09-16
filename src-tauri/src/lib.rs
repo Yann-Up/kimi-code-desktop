@@ -1466,6 +1466,44 @@ async fn remote_control_set(
     Ok(())
 }
 
+/// RC 冲突定向恢复(前端"结束旧实例并重试"按钮):按 pid 强杀 Remote Control 持有者。
+/// 身份核验与 server.rs 预检同一份(镜像名 kimi/node,node 需命令行佐证),防 pid 复用误杀;
+/// 结束信号发出后复核退净,没杀死如实返回错误(否则前端立即重启会再次撞锁)
+#[tauri::command]
+async fn rc_kill_holder(channel: Option<String>, pid: u32) -> Result<(), String> {
+    let target = cli::connection_target_for(&channel.unwrap_or_else(cli::active_channel));
+    // 防御:rc.json 不应指向壳自身(仅本机目标有意义,SSH 远端是独立 pid 空间)
+    if target.is_local() && pid == std::process::id() {
+        return Err(
+            "RC 锁记录的 pid 指向本应用自身,数据异常;请删除 kimi 数据目录下 server/rc.json 后重试"
+                .to_string(),
+        );
+    }
+    match target.process_name_if_alive(pid).await {
+        // 已自行退出:无需处理,前端直接重启
+        None => Ok(()),
+        Some(name) => {
+            let cmdline = if server::rc_killable(&name, None) {
+                None
+            } else {
+                target.process_cmdline(pid).await
+            };
+            if !server::rc_killable(&name, cmdline.as_deref()) {
+                return Err(format!(
+                    "pid {pid} 属于 {name},不是 kimi 进程,已拒绝结束;请手动检查"
+                ));
+            }
+            if server::kill_rc_holder_and_wait(&target, pid, &name).await {
+                Ok(())
+            } else {
+                Err(format!(
+                    "已向 pid {pid} 发送结束信号,但进程未在 3 秒内退出;请稍后重试或手动检查"
+                ))
+            }
+        }
+    }
+}
+
 #[tauri::command]
 fn local_drives() -> Vec<String> {
     local_store::list_drives()
@@ -1807,6 +1845,7 @@ pub fn run() {
             remote_control_status,
             remote_control_get,
             remote_control_set,
+            rc_kill_holder,
             local_drives,
             local_workspaces,
             terminal_open,
