@@ -551,6 +551,16 @@ fn prune_usage_cache(touched: &HashSet<(String, String)>) {
 static HOME_CACHE: std::sync::LazyLock<std::sync::RwLock<HashMap<String, String>>> =
     std::sync::LazyLock::new(|| std::sync::RwLock::new(HashMap::new()));
 
+/// server:launch 事件载荷:启动终端展示用的启动命令(与 web_command/SSH exec 同源;
+/// bootstrap 开始时按首选端口下发,命令行与 env 均不含 token,可直接上屏)
+#[derive(Clone, Serialize)]
+pub struct WebLaunchDisplay {
+    /// 完整命令行(env 不内联,单独给;含展示引号)
+    pub line: String,
+    /// 注入的环境变量:Local 含 KIMI_CODE_HOME;各目标含实验/运行时开关
+    pub env: Vec<(String, String)>,
+}
+
 impl ConnectionTarget {
     pub fn is_local(&self) -> bool {
         matches!(self, ConnectionTarget::Local)
@@ -1053,6 +1063,46 @@ impl ConnectionTarget {
             }
             ConnectionTarget::Ssh { .. } => {
                 Err("SSH 目标经 russh 进程内启动,不走本地 spawn".to_string())
+            }
+        }
+    }
+
+    /// 构造展示用启动命令(server:launch 事件,bootstrap 开始时按首选端口下发),
+    /// 与 web_command / server.rs SSH exec 同源:同一组 bin 解析、--remote-control 判定
+    /// 与 experimental_envs(),保证上屏内容即实际执行(仅端口有极少数顺延漂移)
+    pub async fn web_launch_display(&self, local_port: u16) -> Result<WebLaunchDisplay, String> {
+        let rc = if remote_control_enabled() {
+            " --remote-control"
+        } else {
+            ""
+        };
+        match self {
+            ConnectionTarget::Local => {
+                let bin = kimi_bin();
+                // 展示引号:仅含空格时补双引号(上屏用,不做逐字符转义)
+                let bin_disp = if bin.contains(' ') {
+                    format!("\"{bin}\"")
+                } else {
+                    bin
+                };
+                let mut env = vec![(
+                    "KIMI_CODE_HOME".to_string(),
+                    kimi_home().to_string_lossy().into_owned(),
+                )];
+                env.extend(experimental_envs());
+                Ok(WebLaunchDisplay {
+                    line: format!("{bin_disp} web --no-open --port {local_port}{rc}"),
+                    env,
+                })
+            }
+            // WSL/SSH 在各自环境内跑(KIMI_CODE_HOME 覆盖不适用),env 只有开关项;
+            // bin 与执行路径同函数解析(WSL 多一次 wsl.exe 调用,启动一次性开销)
+            ConnectionTarget::Wsl { .. } | ConnectionTarget::Ssh { .. } => {
+                let bin = self.kimi_bin_resolved().await?;
+                Ok(WebLaunchDisplay {
+                    line: format!("{} web --no-open --port {local_port}{rc}", sq(&bin)),
+                    env: experimental_envs(),
+                })
             }
         }
     }

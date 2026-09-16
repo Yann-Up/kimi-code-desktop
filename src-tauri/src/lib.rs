@@ -1620,6 +1620,29 @@ fn create_tray(app: &AppHandle) -> tauri::Result<()> {
 async fn run_bootstrap(app: AppHandle, state: Arc<AppState>, channel: String) {
     let run = async {
         let target = cli::connection_target_for(&channel);
+        // 启动终端展示:尽早广播将执行的命令行(首选端口——reclaim 保证其几乎恒为实际端口,
+        // 仅被 kimi 以外程序占用时才顺延,展示允许这极少数漂移),让前端打字动画与下面的
+        // CLI 检测/端口回收/spawn 并行;独立任务,WSL/SSH 的 bin 解析不拖慢 bootstrap 主流程;
+        // RC 收养路径无新进程,此命令仅作展示
+        {
+            let app2 = app.clone();
+            let target2 = target.clone();
+            let ch2 = channel.clone();
+            tauri::async_runtime::spawn(async move {
+                match target2
+                    .web_launch_display(server::web_options().port)
+                    .await
+                {
+                    Ok(d) => {
+                        let _ = app2.emit(
+                            "server:launch",
+                            json!({ "channel": ch2, "line": d.line, "env": d.env }),
+                        );
+                    }
+                    Err(e) => eprintln!("[kimi-web] launch display 构造失败(仅影响展示): {e}"),
+                }
+            });
+        }
         state
             .with_backend(&channel, |bs| bs.manual_stop.store(false, Ordering::SeqCst))
             .await;
